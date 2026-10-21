@@ -92,15 +92,13 @@ function mundoDaApiDaBase(conf: ConferenciaNoFioDaXml04): Mundo {
   return mundo;
 }
 
-/** O vencimento (a condição: as duplicatas não fecham), a natureza e o centro do documento, na aba Financeiro. */
-async function resolverOFinanceiro(page: Page, c: CenarioDaXml04) {
+/** O vencimento (a condição: as duplicatas não fecham) — natureza/centro saíram da conferência. */
+async function resolverOFinanceiro(page: Page) {
   await irParaAba(page, "financeiro");
   const vencimento = page.getByTestId("importacao-aba-financeiro").getByLabel("Vencimento", { exact: true });
   await vencimento.fill(dataComoSeDigita("2026-11-16"));
   await vencimento.press("Enter");
   await expect(page.getByTestId("importacao-vencimento")).toHaveValue("2026-11-16");
-  await escolherNoSeletor(page, page.getByTestId("importacao-natureza"), c.ref.natureza.label, "Natureza de despesa da compra");
-  await escolherNoSeletor(page, page.getByTestId("importacao-centro"), c.ref.centro.label, "Centro de resultado da compra");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -169,7 +167,7 @@ test("XML-04 · K1 (sentido 1) — a conferência deste web sobre a API da base:
     for (const [k, fator] of [[nU[0]!, "20"], [nU[1]!, "10"]] as const) await page.getByTestId(`importacao-item-${k}-fator`).fill(fator);
   }
 
-  await resolverOFinanceiro(page, c);
+  await resolverOFinanceiro(page);
   const gerar = page.getByTestId("importacao-gerar-compra");
   await expect(gerar, "nada bloqueia o Gerar compra").toBeEnabled();
   const post = page.waitForResponse((r) => r.request().method() === "POST" && caminho(r) === `/api/compras/importacoes/${id}/gerar-compra`, { timeout: 30_000 });

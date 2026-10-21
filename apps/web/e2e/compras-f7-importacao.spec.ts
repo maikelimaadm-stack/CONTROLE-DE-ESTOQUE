@@ -129,12 +129,11 @@ test("IX-1 — importar o XML e gerar a compra: escolha da empresa, fornecedor p
   await expect(item.getByTestId("importacao-item-1-criar-produto")).toBeVisible();
   await escolherNoSeletor(page, item.getByTestId("importacao-item-1-local"), c.local.nome);
 
-  // FINANCEIRO: as duplicatas da nota; natureza e centro do documento
+  // FINANCEIRO: as duplicatas da nota (sem natureza/centro/rateio na conferência)
   await page.getByTestId("importacao-aba-financeiro-rotulo").click();
   await expect(page.getByTestId("importacao-parcelas").getByTestId("importacao-parcela"), "as duas duplicatas").toHaveCount(2);
-  await expect(page.getByTestId("importacao-usar-condicao")).not.toBeChecked();
-  await escolherNoSeletor(page, page.getByTestId("importacao-natureza"), c.ref.natureza.label.slice(0, 20));
-  await escolherNoSeletor(page, page.getByTestId("importacao-centro"), c.ref.centro.label.slice(0, 20));
+  await expect(page.getByTestId("importacao-condicao")).toHaveCount(0);
+  await expect(page.getByTestId("importacao-natureza")).toHaveCount(0);
 
   // DIVERGÊNCIAS: nenhuma; o total confere com o vNF
   await page.getByTestId("importacao-aba-divergencias-rotulo").click();
@@ -149,7 +148,10 @@ test("IX-1 — importar o XML e gerar a compra: escolha da empresa, fornecedor p
   const resposta = await post;
   expect(resposta.status(), "a compra foi gerada").toBe(201);
   const enviado = resposta.request().postDataJSON() as { fornecedor_id: string; tipo_operacao_id: string; financeiro: Record<string, unknown>; itens: Record<string, unknown>[] };
-  expect(enviado).toMatchObject({ fornecedor_id: c.fornecedor.id, tipo_operacao_id: c.top, financeiro: { parcelas: "nota", rateio: { tipo: "documento", categoria_financeira_id: c.ref.natureza.id, centro_custo_id: c.ref.centro.id } } });
+  expect(enviado).toMatchObject({
+    fornecedor_id: c.fornecedor.id, tipo_operacao_id: c.top,
+    financeiro: { parcelas: "nota", classificacao_gasto: null, tipo_titulo_id: null, rateio: { tipo: "documento", categoria_financeira_id: null, centro_custo_id: null } }
+  });
   expect(enviado.itens, "uma decisão por item da nota: produto, fator 1, local, lembrar sempre").toEqual([expect.objectContaining({ n_item: 1, produto_id: c.produto.id, fator: "1", tipo_fator: "multiply", armazem_id: c.local.id, lembrar_vinculo: true, gera_estoque: true, imobilizado: false })]);
   for (const valor of ["quantidade", "valor_unitario", "desconto", "valor_total"]) expect(Object.hasOwn(enviado.itens[0]!, valor), `${valor} não vai no corpo: o servidor relê da nota`).toBe(false);
   const compra = (await resposta.json()) as { id: string; codigo: string; situacao: string; valor_total: string; importacao_id: string };

@@ -167,10 +167,7 @@ test("XML-01 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
   await expect(dialogo, "o diálogo fecha").toBeHidden();
   await expect(page.getByTestId("importacao-item-1-produto").locator("[role='combobox']").first(), "o item recebe o produto").toContainText(row.description);
 
-  // O "GERAR COMPRA" da base: natureza e centro do documento, e a compra ABERTA.
-  await page.getByTestId("importacao-aba-financeiro-rotulo").click();
-  await escolher(page, page.getByTestId("importacao-natureza"), ref.natureza.label, "Natureza de despesa da compra");
-  await escolher(page, page.getByTestId("importacao-centro"), ref.centro.label, "Centro de resultado da compra");
+  // O "GERAR COMPRA" da base (sem natureza/centro na conferência enxuta) e a compra ABERTA.
   const gerar = page.getByTestId("importacao-gerar-compra");
   await expect(gerar).toBeEnabled();
   const postGerar = page.waitForResponse((r) => r.request().method() === "POST" && caminho(r) === `/api/compras/importacoes/${imp.id}/gerar-compra`);

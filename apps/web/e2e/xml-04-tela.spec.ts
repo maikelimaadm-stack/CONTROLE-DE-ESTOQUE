@@ -78,11 +78,13 @@ async function formaNaTela(page: Page) {
   };
 }
 
-/** A natureza e o centro do documento (a TOP gera título) na aba Financeiro. */
-async function classificarODocumento(page: Page, c: CenarioDaXml04) {
+/** O vencimento quando as duplicatas não fecham (condição + 1º vencimento) — natureza/centro saíram da conferência. */
+async function preencherVencimentoDaCondicao(page: Page) {
   await irParaAba(page, "financeiro");
-  await escolherNoSeletor(page, page.getByTestId("importacao-natureza"), c.ref.natureza.label, "Natureza de despesa da compra");
-  await escolherNoSeletor(page, page.getByTestId("importacao-centro"), c.ref.centro.label, "Centro de resultado da compra");
+  const vencimento = page.getByTestId("importacao-aba-financeiro").getByLabel("Vencimento", { exact: true });
+  await vencimento.fill(dataComoSeDigita("2026-11-16"));
+  await vencimento.press("Enter");
+  await expect(page.getByTestId("importacao-vencimento")).toHaveValue("2026-11-16");
 }
 
 interface CorpoDoGerar { financeiro: { forma_pagamento_id: string | null }; itens: { n_item: number; produto_id: string; fator: string; tipo_fator: string; lembrar_vinculo?: boolean }[] }
@@ -145,7 +147,7 @@ test("X4-T1 — aba Itens sem fator na tela: quantidade da nota em pt-BR, corpo 
   const doFator = (await divergenciasNaTela(page)).filter(([codigo]) => /fator/.test(codigo));
   expect(doFator.filter(([, bloqueia]) => bloqueia === "sim"), "sem bloqueio de fator na tela (avisos do servidor podem aparecer)").toEqual([]);
 
-  // O FINANCEIRO resolvido: a forma da nota (ligada) já escolhida; o vencimento (a condição: as duplicatas não fecham), a natureza e o centro.
+  // O FINANCEIRO resolvido: a forma da nota (ligada) já escolhida; o vencimento (a condição: as duplicatas não fecham).
   const forma = await formaNaTela(page);
   // O CONTROLE POSITIVO do contador do sentido 1 do skew: a conferência que declara a forma da nota pergunta a TOP escolhida.
   expect(pedidosDaTop.filter((p) => p.endsWith(`/api/compras/compras/regras-da-operacao`)).length, "no fio: a tela perguntou as regras da TOP escolhida").toBeGreaterThan(0);
@@ -153,11 +155,7 @@ test("X4-T1 — aba Itens sem fator na tela: quantidade da nota em pt-BR, corpo 
     origem: "nota", travada: null, vazia: false, mostra: c.formaCerta.label, habilitada: true,
     origemTexto: "Forma de pagamento da nota (código 15 — Boleto bancário).", pergunta: null, aviso: null
   });
-  const vencimento = page.getByTestId("importacao-aba-financeiro").getByLabel("Vencimento", { exact: true });
-  await vencimento.fill(dataComoSeDigita("2026-11-16"));
-  await vencimento.press("Enter");
-  await expect(page.getByTestId("importacao-vencimento")).toHaveValue("2026-11-16");
-  await classificarODocumento(page, c);
+  await preencherVencimentoDaCondicao(page);
 
   const codigoU1 = c.codigoDo("U1"); const codigoU2 = c.codigoDo("U2"); const codigoV = c.codigoDo("V");
   const doV = `${codigoV}|CX|${c.produtos.get(n.V)!.id}|multiply|6`;
@@ -226,7 +224,7 @@ test("X4-T2 — a FORMA PELA NOTA: o tPag ligado vem escolhido com a origem; sem
   await escolherNoSeletor(page, campoDaForma(page), pix.label, "Forma de pagamento");
   expect(await formaNaTela(page), "(f) a escolha do operador vence: sem a origem da nota").toMatchObject({ origem: "operador", vazia: false, mostra: pix.label, origemTexto: null, pergunta: null, aviso: null });
   await irParaAba(page, "itens");
-  await classificarODocumento(page, c);
+  await preencherVencimentoDaCondicao(page);
   expect(await formaNaTela(page), "(f) depois de outras abas e campos, a escolha continua").toMatchObject({ origem: "operador", mostra: pix.label });
   const { corpo, compra } = await gerarCompra(page, ligada);
   expect(corpo.financeiro.forma_pagamento_id, "(f) o corpo: a forma do operador").toBe(pix.id);
@@ -297,7 +295,7 @@ test("X4-T3 — a FORMA E A TOP (a regra da 311): a TOP que cobra e deixa trocar
     origem: "top", travada: "true", vazia: false, mostra: pix.label, habilitada: false, origemTexto: null, pergunta: null,
     aviso: "A nota diz Boleto (código 15 — Boleto bancário), mas a TOP desta compra não deixa trocar a forma de pagamento: vale a dela, Pix."
   });
-  await classificarODocumento(page, c);
+  await preencherVencimentoDaCondicao(page);
   const { corpo, compra } = await gerarCompra(page, ligada);
   expect(corpo.financeiro.forma_pagamento_id, "(g) o corpo: a forma da TOP").toBe(pix.id);
   expect(compraNoBanco(compra.id).forma, "(g) NO BANCO: a forma da TOP").toBe(pix.id);
@@ -319,28 +317,30 @@ test("X4-T4 — a DUPLICATA QUE NÃO FECHA diz por quê: os três números e cad
     await irParaAba(page, "financeiro");
     const aba = page.getByTestId("importacao-aba-financeiro");
     const textos = async (testid: string) => aba.getByTestId(testid).evaluateAll((els) => els.map((e) => [e.getAttribute("data-falha"), (e as HTMLElement).innerText] as [string | null, string]));
-    const usar = page.getByTestId("importacao-usar-condicao");
+    const condicao = await aba.getByTestId("importacao-condicao").count();
+    const vencimento = await aba.getByTestId("importacao-vencimento").count();
     const lido = {
       resumo: (await textos("importacao-parcelas-indisponiveis")).map(([, t]) => textoNormalizado(t)),
       numeros: (await textos(TESTIDS_DA_XML04.parcelasNumeros)).map(([, t]) => textoNormalizado(t)),
       falhas: (await textos(TESTIDS_DA_XML04.parcelasFalha)).map(([f, t]) => [f, textoNormalizado(t)]),
       tabela: await aba.getByTestId("importacao-parcela").count(),
-      usarCondicao: { marcado: await usar.isChecked(), habilitado: await usar.isEnabled() }
+      condicaoEVencimento: { condicao, vencimento }
     };
     const servidor = conf.divergencias.filter((d) => d.codigo === "parcelas_nao_conferem").map((d) => d.mensagem);
     console.log(`[X4-T4] ${rotulo}: ${JSON.stringify({ parcelas: conf.financeiro.parcelas.situacao, ...lido, servidor })}`);
     return { conf, ...lido, servidor };
   };
-  const condicaoForcada = { marcado: true, habilitado: false };
+  const condicaoForcada = { condicao: 1, vencimento: 1 };
+  const parcelasConferem = { condicao: 0, vencimento: 0 };
 
   // AS DUAS FALHAM: Σ 200 × líquido 240 (vLiq) × total 250
   const duas = await explicacao("as duas", { descontoDaFatura: "10.00", duplicatas: duplicatasQueSomam("200.00") });
   expect(duas.conf.financeiro.parcelas, "premissa no fio: não conferem, as duas comparações").toMatchObject({ situacao: "nao_conferem", soma: "200.00", liquido: "240.00", falhas: ["soma_diferente_do_liquido", "liquido_diferente_do_total"] });
-  expect({ resumo: duas.resumo, numeros: duas.numeros, falhas: duas.falhas, tabela: duas.tabela, usarCondicao: duas.usarCondicao }, "(h) as duas: os três números e as duas comparações, com a diferença").toEqual({
+  expect({ resumo: duas.resumo, numeros: duas.numeros, falhas: duas.falhas, tabela: duas.tabela, condicaoEVencimento: duas.condicaoEVencimento }, "(h) as duas: os três números e as duas comparações, com a diferença").toEqual({
     resumo: ["As duplicatas da nota não conferem: a compra usa a condição de pagamento."],
     numeros: ["Soma das duplicatas: R$ 200,00 · Líquido da fatura (vLiq): R$ 240,00 · Total da compra: R$ 250,00."],
     falhas: [["soma_diferente_do_liquido", "A soma das duplicatas fica R$ 40,00 abaixo do líquido."], ["liquido_diferente_do_total", "O líquido fica R$ 10,00 abaixo do total da compra."]],
-    tabela: 0, usarCondicao: condicaoForcada
+    tabela: 0, condicaoEVencimento: condicaoForcada
   });
   expect(duas.servidor, "(h) e o aviso do servidor também diz os três números e as diferenças").toEqual([
     "As duplicatas não conferem: Σ vDup 200.00 × líquido (fatura, vLiq) 240.00 — diferença -40.00; líquido 240.00 × total da compra 250.00 — diferença -10.00. Use a condição de pagamento."]);
@@ -350,23 +350,23 @@ test("X4-T4 — a DUPLICATA QUE NÃO FECHA diz por quê: os três números e cad
 
   // SÓ A SOMA: Σ 230 × líquido 250 (vLiq = vNF) — a do líquido NÃO aparece
   const soma = await explicacao("só a soma", { descontoDaFatura: "0.00", duplicatas: duplicatasQueSomam("230.00") });
-  expect({ numeros: soma.numeros, falhas: soma.falhas, usarCondicao: soma.usarCondicao }, "(h) só a soma: a comparação que falhou e só ela").toEqual({
+  expect({ numeros: soma.numeros, falhas: soma.falhas, condicaoEVencimento: soma.condicaoEVencimento }, "(h) só a soma: a comparação que falhou e só ela").toEqual({
     numeros: ["Soma das duplicatas: R$ 230,00 · Líquido da fatura (vLiq): R$ 250,00 · Total da compra: R$ 250,00."],
-    falhas: [["soma_diferente_do_liquido", "A soma das duplicatas fica R$ 20,00 abaixo do líquido."]], usarCondicao: condicaoForcada
+    falhas: [["soma_diferente_do_liquido", "A soma das duplicatas fica R$ 20,00 abaixo do líquido."]], condicaoEVencimento: condicaoForcada
   });
 
   // SÓ O LÍQUIDO: Σ 240 = líquido 240 × total 250
   const liquido = await explicacao("só o líquido", { descontoDaFatura: "10.00", duplicatas: duplicatasQueSomam("240.00") });
-  expect({ numeros: liquido.numeros, falhas: liquido.falhas, usarCondicao: liquido.usarCondicao }, "(h) só o líquido: a comparação que falhou e só ela").toEqual({
+  expect({ numeros: liquido.numeros, falhas: liquido.falhas, condicaoEVencimento: liquido.condicaoEVencimento }, "(h) só o líquido: a comparação que falhou e só ela").toEqual({
     numeros: ["Soma das duplicatas: R$ 240,00 · Líquido da fatura (vLiq): R$ 240,00 · Total da compra: R$ 250,00."],
-    falhas: [["liquido_diferente_do_total", "O líquido fica R$ 10,00 abaixo do total da compra."]], usarCondicao: condicaoForcada
+    falhas: [["liquido_diferente_do_total", "O líquido fica R$ 10,00 abaixo do total da compra."]], condicaoEVencimento: condicaoForcada
   });
 
   // SEM DUPLICATAS POR FALTA DE VENCIMENTO: uma <dup> sem <dVenc> — o leitor descarta todas, e a tela diz o motivo
   const semVencimento = await explicacao("sem vencimento", { descontoDaFatura: "0.00", duplicatas: [{ numero: "001", vencimento: null, valor: "125.00" }, { numero: "002", vencimento: "2026-12-16", valor: "125.00" }] });
   expect(semVencimento.conf.financeiro.parcelas, "premissa no fio: sem duplicatas, pela falta de vencimento").toEqual({ situacao: "sem_duplicatas", motivo: "duplicata_sem_vencimento", origem: "nota" });
-  expect({ resumo: semVencimento.resumo, numeros: semVencimento.numeros, falhas: semVencimento.falhas, usarCondicao: semVencimento.usarCondicao }, "(h) sem vencimento: o motivo").toEqual({
-    resumo: ["A nota trouxe duplicatas sem vencimento: a compra usa a condição de pagamento."], numeros: [], falhas: [], usarCondicao: condicaoForcada
+  expect({ resumo: semVencimento.resumo, numeros: semVencimento.numeros, falhas: semVencimento.falhas, condicaoEVencimento: semVencimento.condicaoEVencimento }, "(h) sem vencimento: o motivo").toEqual({
+    resumo: ["A nota trouxe duplicatas sem vencimento: a compra usa a condição de pagamento."], numeros: [], falhas: [], condicaoEVencimento: condicaoForcada
   });
 
   // SEM DUPLICATAS: a nota não as traz
@@ -379,8 +379,8 @@ test("X4-T4 — a DUPLICATA QUE NÃO FECHA diz por quê: os três números e cad
   // AS QUE FECHAM (a regra não mudou): a tabela das duplicatas, nenhuma explicação, e "usar a condição" livre
   const fecham = await explicacao("fecham", { descontoDaFatura: "0.00", duplicatas: duplicatasQueSomam(vNF) });
   expect(fecham.conf.financeiro.parcelas.situacao, "premissa no fio: conferem").toBe("conferem");
-  expect({ resumo: fecham.resumo, numeros: fecham.numeros, falhas: fecham.falhas, tabela: fecham.tabela, usarCondicao: fecham.usarCondicao }, "as que fecham: a tabela, sem explicação").toEqual({
-    resumo: [], numeros: [], falhas: [], tabela: 2, usarCondicao: { marcado: false, habilitado: true }
+  expect({ resumo: fecham.resumo, numeros: fecham.numeros, falhas: fecham.falhas, tabela: fecham.tabela, condicaoEVencimento: fecham.condicaoEVencimento }, "as que fecham: a tabela, sem explicação").toEqual({
+    resumo: [], numeros: [], falhas: [], tabela: 2, condicaoEVencimento: parcelasConferem
   });
 });
 

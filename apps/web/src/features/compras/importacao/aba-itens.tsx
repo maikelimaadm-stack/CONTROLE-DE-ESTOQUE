@@ -6,7 +6,6 @@ import { brl, dateBR, numeroBR } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { Button, Dialog, Field, Input } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { opcoesDeNaturezaDeDespesa } from "../central/estado";
 import { DialogoDeCadastroRapido } from "./aba-cabecalho";
 import { criarProdutosDaImportacao, recusasNoCampo } from "./api";
 import type { EstadoDaConferencia } from "./estado";
@@ -14,11 +13,12 @@ import {
   cadastravelPelaNota, corpoDoLote, declaraCriarProdutosDaNota, fornecedorResolvidoParaOLote, itensSemLocalGravado, mensagensDaRecusaDoLote, planoDoLote,
   presetDoProdutoDoItem, quantidadeDeProdutos, rotuloDoLote, type PlanoDoLote
 } from "./produtos-da-nota";
-import { conferenciaDoPalpite, rotuloDoVinculo, sugeridoPorPalpite } from "./vinculo-do-item";
+import { sugeridoPorPalpite } from "./vinculo-do-item";
 
 /**
- * Aba Itens da conferência — tabela de produtos da nota (sem fator/conversão/imobilizado/gera estoque/lembrar
- * na tela: o corpo envia os padrões; estoque segue a TOP). Criar produto = botão "+".
+ * Aba Itens — tabela da nota: produto, local, lote e validade na linha (lote/validade opcionais).
+ * Sem rótulos de sugestão, sem natureza/centro (isso fica na compra depois de gerar).
+ * Local para todos aplica o mesmo armazém em todos os itens; cada linha ainda pode mudar.
  */
 
 const Checkbox = ({ testId, rotulo, marcado, onMudar, desabilitado }: { testId: string; rotulo: string; marcado: boolean; onMudar: (v: boolean) => void; desabilitado?: boolean }) =>
@@ -27,6 +27,7 @@ const Checkbox = ({ testId, rotulo, marcado, onMudar, desabilitado }: { testId: 
 export function AbaItens({ e }: { e: EstadoDaConferencia }) {
   const { can } = useAuth();
   const [criandoPara, setCriandoPara] = React.useState<number | null>(null);
+  const [localParaTodos, setLocalParaTodos] = React.useState("");
   const { conf } = e;
   const leitura = !e.pendente;
   const itemDoCadastro = criandoPara === null ? null : conf.itens.find((i) => i.nItem === criandoPara) ?? null;
@@ -38,15 +39,29 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
   const [aberturasDoLote, setAberturasDoLote] = React.useState(0);
   const [loteAberto, setLoteAberto] = React.useState(false);
 
+  const aplicarLocalParaTodos = (id: string | null) => {
+    const armazemId = id ?? "";
+    setLocalParaTodos(armazemId);
+    for (const item of conf.nota.itens) e.mudarItem(item.nItem, { armazemId });
+  };
+
   return <div data-testid="importacao-aba-itens" className="flex flex-col gap-3">
-    {plano && produtosDoLote > 0 && <div className="flex flex-wrap items-center gap-2">
-      <Button size="sm" variant="outline" data-testid="importacao-criar-produtos" data-quantidade={produtosDoLote} disabled={!fornecedorDoLote}
-        title={rotuloDoLote(produtosDoLote)} aria-label={rotuloDoLote(produtosDoLote)}
-        onClick={() => { setAberturasDoLote((k) => k + 1); setLoteAberto(true); }}>
-        <Plus className="h-4 w-4" aria-hidden /> {rotuloDoLote(produtosDoLote)}
-      </Button>
-      {!fornecedorDoLote && <span className="text-[12px] text-amber-800" data-testid="importacao-criar-produtos-sem-fornecedor">Escolha o fornecedor na aba Cabeçalho para criar os produtos de uma vez.</span>}
-    </div>}
+    <div className="flex flex-wrap items-end gap-3">
+      {plano && produtosDoLote > 0 && <>
+        <Button size="sm" variant="outline" data-testid="importacao-criar-produtos" data-quantidade={produtosDoLote} disabled={!fornecedorDoLote}
+          title={rotuloDoLote(produtosDoLote)} aria-label={rotuloDoLote(produtosDoLote)}
+          onClick={() => { setAberturasDoLote((k) => k + 1); setLoteAberto(true); }}>
+          <Plus className="h-4 w-4" aria-hidden /> {rotuloDoLote(produtosDoLote)}
+        </Button>
+        {!fornecedorDoLote && <span className="text-[12px] text-amber-800" data-testid="importacao-criar-produtos-sem-fornecedor">Escolha o fornecedor na aba Cabeçalho para criar os produtos de uma vez.</span>}
+      </>}
+      {!leitura && <div className="min-w-[14rem]" data-testid="importacao-local-para-todos">
+        <Field label="Local de estoque para todos">
+          <RefSelect resource="warehouses" value={localParaTodos} filter={{ empresa_id: conf.empresa.id }}
+            onChange={aplicarLocalParaTodos} />
+        </Field>
+      </div>}
+    </div>
 
     <div className="overflow-x-auto rounded border">
       <table className="table-dense w-full text-[12.5px]">
@@ -61,6 +76,8 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
             <th>Produto</th>
             <th className="w-12"></th>
             <th>Local</th>
+            <th>Lote</th>
+            <th>Validade</th>
           </tr>
         </thead>
         <tbody>
@@ -70,18 +87,17 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
             const v = conf.itens.find((x) => x.nItem === n)!.vinculo;
             const produto = d.produtoId ? e.produtos[d.produtoId] : undefined;
             const pede = `importacao-item-${n}`;
-            const comEntrada = d.geraEstoque && (produto?.controlaEstoque ?? true);
-            const pedeLote = item.rastro.length === 0 && comEntrada && produto && produto.controleLote !== "nenhum";
             const rotuloDoProduto = v.situacao === "lembrado" || v.situacao === "sugerido" ? `${v.produto.codigo} — ${v.produto.descricao}` : null;
-            const palpite = conferenciaDoPalpite(v);
             const podeCriar = !leitura && can("products.create") && (cadastravelPelaNota(v) || sugeridoPorPalpite(v) || v.situacao === "ambiguo");
+            const rastroNaNota = item.rastro.length > 0;
+            const loteDaNota = rastroNaNota ? item.rastro.map((r) => r.lote).filter(Boolean).join(", ") : "";
+            const validadeDaNota = rastroNaNota ? (item.rastro.find((r) => r.validade)?.validade ?? "") : "";
             return <React.Fragment key={n}>
               <tr data-testid={pede} data-vinculo={v.situacao}>
                 <td className="font-medium">{n}</td>
                 <td>
                   <div className="font-mono text-[11px] text-slate-500">{item.codigo}</div>
                   <div>{item.descricao}</div>
-                  <span className="rounded bg-slate-100 px-1.5 text-[11px] text-slate-600" data-testid={`${pede}-vinculo`}>{rotuloDoVinculo(v)}</span>
                 </td>
                 <td className="text-right tabular-nums whitespace-nowrap" data-testid={`${pede}-quantidade-nota`}>{numeroBR(item.quantidade)}</td>
                 <td className="text-slate-600">{item.unidade}</td>
@@ -108,43 +124,30 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
                     {e.erroDoItem(n, "armazem_id") && <p className="mt-0.5 text-[11px] text-red-600">{e.erroDoItem(n, "armazem_id")}</p>}
                   </div>
                 </td>
+                <td>
+                  {rastroNaNota
+                    ? <span className="text-[12px] text-slate-600" data-testid={`${pede}-lote`}>{loteDaNota || "—"}</span>
+                    : <Input data-testid={`${pede}-lote`} className="min-w-[6rem]" maxLength={60} value={d.lote} disabled={leitura}
+                      placeholder="Opcional" onChange={(ev) => e.mudarItem(n, { lote: ev.target.value })} />}
+                  {e.erroDoItem(n, "lote") && <p className="mt-0.5 text-[11px] text-red-600">{e.erroDoItem(n, "lote")}</p>}
+                </td>
+                <td>
+                  {rastroNaNota
+                    ? <span className="text-[12px] text-slate-600 whitespace-nowrap" data-testid={`${pede}-validade`}>{validadeDaNota ? dateBR(validadeDaNota) : "—"}</span>
+                    : <Input data-testid={`${pede}-validade`} type="date" className="min-w-[8rem]" value={d.validade} disabled={leitura}
+                      onChange={(ev) => e.mudarItem(n, { validade: ev.target.value })} />}
+                  {e.erroDoItem(n, "validade") && <p className="mt-0.5 text-[11px] text-red-600">{e.erroDoItem(n, "validade")}</p>}
+                </td>
               </tr>
-              {(palpite || v.situacao === "ambiguo" || item.rastro.length > 0 || pedeLote || e.fin.rateioTipo === "por_produto" || e.erroDoItem(n, "n_item") || e.erroDoItem(n, "fator")) && (
+              {(v.situacao === "ambiguo" || e.erroDoItem(n, "n_item") || e.erroDoItem(n, "fator")) && (
                 <tr data-testid={`${pede}-apoio`} className="border-b border-slate-100 bg-slate-50/50">
-                  <td colSpan={9} className="px-3 py-1.5">
+                  <td colSpan={11} className="px-3 py-1.5">
                     <div className="flex flex-col gap-1.5">
                       {e.erroDoItem(n, "fator") && <p className="text-[11px] text-red-600" data-testid={`${pede}-fator-erro`}>{e.erroDoItem(n, "fator")}</p>}
-                      {palpite && !leitura && v.situacao === "sugerido" && d.produtoId === v.produto.id && <p className="text-[12px] text-amber-800" data-testid={`${pede}-${palpite.sufixoDoTestid}`}>{palpite.texto}</p>}
                       {v.situacao === "ambiguo" && !leitura && <div className="flex flex-wrap items-center gap-1.5" data-testid={`${pede}-candidatos`}>
                         <span className="text-[12px] text-amber-800">Mais de um produto corresponde:</span>
                         {v.candidatos.map((c) => <Button key={c.id} size="sm" variant={d.produtoId === c.id ? "default" : "outline"} data-testid={`${pede}-candidato-${c.id}`}
                           onClick={() => e.mudarItem(n, { produtoId: c.id, produtoManual: true })}>{c.codigo} — {c.descricao}</Button>)}
-                      </div>}
-                      {item.rastro.length > 0 && <div data-testid={`${pede}-rastro`}>
-                        <span className="text-[12px] text-slate-600">Lotes do rastro da nota:</span>
-                        <ul className="ml-4 list-disc text-[12px]">
-                          {item.rastro.map((r, k) => <li key={k} data-testid={`${pede}-rastro-lote`}>{r.lote} — {numeroBR(r.quantidade)} {item.unidade}{r.validade ? ` — validade ${dateBR(r.validade)}` : ""}</li>)}
-                        </ul>
-                      </div>}
-                      {pedeLote && <div className="grid max-w-xl grid-cols-12 gap-3">
-                        <Field label="Lote" span={6} required error={e.erroDoItem(n, "lote")}>
-                          <Input data-testid={`${pede}-lote`} maxLength={60} value={d.lote} disabled={leitura} onChange={(ev) => e.mudarItem(n, { lote: ev.target.value })} />
-                        </Field>
-                        {produto?.controleLote === "lote_validade" && <Field label="Validade" span={6} required error={e.erroDoItem(n, "validade")}>
-                          <Input data-testid={`${pede}-validade`} type="date" value={d.validade} disabled={leitura} onChange={(ev) => e.mudarItem(n, { validade: ev.target.value })} />
-                        </Field>}
-                      </div>}
-                      {e.fin.rateioTipo === "por_produto" && <div className="grid max-w-3xl grid-cols-12 gap-3">
-                        <Field label="Natureza de despesa do item" span={6} error={e.erroDoItem(n, "categoria_financeira_id")}>
-                          <div data-testid={`${pede}-natureza`}>
-                            <RefSelect resource="financial_categories" value={d.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa} disabled={leitura} onChange={(id) => e.mudarItem(n, { categoriaId: id ?? "" })} />
-                          </div>
-                        </Field>
-                        <Field label="Centro de resultado do item" span={6} error={e.erroDoItem(n, "centro_custo_id")}>
-                          <div data-testid={`${pede}-centro`}>
-                            <RefSelect resource="cost_centers" value={d.centroId} filter={{ kind: "analytic" }} disabled={leitura} onChange={(id) => e.mudarItem(n, { centroId: id ?? "" })} />
-                          </div>
-                        </Field>
                       </div>}
                       {e.erroDoItem(n, "n_item") && <p className="text-[11px] text-red-600">{e.erroDoItem(n, "n_item")}</p>}
                     </div>

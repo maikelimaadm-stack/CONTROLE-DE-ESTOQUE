@@ -310,9 +310,6 @@ test("XML-T1 — o lote ponta a ponta: o botão conta PRODUTOS, nada é chamado 
   await escolher(page, page.getByTestId("importacao-item-3-local"), c.local.nome, "Local do item 3");
   await escolher(page, page.getByTestId("importacao-item-7-produto"), `XMLT1 existente ${r}`, "Produto do item 7");
   await escolher(page, page.getByTestId("importacao-item-7-local"), c.local.nome, "Local do item 7");
-  await page.getByTestId("importacao-aba-financeiro-rotulo").click();
-  await escolher(page, page.getByTestId("importacao-natureza"), c.ref.natureza.label, "Natureza de despesa da compra");
-  await escolher(page, page.getByTestId("importacao-centro"), c.ref.centro.label, "Centro de resultado da compra");
   const gerar = page.getByTestId("importacao-gerar-compra");
   await expect(gerar).toBeEnabled();
   const postGerar = postEm(page, `/api/compras/importacoes/${id}/gerar-compra`);

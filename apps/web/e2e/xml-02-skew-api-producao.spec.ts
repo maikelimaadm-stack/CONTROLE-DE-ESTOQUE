@@ -4,7 +4,7 @@ import { test, expect } from "./central-compras-fixtures";
 import { shaDaBase } from "./skew-fonte-da-base";
 import { vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
 import {
-  COMMITS_DA_XML02, MARCA_DA_XML02, ROTULO, TEXTO_DA_CONFERENCIA_DA_REFERENCIA, TEXTO_DA_CONFERENCIA_DO_PALPITE, abrirConferencia, apiDaBaseTemAXml02, caixaDoProduto, cenarioDaXml02,
+  COMMITS_DA_XML02, MARCA_DA_XML02, TEXTO_DA_CONFERENCIA_DA_REFERENCIA, TEXTO_DA_CONFERENCIA_DO_PALPITE, abrirConferencia, apiDaBaseTemAXml02, caixaDoProduto, cenarioDaXml02,
   escolherNoSeletor, expectCamposAvancadosAusentes, fonteDoCommitContem, fonteDoHeadContem, gerarCompraPelaTela, importarNota, itemDo, lembrarNoCorpo, lerConferencia, produtoDo,
   resumoDoVinculo, vinculoDe, vinculosLembradosDo, type ConferenciaNoFio
 } from "./xml-02-comum";
@@ -107,9 +107,9 @@ test("XML-02 · K1 (sentido 1) — a aba de itens deste web sobre a API da base:
   const item = (k: number) => page.getByTestId(`importacao-item-${k}`);
   const doItem = (k: number, sufixo: string) => page.getByTestId(`importacao-item-${k}-${sufixo}`);
 
-  // O CÓDIGO DE BARRAS (os dois mundos): o rótulo da identidade, sem "Criar produto", sem fator/lembrar na tela.
+  // O CÓDIGO DE BARRAS (os dois mundos): data-vinculo, sem rótulo/linha de palpite, sem "Criar produto".
   await expect(item(n.G)).toHaveAttribute("data-vinculo", "sugerido");
-  await expect(doItem(n.G, "vinculo")).toHaveText(ROTULO.codigoDeBarras);
+  await expect(doItem(n.G, "vinculo")).toHaveCount(0);
   await expectCamposAvancadosAusentes(page, n.G);
   await expect(doItem(n.G, "criar-produto")).toHaveCount(0);
   await expect(doItem(n.G, "sugestao-descricao")).toHaveCount(0);
@@ -117,10 +117,10 @@ test("XML-02 · K1 (sentido 1) — a aba de itens deste web sobre a API da base:
   await expect(caixaDoProduto(page, n.G)).toContainText(`${p.G.codigo} — ${p.G.descricao}`);
 
   if (mundo === "legado") {
-    // A ABA DE HOJE: os dois sem vínculo, sem linha de palpite; a pessoa escolhe o produto no seletor.
+    // A API legada: os dois sem vínculo no fio; a pessoa escolhe o produto no seletor (sem rótulo/linha de palpite na tela).
     for (const k of [n.D, n.R]) {
       await expect(item(k), `item ${k}: sem vínculo`).toHaveAttribute("data-vinculo", "nenhum");
-      await expect(doItem(k, "vinculo")).toHaveText(ROTULO.semVinculo);
+      await expect(doItem(k, "vinculo")).toHaveCount(0);
       await expectCamposAvancadosAusentes(page, k);
       await expect(doItem(k, "criar-produto"), `item ${k}: "Criar produto", como hoje`).toBeVisible();
       await expect(doItem(k, "sugestao-descricao"), `item ${k}: nenhuma linha de palpite da descrição`).toHaveCount(0);
@@ -131,17 +131,15 @@ test("XML-02 · K1 (sentido 1) — a aba de itens deste web sobre a API da base:
     await escolherNoSeletor(page, page.getByTestId(`importacao-item-${n.D}-produto`), p.D.descricao, `Produto do item ${n.D}`);
     await escolherNoSeletor(page, page.getByTestId(`importacao-item-${n.R}-produto`), p.R.descricao, `Produto do item ${n.R}`);
   } else {
-    // O MUNDO NOVO: o comportamento deste HEAD — a descrição e a referência, as duas palpite na tela.
-    await expect(doItem(n.D, "vinculo")).toHaveText(ROTULO.descricao);
-    await expect(doItem(n.D, "sugestao-descricao")).toHaveText(TEXTO_DA_CONFERENCIA_DO_PALPITE);
-    await expect(doItem(n.D, "sugestao-referencia")).toHaveCount(0);
-    await expectCamposAvancadosAusentes(page, n.D);
-    await expect(doItem(n.D, "criar-produto")).toBeVisible();
-    await expect(doItem(n.R, "vinculo")).toHaveText(ROTULO.referencia);
-    await expect(doItem(n.R, "sugestao-referencia")).toHaveText(TEXTO_DA_CONFERENCIA_DA_REFERENCIA);
-    await expect(doItem(n.R, "sugestao-descricao")).toHaveCount(0);
-    await expectCamposAvancadosAusentes(page, n.R);
-    await expect(doItem(n.R, "criar-produto")).toBeVisible();
+    // O MUNDO NOVO: palpite no fio — produto pré-selecionado, sem rótulo nem linha de conferência na tela.
+    for (const k of [n.D, n.R]) {
+      await expect(item(k), `item ${k}: sugerido`).toHaveAttribute("data-vinculo", "sugerido");
+      await expect(doItem(k, "vinculo")).toHaveCount(0);
+      await expect(doItem(k, "sugestao-descricao")).toHaveCount(0);
+      await expect(doItem(k, "sugestao-referencia")).toHaveCount(0);
+      await expectCamposAvancadosAusentes(page, k);
+      await expect(doItem(k, "criar-produto")).toBeVisible();
+    }
   }
   // Nos dois mundos, os dois itens com o produto certo (escolhido pela pessoa ou sugerido) e a conta feita.
   for (const [k, prod] of [[n.D, p.D], [n.R, p.R]] as const) {
@@ -149,7 +147,7 @@ test("XML-02 · K1 (sentido 1) — a aba de itens deste web sobre a API da base:
     await expect(doItem(k, "quantidade-nota"), `item ${k}: a quantidade da nota na tabela`).toBeVisible();
   }
 
-  const rotulos = { G: await doItem(n.G, "vinculo").textContent(), D: await doItem(n.D, "vinculo").textContent(), R: await doItem(n.R, "vinculo").textContent() };
+  const rotulos = { G: await item(n.G).getAttribute("data-vinculo"), D: await item(n.D).getAttribute("data-vinculo"), R: await item(n.R).getAttribute("data-vinculo") };
 
   // O "GERAR COMPRA" contra a base.
   const g = await gerarCompraPelaTela(page, c, id, [n.G, n.D, n.R]);
