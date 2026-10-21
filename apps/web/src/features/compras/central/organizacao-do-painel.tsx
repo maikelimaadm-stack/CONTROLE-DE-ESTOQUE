@@ -113,6 +113,8 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
      parcelas (com a entrada, quando há). Os totais do documento ficam na aba Totais; à direita, as contas. */
   const financeiro = presentes(FINANCEIRO);
   const tipoTitulo = fiscalNoPainel(e);
+  /* Com a lista de parcelas manual, a data de cada parcela é o cronograma — o "Vencimento" solto não aparece. */
+  const vencimentoSolto = financeiro.includes("data_vencimento") && !e.ajustarParcelas;
   if (financeiro.length || tipoTitulo) {
     abas.push({
       value: valorUnico("financeiro"), label: "Financeiro",
@@ -121,8 +123,8 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
         {financeiro.includes("condicao_pagamento_id") && <React.Fragment>{desenharCampo("condicao_pagamento_id")}</React.Fragment>}
         {tipoTitulo && <div className="max-w-[300px]"><TipoDeTituloDaCriacao e={e} /></div>}
         {financeiro.includes("forma_pagamento_id") && <React.Fragment>{desenharCampo("forma_pagamento_id")}</React.Fragment>}
-        {(financeiro.includes("data_vencimento") || financeiro.includes("plano_parcelas")) && <Divisor />}
-        {financeiro.includes("data_vencimento") && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
+        {(vencimentoSolto || financeiro.includes("plano_parcelas")) && <Divisor />}
+        {vencimentoSolto && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
         {financeiro.includes("plano_parcelas") && <React.Fragment>{desenharCampo("plano_parcelas")}</React.Fragment>}
       </PainelRepartido>
     });
