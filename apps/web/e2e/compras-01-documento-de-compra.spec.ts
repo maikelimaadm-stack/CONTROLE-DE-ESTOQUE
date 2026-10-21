@@ -79,13 +79,13 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
-  await escolher(page, "Local de estoque", c.nomeArmazem);
   // O frete compõe o valor: mora na aba TOTAIS, junto das despesas e do total final.
   await abrirAbaDoPainelDeCompras(page, "Totais");
   await page.getByTestId("compras-frete").fill("10.00");
   const itens = page.getByTestId("compras-itens");
   await itens.getByTestId("central-compras-adicionar-item").click();
   const linha = itens.locator("tbody tr").first();
+  await escolherNaLinha(page, linha.getByTestId("central-compras-armazem"), c.nomeArmazem);
   await escolherNaLinha(page, linha.getByTestId("central-compras-produto"), c.nomeProduto);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");

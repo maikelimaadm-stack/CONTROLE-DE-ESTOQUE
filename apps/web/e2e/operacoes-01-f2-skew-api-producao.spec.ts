@@ -266,9 +266,9 @@ test("OP01-F2 · K-1b (sentido 1) — a Central de Compras deste web sobre a API
   conferirBlocoDoMundo(await abrirCriacaoDeCompra(page, automatica, c), mundo, { confirmacaoAutomatica: true, aceitaSemItens: false }, "compra, TOP Automática");
   await expect(salvar, `mundo ${mundo}: o nome acessível do Salvar com a TOP Automática, exato`).toHaveAttribute("aria-label", rotuloComAutomatica(mundo));
   await expect(salvar, "e a dica também").toHaveAttribute("data-dica", rotuloComAutomatica(mundo));
-  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
+  await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), c.nomeArmazem);
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), c.nomeProduto);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");

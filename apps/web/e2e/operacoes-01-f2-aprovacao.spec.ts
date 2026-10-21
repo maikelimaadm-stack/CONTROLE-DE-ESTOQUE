@@ -271,9 +271,9 @@ test("F2A-2 — compra, TOP Automática + aprovação 'Sempre': 'Salvar e confir
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
-  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
+  await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), c.nomeArmazem);
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), c.nomeProduto);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");

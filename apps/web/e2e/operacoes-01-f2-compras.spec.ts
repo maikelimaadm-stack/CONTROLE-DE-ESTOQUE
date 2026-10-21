@@ -118,11 +118,11 @@ async function abrirCriacao(page: Page, top: { id: string; codigo: string }, c: 
   return corpo["regrasGerais"];
 }
 
-/** Um item na grade: local padrão acima da grade + produto, 5 × 20,00. */
+/** Um item na grade: Local POR LINHA + produto, 5 × 20,00. */
 async function umItem(page: Page, c: Cenario) {
-  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
+  await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.nomeArmazem);
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");

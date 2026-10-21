@@ -633,8 +633,9 @@ describe("CP-8 — item 0: TOP que exige vencimento + condição de pagamento, s
     const id = (j(r) as { id: string }).id;
     const plano = (await admin.query<{ first_due_date: string | null; data_vencimento: string | null }>(
       "select plano_parcelas->>'first_due_date' as first_due_date, data_vencimento::text from erp.documentos_compra where id=$1", [id])).rows[0]!;
-    expect(plano.data_vencimento, "o campo Vencimento ficou vazio").toBeNull();
     expect(plano.first_due_date, "o plano gravado tem o primeiro vencimento").toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Denormalização do 1º vencimento do plano no documento (mesmo contrato do A1-0).
+    expect(plano.data_vencimento, "vencimento denormalizado do plano da condição").toBe(plano.first_due_date);
 
     await confirmada(id, ligada);
     const t = await titulos(id);
