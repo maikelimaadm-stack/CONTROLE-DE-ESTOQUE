@@ -21,8 +21,8 @@ import { fiscalNoPainel } from "./rateio-no-rodape";
 /**
  * CENTRAL DE COMPRAS — DADOS PRINCIPAIS: só identificar a compra.
  * Geometria = ColunaDeCampos / rótulo à frente (igual à consulta). Redistribuição: financeiro,
- * rateio, fiscal e entrega no rodapé (`organizacao-do-painel.tsx`). Local de estoque padrão
- * acima da grade (`criacao-itens.tsx`).
+ * rateio, fiscal e entrega no rodapé (`organizacao-do-painel.tsx`). Local de estoque na LINHA da grade
+ * (`criacao-itens.tsx`).
  */
 
 /** "Novo pedido de compra" / "Nova compra" — o nome do documento ainda sem número; o ponto acende com alteração. */

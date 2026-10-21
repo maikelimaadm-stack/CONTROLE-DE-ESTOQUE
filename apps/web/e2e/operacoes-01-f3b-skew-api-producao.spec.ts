@@ -116,6 +116,17 @@ const descricoes = (painel: Locator) => painel.getByRole("option").locator('[dat
 /** Os avisos (toasts) na tela. */
 const avisos = (page: Page) => page.locator("[data-sonner-toast]");
 
+/** Escolhe o Local de estoque NA LINHA (a célula da grade) pela pesquisa do motor. */
+async function escolherLocalDaLinha(page: Page, prefixo: string, celula: Locator, nome: string) {
+  await celula.click();
+  const painel = page.getByTestId(`${prefixo}-pesquisa`);
+  await expect(painel).toBeVisible();
+  await painel.getByRole("combobox").fill(nome);
+  await painel.getByRole("option").filter({ hasText: nome }).first().click();
+  await expect(painel).toHaveCount(0);
+  await expect(celula).toContainText(nome);
+}
+
 /**
  * A pesquisa de produto da LINHA, aberta e com o TAG digitado, conferida contra o mundo e o sentido da Central. Devolve
  * o painel aberto (quem chama escolhe o produto). Legado: a de HOJE (`/options`), os três produtos (sem filtro de
@@ -286,19 +297,12 @@ test("OP01-F3b · K-1b (sentido 1) — a Central de Compras deste web sobre a AP
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await conferirCapacidadeNoFio(await capacidade, mundo);
 
-  // A GRADE ENXUTA (decisão 319): produto/qtd/valores visíveis; o Local de estoque padrão fica ACIMA da grade
-  // (não como coluna). O layout da base ainda cita armazem_id — a organização da tela o tira da grade.
+  // O LOCAL DE ESTOQUE É COLUNA DA GRADE (por linha), sem campo acima dela. O layout da base cita armazem_id.
   const camposDaBase = await camposDoLayoutDaBase(await layout);
   expect(camposDaBase.indexOf("armazem_id") >= 0 && camposDaBase.indexOf("produto_id") >= 0, "premissa: o layout da base cita Local de estoque e Produto").toBe(true);
   const lerDesenhadas = () => page.getByTestId("compras-itens").locator("thead th[data-campo]").evaluateAll((ths) => ths.map((th) => th.getAttribute("data-campo") ?? ""));
-  await expect.poll(lerDesenhadas, { message: "a grade enxuta desenha o Produto (sem coluna de armazém)" }).toEqual(expect.arrayContaining(["produto_id"]));
-  const desenhadas = await lerDesenhadas();
-  expect(desenhadas.includes("armazem_id"), "Local de estoque não é coluna da grade (fica acima)").toBe(false);
-
-  // O LOCAL DE ESTOQUE DO CABEÇALHO (acima da grade) e o cabeçalho do documento
-  const localPadrao = page.getByTestId(`${PC}-local-padrao`);
-  await expect(localPadrao).toContainText("Local de estoque");
-  await escolherNoCampo(page, localPadrao, c.l1.nome);
+  await expect.poll(lerDesenhadas, { message: "a grade desenha o Produto e o Local de estoque" }).toEqual(expect.arrayContaining(["produto_id", "armazem_id"]));
+  await expect(page.getByTestId(`${PC}-local-padrao`), "sem Local de estoque no cabeçalho").toHaveCount(0);
   await escolherNoCampo(page, campoPeloRotulo(page, "Fornecedor"), fornecedor);
   const abaRateio = page.getByTestId(`${PC}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
   await expect(abaRateio, "Natureza/centro estão na aba Rateio e classificação").toBeVisible();
@@ -309,6 +313,8 @@ test("OP01-F3b · K-1b (sentido 1) — a Central de Compras deste web sobre a AP
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
   await expect(page.getByTestId(`${PC}-linha`)).toHaveCount(1);
+  // o local é escolhido NA LINHA (a coluna da grade)
+  await escolherLocalDaLinha(page, PC, linha.getByTestId(`${PC}-armazem`), c.l1.nome);
 
   // A PESQUISA DE PRODUTO da linha (entrada): P2, sem saldo
   const painel = await pesquisarProdutoDaLinha(page, PC, linha.getByTestId(`${PC}-produto`), c, mundo, "entrada");
@@ -330,7 +336,7 @@ test("OP01-F3b · K-1b (sentido 1) — a Central de Compras deste web sobre a AP
   const enviado = r.request().postDataJSON() as Record<string, unknown> & { itens: Record<string, unknown>[] };
   expect(Object.keys(enviado).sort(), "o POST leva as chaves de HOJE (a lista de CC-7): nenhuma chave de local no cabeçalho").toEqual(CHAVES_DO_POST_DA_COMPRA);
   expect(enviado.itens.map((i) => Object.keys(i).sort()), "e o item, as de hoje").toEqual([CHAVES_DO_ITEM_DA_COMPRA]);
-  expect(enviado.itens[0], "o item: o produto escolhido e o local que a linha recebeu do cabeçalho").toMatchObject({ produto_id: c.p2.id, armazem_id: c.l1.id });
+  expect(enviado.itens[0], "o item: o produto escolhido e o local escolhido na linha").toMatchObject({ produto_id: c.p2.id, armazem_id: c.l1.id });
   expect(JSON.stringify(enviado).split(c.l1.id).length - 1, "o id do local aparece UMA vez no corpo: no item").toBe(1);
   await expect(page, "depois do POST a Central abre a consulta da compra salva").toHaveURL(new RegExp(`/compras/compras/${id}$`));
   const gravada = await api<{ itens: { produto_id: string; armazem_id: string }[] }>(page, "GET", `/api/compras/compras/${id}`);

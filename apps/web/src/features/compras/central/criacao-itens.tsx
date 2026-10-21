@@ -3,7 +3,6 @@ import * as React from "react";
 import type { ColunaDoLayout } from "@agro/domain";
 import { ItensDaCentral as ItensDoMotor, type LayoutDosItens, type LoteDosItens } from "@/features/central/itens";
 import { PESQUISA_DE_PRODUTO_DA_ENTRADA } from "@/features/central/contrato";
-import { CampoDoLocalPadrao } from "@/features/central/local-padrao";
 import type { ColunaDoEditorDeItens, ItemRow } from "@/features/docs/shared";
 import { PREFIXO_CENTRAL_COMPRAS, colunasDosItensDeCompras } from "./adaptador";
 import type { EstadoDaCriacao } from "./estado";
@@ -24,13 +23,12 @@ const COLUNAS_DA_GRADE: ReadonlySet<string> = new Set([
  * os itens em `receber.tsx` (`central-compras.tsx` escolhe um ou outro pelo modo).
  *
  * Valor unitário: é o do documento (o digitado ou o padrão), nunca o custo médio do local — a compra FORMA o custo,
- * não o lê (`custoMedioNoUnitario={false}`; o saldo do local continua lido). Local de estoque por linha: a coluna é
- * permitida (`armazemPorItem`) e só é forçada quando a regra da operação o exige (`armazemForcado`); fora disso, o
- * layout manda.
+ * não o lê (`custoMedioNoUnitario={false}`; o saldo do local continua lido). Local de estoque POR LINHA: a coluna é
+ * forçada na grade (`armazemForcado`), inclusive quando o layout não a traz — cada item escolhe o seu local.
  *
- * OPERACOES-01 F3b (decisão 280): a linha NOVA nasce com o "Local de estoque" do cabeçalho (`localDoCabecalho`, estado
- * da tela, do `useEstadoDaCriacao`) e troca o seu na célula; a pesquisa de produto é a da ENTRADA — aparece tudo, com o
- * saldo do local da linha para quem o vê (com a capacidade da pesquisa; sem ela, a pesquisa de antes).
+ * OPERACOES-01 F3b (decisão 280): não há mais campo de local acima da grade; a linha NOVA nasce com o local padrão
+ * (`armazemPadrao`: o de cadastro do layout, estado da tela) e troca o seu na célula; a pesquisa de produto é a da
+ * ENTRADA — aparece tudo, com o saldo do local da linha para quem o vê (com a capacidade da pesquisa; sem ela, a de antes).
  *
  * EDITAR-02 (decisão 313): na EDIÇÃO, as travas de cada linha (`travasDaLinha`: o item salvo não sai — o Remover não
  * aparece com ele marcado —; produto, quantidade, valor unitário e descontos conforme os limites) e, sem item novo
@@ -51,10 +49,10 @@ function caminhoDoMotor(caminho: string): string | null {
 }
 
 export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) {
-  const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, travasDaLinha, aceitaLinhaNova, localNaGrade, cabecalho, escolherLocal } = estado;
+  const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, travasDaLinha, aceitaLinhaNova } = estado;
   const colunas = React.useMemo(() => colunasDosItensDeCompras(variante), [variante]);
 
-  /** Grade enxuta (decisão 319): produto, qtd, unitário, desconto, total. Local de estoque padrão fica acima da grade. */
+  /** Grade enxuta (decisão 319): produto, qtd, unitário, desconto, total — mais o Local de estoque de CADA linha. */
   const layout = React.useMemo<LayoutDosItens>(() => {
     const lista: ColunaDoLayout[] = colunasDoLayout
       ? colunasDoLayout.map((c) => ({ campo: c.chave, obrigatorio: c.obrigatorio, ...(c.rotulo ? { rotulo: c.rotulo } : {}) }))
@@ -72,13 +70,11 @@ export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) 
   const controleDeLote = React.useMemo<LoteDosItens | null>(
     () => (ehCompra ? { daLinha: (it: ItemRow) => lote.daLinha(it.product_id) } : null), [ehCompra, lote]);
 
-  return <div data-testid="compras-itens" className="flex flex-col gap-2">
-    {localNaGrade && <div data-testid="compras-local-acima-da-grade" className="max-w-md">
-      <CampoDoLocalPadrao prefixoTestid={PREFIXO_CENTRAL_COMPRAS} empresaId={cabecalho.empresa_id} valor={localDoCabecalho} onChange={escolherLocal} />
-    </div>}
-    {/* Local padrão acima da grade: não forçar coluna por linha (evita Local duplicado na tela). */}
+  // `min-h-0 flex-1`: a coluna do Itens é alta e recorta o que passa dela — sem isso a grade cresce e some, sem rolagem.
+  return <div data-testid="compras-itens" className="flex min-h-0 flex-1 flex-col gap-2">
+    {/* Local de estoque POR LINHA: a coluna é forçada na grade (cada item escolhe o seu); `armazemPadrao` só semeia a linha nova. */}
     <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} items={itens} onChange={setItens} layout={layout}
-      erros={erros} armazemPadrao={localDoCabecalho} armazemPorItem armazemForcado={false} estoqueNaGrade={false} custoMedioNoUnitario={false}
+      erros={erros} armazemPadrao={localDoCabecalho} armazemPorItem armazemForcado estoqueNaGrade={false} custoMedioNoUnitario={false}
       lote={controleDeLote} pesquisaDeProduto={PESQUISA_DE_PRODUTO_DA_ENTRADA} travasDaLinha={travasDaLinha} aceitaLinhaNova={aceitaLinhaNova} />
   </div>;
 }
