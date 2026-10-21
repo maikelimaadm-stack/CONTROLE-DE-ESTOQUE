@@ -14,6 +14,9 @@ test-results/
 supabase/.branches
 supabase/.temp
 
+# cache local do pnpm (nunca versionar — content-addressable store do store-dir)
+.pnpm-store/
+
 # cache incremental do TypeScript (artefato de build, nunca versionado)
 *.tsbuildinfo
 
