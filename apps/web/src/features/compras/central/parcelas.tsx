@@ -2,7 +2,8 @@
 import * as React from "react";
 import { buildInstallments } from "@agro/domain";
 import { dateBR, num } from "@/lib/utils";
-import { Input, NativeSelect } from "@/components/ui";
+import { Input } from "@/components/ui";
+import { MgSelect } from "@/components/ui/mg-controls";
 import { CampoDaCentral, ChaveSimNao, DataDaCentral } from "@/features/central/campo";
 import type { Plan } from "@/features/docs/shared";
 import type { EstadoDaCriacao } from "./estado";
@@ -58,11 +59,9 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
     </>}
 
     <CampoDaCentral rotulo="Parcelas" icone="selecao" preenchido testId="compras-parcelas-campo">
-      <NativeSelect data-testid="compras-parcelas" value={e.ajustarParcelas ? "ajustar" : "padrao"}
-        onChange={(ev) => e.setAjustarParcelas(ev.target.value === "ajustar")}>
-        <option value="padrao">Pela condição (ou à vista)</option>
-        <option value="ajustar">Ajustar parcelas</option>
-      </NativeSelect>
+      <MgSelect data-testid="compras-parcelas" value={e.ajustarParcelas ? "ajustar" : "padrao"}
+        onChange={(v) => e.setAjustarParcelas(v === "ajustar")}
+        options={[{ value: "padrao", label: "Pela condição (ou à vista)" }, { value: "ajustar", label: "Ajustar parcelas" }]} />
     </CampoDaCentral>
 
     {e.ajustarParcelas && <>

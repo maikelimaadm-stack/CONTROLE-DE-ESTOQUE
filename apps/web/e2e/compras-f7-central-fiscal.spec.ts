@@ -29,6 +29,13 @@ const P = "central-compras";
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 const caminho = (r: Response) => new URL(r.url()).pathname;
 
+/** Seletor PADRÃO de lista fixa (MgSelect, sem cadastro): abre a caixa e escolhe a opção pelo rótulo. */
+async function escolherNaLista(page: Page, gatilho: Locator, rotulo: string) {
+  await gatilho.click();
+  const painel = page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last();
+  await painel.getByRole("option", { name: literal(rotulo) }).first().click();
+}
+
 /* ═════════════════════════════════ a chave sintética ═════════════════════════════════ */
 
 /** DV do CNPJ (módulo 11, pesos 2..9 da direita para a esquerda, reiniciando). */
@@ -155,7 +162,7 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await fiscais.getByTestId("compras-chave-acesso").fill(chave.valida.replace(/(\d{4})(?=\d)/g, "$1 ")); // como no DANFE, com espaços
   await fiscais.getByTestId("compras-uf-nota").fill("sp");
   await expect(fiscais.getByTestId("compras-uf-nota"), "a UF vai em maiúsculas").toHaveValue("SP");
-  await page.getByTestId("compras-tipo-documento-fiscal").selectOption("nfe");
+  await escolherNaLista(page, page.getByTestId("compras-tipo-documento-fiscal"), "NF-e");
   await fiscais.getByTestId("compras-valor-ipi").fill("10.00");
   // O seguro mora no Financeiro, junto do que compõe o valor do documento.
   const abaFinanceiro = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Financeiro" });
@@ -168,7 +175,7 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   const classificacao = rateio.getByTestId("compras-item-classificacao-0");
   await expect(classificacao.getByTestId("compras-item-0-gera-estoque"), "premissa: o item nasce gerando estoque").toBeChecked();
   await classificacao.getByTestId("compras-item-0-imobilizado").check();
-  await expect(rateio.getByTestId("compras-rateio-tipo")).toHaveValue("documento");
+  await expect(rateio.getByTestId("compras-rateio-tipo")).toContainText("Natureza e centro do documento");
 
   // NO FIO: só as chaves preenchidas, os valores em TEXTO, a chave sem os espaços
   const post = postDaCompra(page);

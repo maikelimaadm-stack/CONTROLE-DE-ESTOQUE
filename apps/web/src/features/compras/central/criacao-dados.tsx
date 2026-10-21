@@ -4,7 +4,8 @@ import Link from "next/link";
 import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
 import { useAuth } from "@/lib/auth";
 import { enumOptions } from "@/lib/copy";
-import { Input, LoadingState, NativeSelect, Textarea } from "@/components/ui";
+import { Input, LoadingState, Textarea } from "@/components/ui";
+import { MgSelect } from "@/components/ui/mg-controls";
 import { RefSelect } from "@/components/ui/ref-select";
 import { MensagemTop } from "@/features/sales/tipo-operacao-select";
 import { CampoDaCentral, ColunaDeCampos, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
@@ -154,10 +155,8 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   }
 
   const tipoDoc = fiscalNoPainel(e) && <CampoDaCentral key="tipo-documento-fiscal" rotulo="Tipo de documento" icone="selecao" preenchido={e.fiscal.tipo_documento_fiscal !== ""} testId="compras-tipo-documento-fiscal-campo" data-campo-fiscal="tipo_documento_fiscal">
-    <NativeSelect data-testid="compras-tipo-documento-fiscal" value={e.fiscal.tipo_documento_fiscal} onChange={(ev) => e.mudarFiscal({ tipo_documento_fiscal: ev.target.value })}>
-      <option value="">—</option>
-      {tiposDoc.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </NativeSelect>
+    <MgSelect data-testid="compras-tipo-documento-fiscal" value={e.fiscal.tipo_documento_fiscal} onChange={(v) => e.mudarFiscal({ tipo_documento_fiscal: v })}
+      allowEmpty placeholder="—" options={tiposDoc} />
   </CampoDaCentral>;
 
   /* EDITAR-02: fiscais em leitura ficam na aba Fiscal do painel quando a criação os teria; na edição sem painel fiscal, mantém nos Dados. */

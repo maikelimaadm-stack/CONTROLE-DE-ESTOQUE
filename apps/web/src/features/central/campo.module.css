@@ -70,9 +70,14 @@
   font-weight: 500;
   line-height: 15px;
   color: #64748b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* O rótulo PODE QUEBRAR (decisão do usuário, 10/2026): nome comprido vira duas linhas dentro dos 30px da linha
+     (12px × 1,15 ≈ 13,8 por linha), em vez de perder o começo do nome — o "…de despesa" que aparecia cortado. */
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: right;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
   pointer-events: none;
   transition: font-size .22s cubic-bezier(.2, .8, .2, 1), padding .22s cubic-bezier(.2, .8, .2, 1), top .22s cubic-bezier(.2, .8, .2, 1);
 }
@@ -293,6 +298,10 @@ fieldset:disabled .caixa .controle { cursor: default; }
   font-size: 11.5px;
   line-height: 1.1;
   color: #9ca3af;
+  /* no compacto o rótulo flutua DENTRO da caixa: ele não quebra (quebraria sobre o valor) — segue em uma linha */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 [data-densidade="compacto"] .rotulo::after { content: none; }
 [data-densidade="compacto"] .obrigatorio { margin-left: 0; }
