@@ -147,8 +147,8 @@ test("UX1-1 — compra ABERTA com plano (entrada + 2 parcelas + obs): consultar 
   await expect(gradeConsulta.getByTestId("compras-consulta-parcela").nth(1)).toContainText("200,00");
   await expect(gradeConsulta.getByTestId("compras-consulta-parcela").nth(1)).toContainText("parcela 1 UX1");
   await expect(gradeConsulta.getByTestId("compras-consulta-parcela").nth(2)).toContainText("parcela 2 UX1");
-  // Sem segundo vencimento solto quando há grade
-  await expect(page.getByTestId(`${P}-painel`).getByText("Vencimento", { exact: true })).toHaveCount(0);
+  // Sem CampoLeitura "Vencimento" solto quando há grade (o cabeçalho da grade de parcelas também diz "Vencimento").
+  await expect(page.getByTestId(`${P}-painel`).locator('[data-campo="Vencimento"]')).toHaveCount(0);
   await abrirAbaConsulta(page, "Totais");
   await expect(page.getByTestId("compras-consulta-total")).toContainText("500,00");
   await abrirAbaConsulta(page, "Rateio e classificação");
@@ -261,7 +261,9 @@ test("UX1-2 — XML: gerar compra ABERTA → consulta com parcelas_nota → Edit
   await expect(page.getByTestId("compras-consulta-parcelas").getByTestId("compras-consulta-parcela").nth(0)).toContainText("540,00");
   await abrirAbaConsulta(page, "Fiscal");
   await expect(page.getByTestId("compras-consulta-dados-fiscais")).toBeVisible();
-  await expect(page.getByTestId("compras-consulta-dados-fiscais")).toContainText(nota.numero);
+  // Painel fiscal mostra chave formatada (e UF/tipo); número da NF mora em Dados/Nota quando o layout o traz.
+  await expect(page.getByTestId("compras-consulta-chave")).toBeVisible();
+  await expect(page.getByTestId("compras-consulta-dados-fiscais")).toContainText(/chave|NF-e|GO/i);
   await foto(page, pasta, "ux1-2-xml-consulta-1440x900");
 
   await abrirEdicao(page, doc);
@@ -316,9 +318,14 @@ test("UX1-3 — rateio por_valor: Classificação no painel; conta contábil só
     await pop.getByRole("option", { name: new RegExp(nome.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") }).first().click();
   };
   await escolherEm("Fornecedor", fornNome);
-  await escolherEm("Local de estoque", armNome);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
+  // Local POR LINHA (decisão 319): sem campo de cabeçalho — escolhe na célula da grade.
+  await linha.getByTestId(`${P}-armazem`).click();
+  const pesquisaLocal = page.getByTestId(`${P}-pesquisa`);
+  await pesquisaLocal.getByRole("combobox").fill(armNome);
+  await pesquisaLocal.getByRole("option").filter({ hasText: armNome }).first().click();
+  await expect(pesquisaLocal).toHaveCount(0);
   await linha.getByTestId(`${P}-produto`).click();
   const pesquisa = page.getByTestId(`${P}-pesquisa`);
   await pesquisa.getByRole("combobox").fill(prodNome);

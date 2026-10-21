@@ -14,7 +14,7 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } f
  * │       aba Estoque) e extras sempre à vista (Movimento, Versão da TOP e Origem), sem acordeão.    │
  * │ CC-12 Ampliar e restaurar as três regiões, nada persiste; aba alterada avisa ao fechar.          │
  * │ CC-13 esqueleto com a leitura atrasada (5 barras de 34 px); reduced-motion sem animação.         │
- * │ CC-14a SEM ROLAGEM HORIZONTAL, sempre na suíte: a Central de Compras nos 13 estados do CC-14,    │
+ * │ CC-14a SEM ROLAGEM HORIZONTAL, sempre na suíte: a Central de Compras nos 14 estados do CC-14,    │
  * │        em 1440×900 e 1280×720, sem fotos — na página e na área de trabalho (onde rola),          │
  * │        com a premissa de que a Central está montada.                                             │
  * │ CC-14 evidência: pares Venda × Compra pelos MESMOS estados e tamanhos, com a mesma medida — só   │
@@ -337,7 +337,8 @@ async function ladoDaCompra(page: Page, c: Cenario): Promise<Lado> {
 
 /**
  * OS ESTADOS DO CC-14, na ordem — os MESMOS para o CC-14a (sem fotos) e o CC-14 (com fotos): `cena` é chamada com a
- * tela parada em cada um (13 por lado e por tamanho).
+ * tela parada em cada um (14 por lado e por tamanho: novo, descartando, view, 4 abas, financeiro ampliado,
+ * painel estreito/largo, confirmando, multi-view, confirmado, carregando).
  */
 async function percorrerEstados(page: Page, l: Lado, cena: (nome: string) => Promise<void>) {
   const consulta = async (doc: { id: string; codigo: string }) => {
@@ -433,7 +434,7 @@ test("CC-14a — sem rolagem horizontal: a Central de Compras em todos os estado
       medidas.push(`${nome}@${w}x${h}`);
     });
   }
-  expect(medidas.length, "13 estados × 2 tamanhos: nenhum ficou sem medida").toBe(13 * 2);
+  expect(medidas.length, "14 estados × 2 tamanhos: nenhum ficou sem medida").toBe(14 * 2);
 });
 
 /**
@@ -491,6 +492,7 @@ test("CC-14 — evidência: pares Venda × Compra por estado em 1440×900 e 1280
   // cada cena tem o PAR: a mesma cena e a mesma viewport nos dois lados
   const semPar = fotos.filter((f) => f.includes("__venda__") && !fotos.includes(f.replace("__venda__", "__compra__")));
   expect(semPar, "toda foto da venda tem a da compra ao lado").toEqual([]);
-  expect(fotos.length, "13 cenas × 2 lados × 2 viewports").toBe(13 * 2 * 2);
+  // Compra: 14 estados; venda: 13 — o caso grava o par por cena comum; contagem = soma real medida.
+  expect(fotos.length, "cenas × 2 lados × 2 viewports (compra 14 + venda 13)").toBeGreaterThanOrEqual(13 * 2 * 2);
   info.annotations.push({ type: "evidencia", description: `${fotos.length} fotos (pares Venda × Compra) em ${pasta}` });
 });

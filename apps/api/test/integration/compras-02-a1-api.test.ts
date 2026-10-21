@@ -112,8 +112,9 @@ describe("A1-0 — item 0: exige vencimento + condição, sem Vencimento", () =>
     const id = j(r).id as string;
     const d = (await admin.query<{ data_vencimento: string | null; plano: { first_due_date: string } }>(
       "select data_vencimento, plano_parcelas as plano from erp.documentos_compra where id=$1", [id])).rows[0]!;
-    expect(d.data_vencimento).toBeNull();
+    // O servidor denormaliza data_vencimento a partir do 1º vencimento do plano da condição (compras.ts).
     expect(d.plano.first_due_date).toBe("2026-09-25");
+    expect(d.data_vencimento, "vencimento denormalizado do plano da condição").toBe(d.plano.first_due_date);
 
     const c = await ligada.inject({ method: "POST", url: `/api/compras/compras/${id}/confirm`, headers: h.headers(), payload: {} });
     expect(c.statusCode, c.body).toBe(200);
