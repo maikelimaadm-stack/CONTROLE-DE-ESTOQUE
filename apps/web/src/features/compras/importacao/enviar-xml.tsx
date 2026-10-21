@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { FileUp } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -15,6 +16,8 @@ import {
  * Compras (ou por `?importar=xml`, vindo da solicitação de compra). O arquivo (XML, ou ZIP com um único XML) vai em
  * base64, como veio: quem lê a nota, confere o protocolo, a chave e o destinatário, e guarda o original é o SERVIDOR.
  *
+ * Visual: mesma família do sistema (dialog + zona de arquivo + alertas densos) — sem wizard Base44 nem parser no cliente.
+ *
  *   201 → a conferência (`/compras/importacoes/<id>`, levando a solicitação quando houver);
  *   422 → as recusas, uma por linha (`importacao-recusa`); o destinatário que corresponde a mais de uma empresa pede a
  *         escolha da empresa (`importacao-empresa`, só as do escopo que o servidor mandou) e o reenvio;
@@ -26,10 +29,18 @@ import {
 
 interface Conflito { mensagem: string; compra: string | null }
 
+function tamanhoLegivel(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function DialogoImportarXml({ aberto, onFechar, solicitacaoId }: { aberto: boolean; onFechar: () => void; solicitacaoId: string | null }) {
   const router = useRouter();
   const chave = useChaveDeIdempotencia();
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
   const [arquivo, setArquivo] = React.useState<File | null>(null);
+  const [arrastando, setArrastando] = React.useState(false);
   const [recusas, setRecusas] = React.useState<string[]>([]);
   const [candidatas, setCandidatas] = React.useState<{ id: string; nome: string }[] | null>(null);
   const [empresaId, setEmpresaId] = React.useState("");
@@ -98,30 +109,87 @@ export function DialogoImportarXml({ aberto, onFechar, solicitacaoId }: { aberto
 
   const fechar = (o: boolean) => {
     if (o || enviando) return;
-    setArquivo(null); limpar(); setCandidatas(null); setEmpresaId("");
+    setArquivo(null); limpar(); setCandidatas(null); setEmpresaId(""); setArrastando(false);
+    if (inputRef.current) inputRef.current.value = "";
     onFechar();
+  };
+
+  const soltar = (ev: React.DragEvent) => {
+    ev.preventDefault();
+    setArrastando(false);
+    if (enviando) return;
+    const f = ev.dataTransfer.files?.[0] ?? null;
+    if (!f) return;
+    const nome = f.name.toLowerCase();
+    if (!nome.endsWith(".xml") && !nome.endsWith(".zip")) {
+      setRecusas(["Envie um arquivo .xml ou .zip."]);
+      setArquivo(null);
+      return;
+    }
+    escolherArquivo(f);
   };
 
   return <Dialog open={aberto} onOpenChange={fechar} title="Importar XML de nota de compra" size="md" testId="importacao-upload" preventClose={enviando}
     footer={<>
       <Button variant="outline" onClick={() => fechar(false)} disabled={enviando}>Fechar</Button>
-      <Button data-testid="importacao-enviar" loading={enviando} disabled={!arquivo || (candidatas !== null && !empresaId)} onClick={() => void enviar()}>Enviar</Button>
+      <Button data-testid="importacao-enviar" loading={enviando} disabled={!arquivo || (candidatas !== null && !empresaId)} onClick={() => void enviar()}>Enviar e conferir</Button>
     </>}>
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-slate-600">Envie o arquivo XML da NF-e (ou um ZIP com um único XML). O servidor lê a nota, guarda o original e abre a conferência. Nada é lançado até você gerar a compra.</p>
-      {solicitacaoId && <p className="text-xs text-slate-500" data-testid="importacao-upload-solicitacao">A compra gerada fica vinculada à solicitação de compra de origem.</p>}
-      <div className="grid grid-cols-12 gap-3">
-        <Field label="Arquivo da nota (XML ou ZIP)" span={12}>
-          <input data-testid="importacao-arquivo" type="file" accept=".xml,.zip" className="w-full text-xs" disabled={enviando}
-            onChange={(ev) => escolherArquivo(ev.target.files?.[0] ?? null)} />
-        </Field>
-        {candidatas && <Field label="Empresa da compra" span={12} required>
-          <NativeSelect data-testid="importacao-empresa" value={empresaId} onChange={(ev) => { setEmpresaId(ev.target.value); setRecusas([]); }} disabled={enviando}>
-            <option value="">Escolha a empresa</option>
-            {candidatas.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-          </NativeSelect>
-        </Field>}
-      </div>
+      <p className="text-sm text-slate-600">O servidor lê a NF-e, guarda o original e abre a conferência. Nada é lançado até você gerar a compra.</p>
+      {solicitacaoId && <p className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-[12.5px] text-sky-900" data-testid="importacao-upload-solicitacao">A compra gerada fica vinculada à solicitação de compra de origem.</p>}
+
+      <Field label="Arquivo da nota (XML ou ZIP)" span={12}>
+        <div
+          data-testid="importacao-zona-arquivo"
+          data-arrastando={arrastando ? "sim" : "nao"}
+          data-com-arquivo={arquivo ? "sim" : "nao"}
+          onDragEnter={(ev) => { ev.preventDefault(); if (!enviando) setArrastando(true); }}
+          onDragOver={(ev) => { ev.preventDefault(); if (!enviando) setArrastando(true); }}
+          onDragLeave={(ev) => { ev.preventDefault(); setArrastando(false); }}
+          onDrop={soltar}
+          className={`relative flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center transition-colors ${
+            arrastando ? "border-brand-500 bg-brand-50" : arquivo ? "border-slate-300 bg-slate-50" : "border-slate-300 bg-white hover:border-brand-400 hover:bg-slate-50"
+          } ${enviando ? "pointer-events-none opacity-60" : "cursor-pointer"}`}
+          onClick={() => { if (!enviando) inputRef.current?.click(); }}
+          onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); if (!enviando) inputRef.current?.click(); } }}
+          role="button"
+          tabIndex={enviando ? -1 : 0}
+          aria-label="Escolher arquivo XML ou ZIP da nota"
+        >
+          <FileUp className={`h-8 w-8 ${arrastando ? "text-brand-600" : "text-slate-400"}`} aria-hidden />
+          {arquivo ? (
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-sm font-medium text-slate-800" data-testid="importacao-arquivo-nome">{arquivo.name}</span>
+              <span className="text-[12px] text-slate-500" data-testid="importacao-arquivo-tamanho">{tamanhoLegivel(arquivo.size)} · clique para trocar</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-sm font-medium text-slate-700">Arraste o XML aqui ou clique para escolher</span>
+              <span className="text-[12px] text-slate-500">XML da NF-e ou ZIP com um único XML · até 3 MB</span>
+            </div>
+          )}
+          <input
+            ref={inputRef}
+            data-testid="importacao-arquivo"
+            type="file"
+            accept=".xml,.zip"
+            className="sr-only"
+            disabled={enviando}
+            onChange={(ev) => {
+              escolherArquivo(ev.target.files?.[0] ?? null);
+              ev.currentTarget.value = "";
+            }}
+          />
+        </div>
+      </Field>
+
+      {candidatas && <Field label="Empresa da compra" span={12} required>
+        <NativeSelect data-testid="importacao-empresa" value={empresaId} onChange={(ev) => { setEmpresaId(ev.target.value); setRecusas([]); }} disabled={enviando}>
+          <option value="">Escolha a empresa</option>
+          {candidatas.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+        </NativeSelect>
+      </Field>}
+
       {recusas.length > 0 && <ul data-testid="importacao-recusas" className="list-disc rounded border border-red-200 bg-red-50 py-2 pl-6 pr-3 text-[12.5px] text-red-800">
         {recusas.map((m, k) => <li key={k} data-testid="importacao-recusa">{m}</li>)}
       </ul>}
