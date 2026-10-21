@@ -80,8 +80,8 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
   await escolher(page, "Local de estoque", c.nomeArmazem);
-  // O frete é da ENTREGA (com a transportadora), não uma despesa do Financeiro.
-  await abrirAbaDoPainelDeCompras(page, "Entrega e transporte");
+  // O frete compõe o valor: mora na aba TOTAIS, junto das despesas e do total final.
+  await abrirAbaDoPainelDeCompras(page, "Totais");
   await page.getByTestId("compras-frete").fill("10.00");
   const itens = page.getByTestId("compras-itens");
   await itens.getByTestId("central-compras-adicionar-item").click();

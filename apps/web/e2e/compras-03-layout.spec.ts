@@ -154,7 +154,7 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   await escolherNaLinha(page, linha.getByTestId("central-compras-produto"), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("15");
-  // Totais ficam na faixa fora das abas (decisão 319)
+  // O fechamento do documento continua na faixa fora das abas (decisão 319); a conta detalhada mora na aba Totais.
   await expect(page.getByTestId("compras-total")).toContainText("30,00");
   await expect(page.getByTestId("compras-salvar"), "premissa: o layout chegou e o Salvar está liberado").toBeEnabled();
   await page.getByTestId("compras-salvar").click();

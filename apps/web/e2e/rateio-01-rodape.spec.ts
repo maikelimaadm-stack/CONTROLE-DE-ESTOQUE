@@ -135,8 +135,8 @@ test("R01-1 — com importacaoXml, rateio na aba Rateio e classificação; fisca
   const fiscais = painel(page).getByTestId("compras-dados-fiscais");
   await expect(fiscais, "o bloco fiscal mora na aba Fiscal").toBeVisible();
   for (const t of FISCAIS_NO_PAINEL) await expect(fiscais.getByTestId(t), `${t} na aba Fiscal`).toHaveCount(1);
-  await abrirAba(page, "Financeiro");
-  await expect(page.getByTestId("compras-seguro"), "seguro no Financeiro, junto do que compõe o valor").toHaveCount(1);
+  await abrirAba(page, "Totais");
+  await expect(page.getByTestId("compras-seguro"), "seguro nos Totais, junto do que compõe o valor").toHaveCount(1);
   await expect(dados(page).getByTestId("compras-tipo-documento-fiscal"), "tipo de documento nos Dados principais").toHaveCount(1);
 
   await abrirAba(page, ABA_RATEIO);

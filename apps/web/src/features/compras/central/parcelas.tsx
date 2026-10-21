@@ -3,26 +3,34 @@ import * as React from "react";
 import { buildInstallments } from "@agro/domain";
 import { brl, dateBR } from "@/lib/utils";
 import { Input, NativeSelect } from "@/components/ui";
-import { CampoDaCentral, DataDaCentral } from "@/features/central/campo";
+import { CampoDaCentral, ChaveSimNao, DataDaCentral } from "@/features/central/campo";
 import type { Plan } from "@/features/docs/shared";
 import type { EstadoDaCriacao } from "./estado";
 
 /**
- * PARCELAS DA COMPRA — o ajuste do plano na aba Financeiro, COMPACTO (decisão do usuário, 10/2026).
+ * PARCELAS DA COMPRA — o pagamento na aba Financeiro, COMPACTO (decisão do usuário, 10/2026).
  *
- * A pessoa escolhe "pela condição" (o plano da condição de pagamento / à vista) ou ajusta à mão. No ajuste aparecem
- * só o que ela pediu: a ENTRADA primeiro (valor e, se houver, o vencimento), depois o Nº de parcelas e o 1º
- * vencimento. "Intervalo (dias)" e "Modo" NÃO aparecem: o plano da compra vence a cada 30 dias, que é o padrão do
- * plano — o valor continua no `plano` e vai no corpo como sempre.
+ * A aba abre pelo "Possui entrada?" (o interruptor). Com entrada, aparecem SÓ o valor e o vencimento dela — e o plano
+ * passa a ir no corpo (a entrada não existe sem `plano_parcelas`). Depois vêm "Parcelas" (pela condição ou ajuste),
+ * o Nº de parcelas e o 1º vencimento. "Intervalo (dias)" e "Modo" NÃO aparecem: o plano da compra vence a cada 30
+ * dias, que é o padrão do plano — o valor continua no `plano` e vai no corpo como sempre.
  *
  * A lista abaixo não é decoração: vem do MESMO `buildInstallments` do domínio que o servidor usa para gerar os
  * títulos, então mostra exatamente os vencimentos e valores que serão gravados (e desaparece quando o plano ainda
- * não fecha, em vez de inventar número).
+ * não fecha, em vez de inventar número). A entrada é a primeira linha.
  */
 export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const p = e.plano;
   const mudar = (novo: Partial<Plan>) => e.setPlano({ ...p, ...novo });
   const entrada = p.down_payment_value ?? "";
+
+  /** Ligar a entrada exige o plano no corpo: sem `ajustarParcelas`, as parcelas da condição seriam gravadas sem ela. */
+  const mudarEntrada = (ligada: boolean) => {
+    if (ligada) e.setAjustarParcelas(true);
+    mudar(ligada
+      ? { has_down_payment: true, ...(p.down_payment_date ? {} : { down_payment_date: p.first_due_date }) }
+      : { has_down_payment: false, down_payment_value: "", down_payment_date: undefined });
+  };
 
   const parcelas = React.useMemo(() => {
     if (e.totalExibido <= 0 || !Number.isInteger(p.installments) || p.installments < 1) return null;
@@ -37,6 +45,18 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
   }, [e.totalExibido, p]);
 
   return <>
+    <ChaveSimNao rotulo="Possui entrada?" valor={p.has_down_payment} onChange={mudarEntrada} testId="compras-possui-entrada" />
+
+    {p.has_down_payment && <>
+      <CampoDaCentral rotulo="Valor da entrada" preenchido={entrada !== ""} testId="compras-entrada-campo">
+        <Input data-testid="compras-entrada" type="number" step="0.01" min="0" inputMode="decimal" value={entrada}
+          onChange={(ev) => mudar({ down_payment_value: ev.target.value })} />
+      </CampoDaCentral>
+      <CampoDaCentral rotulo="Venc. da entrada" icone="data" preenchido={Boolean(p.down_payment_date)} testId="compras-entrada-data-campo">
+        <DataDaCentral rotulo="Vencimento da entrada" value={p.down_payment_date ?? ""} onChange={(v) => mudar({ down_payment_date: v })} />
+      </CampoDaCentral>
+    </>}
+
     <CampoDaCentral rotulo="Parcelas" icone="selecao" preenchido testId="compras-parcelas-campo">
       <NativeSelect data-testid="compras-parcelas" value={e.ajustarParcelas ? "ajustar" : "padrao"}
         onChange={(ev) => e.setAjustarParcelas(ev.target.value === "ajustar")}>
@@ -46,17 +66,6 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
     </CampoDaCentral>
 
     {e.ajustarParcelas && <>
-      <CampoDaCentral rotulo="Valor da entrada" preenchido={entrada !== ""} testId="compras-entrada-campo">
-        <Input data-testid="compras-entrada" type="number" step="0.01" min="0" inputMode="decimal" value={entrada}
-          onChange={(ev) => {
-            const v = ev.target.value;
-            /* a entrada nasce vencendo no 1º vencimento (a mesma conta do servidor: `downPaymentDate ?? firstDueDate`) */
-            mudar({ down_payment_value: v, has_down_payment: v !== "" && Number(v) > 0, ...(p.down_payment_date ? {} : { down_payment_date: p.first_due_date }) });
-          }} />
-      </CampoDaCentral>
-      {p.has_down_payment && <CampoDaCentral rotulo="Venc. da entrada" icone="data" preenchido={Boolean(p.down_payment_date)} testId="compras-entrada-data-campo">
-        <DataDaCentral rotulo="Vencimento da entrada" value={p.down_payment_date ?? ""} onChange={(v) => mudar({ down_payment_date: v })} />
-      </CampoDaCentral>}
       <CampoDaCentral rotulo="Nº de parcelas" preenchido testId="compras-parcelas-numero-campo">
         <Input data-testid="compras-parcelas-numero" type="number" min={1} max={120} value={p.installments}
           onChange={(ev) => mudar({ installments: Number(ev.target.value) })} />

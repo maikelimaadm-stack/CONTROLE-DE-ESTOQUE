@@ -14,9 +14,10 @@ import {
 
 /**
  * Organização do painel da Central de Compras — identificar → produtos → fechar
- * (Financeiro / Rateio e classificação / Fiscal / Entrega e transporte).
- * Fora das abas fica SÓ o fechamento do documento (`faixaDosTotaisDoPainel`); o subtotal dos produtos e os ajustes
- * moram no Financeiro, e o frete mora em Entrega e transporte, com o transporte. Observação nos Dados principais.
+ * (Totais / Financeiro / Rateio e classificação / Fiscal / Entrega e transporte).
+ * A conta do documento mora na aba Totais (subtotal dos produtos, despesas, frete, seguro, desconto e total final);
+ * o Financeiro fica só com o pagamento (condição, tipo de título, forma, vencimento e parcelas, com a entrada).
+ * Fora das abas fica SÓ o fechamento do documento (`faixaDosTotaisDoPainel`). Observação nos Dados principais.
  */
 
 /** Campos do layout que a criação desenha no painel (nunca nos Dados principais). */
@@ -27,12 +28,18 @@ export const CAMPOS_DO_PAINEL_DA_CRIACAO: readonly string[] = [
   "transportadora_id"
 ];
 
-/** Ajustes do valor (desconto/despesa) — no Financeiro, DEPOIS do subtotal dos produtos, que é outra conta. */
-const AJUSTES = ["outras_despesas", "desconto"] as const;
-const FINANCEIRO = ["outras_despesas", "desconto", "condicao_pagamento_id", "forma_pagamento_id", "data_vencimento", "plano_parcelas"] as const;
+/**
+ * Os TOTAIS da compra (aba "Totais"): o subtotal dos produtos, o que compõe/ajusta o valor (outras despesas, frete,
+ * seguro, desconto) e o total final. Nada de pagamento aqui.
+ */
+const TOTAIS = ["outras_despesas", "frete", "desconto"] as const;
+/** A ordem dos totais no desenho — o seguro (fiscal) entra entre o frete e o desconto. */
+const ORDEM_DOS_TOTAIS = ["outras_despesas", "frete", "seguro", "desconto"] as const;
+/** O pagamento na aba Financeiro: condição, tipo de título, forma, vencimento e as parcelas (com a entrada). */
+const FINANCEIRO = ["condicao_pagamento_id", "forma_pagamento_id", "data_vencimento", "plano_parcelas"] as const;
 const RATEIO_CAMPOS = ["categoria_financeira_id", "centro_custo_id"] as const;
-/** O frete NÃO é despesa do documento: ele pertence à entrega, junto da transportadora. */
-const ENTREGA = ["frete", "transportadora_id"] as const;
+/** A entrega fica com o transporte; o frete compõe o valor, na aba Totais. */
+const ENTREGA = ["transportadora_id"] as const;
 
 /** Campos que permanecem nos Dados principais (identificação da compra). */
 export const CAMPOS_DOS_DADOS_PRINCIPAIS: readonly string[] = [
@@ -71,13 +78,12 @@ function CampoSeguro({ e }: { e: EstadoDaCriacao }) {
 }
 
 /**
- * O lado direito do Financeiro: o que o documento VINCULA — o tipo de título que as contas a pagar vão nascer com
- * (dado fiscal, não é pagamento) e as contas do documento. Não se mistura com os campos de pagamento.
+ * O lado direito do Financeiro: as contas que o documento VINCULA. O tipo de título que as contas vão nascer com
+ * subiu para a coluna do pagamento (antes dos vencimentos) — ele não é uma conta.
  */
-function VinculosDoDocumento({ e }: { e: EstadoDaCriacao }) {
+function VinculosDoDocumento() {
   return <div className="space-y-2" data-testid="compras-vinculos">
     <h3 className="text-[11.5px] font-semibold text-slate-600">Vínculos</h3>
-    {fiscalNoPainel(e) && <div className="max-w-[300px]"><TipoDeTituloDaCriacao e={e} /></div>}
     <TitulosDoDocumento legenda="Contas a pagar do documento" titulos={[]} linkDoTitulo={linkDoTituloDeCompra} />
   </div>;
 }
@@ -97,23 +103,39 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
 
   const abas: AbaDoPainel[] = [];
 
+  /* OS TOTAIS: a conta do documento fechada, na ordem do desenho — subtotal dos produtos, o que o compõe
+     (outras despesas, frete, seguro) e o que o reduz (desconto), com o total final. Nada de pagamento aqui. */
+  const totais = presentes(TOTAIS);
+  const seguro = fiscalNoPainel(e);
+  abas.push({
+    value: valorUnico("totais"), label: "Totais",
+    erro: comErro(totais) || Boolean(e.erro("seguro")),
+    content: <PainelColuna>
+      <CampoLeitura rotulo="Total dos produtos" valor={brl(e.totalItens)} testId="compras-total-produtos" />
+      {ORDEM_DOS_TOTAIS.map((c) => {
+        if (c === "seguro") return seguro ? <CampoSeguro key="seguro" e={e} /> : null;
+        return totais.includes(c) ? <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment> : null;
+      })}
+      <Divisor />
+      <CampoLeitura rotulo="Total da compra" valor={brl(e.totalExibido)} testId="compras-total-final" />
+    </PainelColuna>
+  });
+
+  /* O PAGAMENTO na aba Financeiro: condição, tipo de título, forma de pagamento e só então o vencimento e as
+     parcelas (com a entrada, quando há). Os totais do documento ficam na aba Totais; à direita, as contas. */
   const financeiro = presentes(FINANCEIRO);
-  if (financeiro.length || fiscalNoPainel(e)) {
-    /* Três grupos, na ordem da conta: o subtotal dos produtos, o que o ajusta (despesas, desconto, seguro) e o
-       pagamento com as parcelas. "Tipo de título" não é pagamento: mora nos Vínculos, do lado direito. */
-    const ajustes = financeiro.filter((c) => (AJUSTES as readonly string[]).includes(c));
-    const pagamento = financeiro.filter((c) => !(AJUSTES as readonly string[]).includes(c));
-    const seguro = fiscalNoPainel(e);
+  const tipoTitulo = fiscalNoPainel(e);
+  if (financeiro.length || tipoTitulo) {
     abas.push({
       value: valorUnico("financeiro"), label: "Financeiro",
-      erro: comErro(financeiro) || Boolean(e.erro("tipo_titulo_id")) || Boolean(e.erro("seguro")),
-      content: <PainelRepartido lado={<VinculosDoDocumento e={e} />}>
-        <CampoLeitura rotulo="Total dos produtos" valor={brl(e.totalItens)} testId="compras-total-produtos" />
-        {(ajustes.length > 0 || seguro) && <Divisor />}
-        {ajustes.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}
-        {seguro && <CampoSeguro e={e} />}
-        {pagamento.length > 0 && <Divisor />}
-        {pagamento.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}
+      erro: comErro(financeiro) || Boolean(e.erro("tipo_titulo_id")),
+      content: <PainelRepartido lado={<VinculosDoDocumento />}>
+        {financeiro.includes("condicao_pagamento_id") && <React.Fragment>{desenharCampo("condicao_pagamento_id")}</React.Fragment>}
+        {tipoTitulo && <div className="max-w-[300px]"><TipoDeTituloDaCriacao e={e} /></div>}
+        {financeiro.includes("forma_pagamento_id") && <React.Fragment>{desenharCampo("forma_pagamento_id")}</React.Fragment>}
+        {(financeiro.includes("data_vencimento") || financeiro.includes("plano_parcelas")) && <Divisor />}
+        {financeiro.includes("data_vencimento") && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
+        {financeiro.includes("plano_parcelas") && <React.Fragment>{desenharCampo("plano_parcelas")}</React.Fragment>}
       </PainelRepartido>
     });
   }
@@ -152,13 +174,6 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
     });
   }
 
-  if (!abas.length) {
-    abas.push({
-      value: valorUnico("resumo"), label: "Resumo", erro: comErro([...FINANCEIRO]),
-      content: <p className="text-[12.5px] text-slate-500">Totais da compra na faixa acima.</p>
-    });
-  }
-
   return abas;
 }
 
@@ -167,13 +182,14 @@ export function abaDoCampoNoPainel(e: EstadoDaCriacao, campo: string): string | 
   if (doRateio) return doRateio;
   if (campo === "tipo_titulo_id" && fiscalNoPainel(e)) return "financeiro";
   if (campo === "classificacao_gasto" && rateioNoPainel(e)) return ABA_DO_RATEIO;
-  if (campo === "seguro" && fiscalNoPainel(e)) return "financeiro";
+  if (campo === "seguro" && fiscalNoPainel(e)) return "totais";
   if (fiscalNoPainel(e) && ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st"].includes(campo)) {
     return "fiscal";
   }
   const doCabecalho = camposDoPainelNoCabecalho(e);
   if (doCabecalho.has(campo)) {
     if ((FINANCEIRO as readonly string[]).includes(campo)) return "financeiro";
+    if ((TOTAIS as readonly string[]).includes(campo)) return "totais";
     if ((RATEIO_CAMPOS as readonly string[]).includes(campo)) return ABA_DO_RATEIO;
     if ((ENTREGA as readonly string[]).includes(campo)) return "entrega";
   }
