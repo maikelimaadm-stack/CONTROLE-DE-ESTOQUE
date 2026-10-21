@@ -22,6 +22,10 @@ organização DEMO).
 - **`pnpm` não existe no host.** Os comandos do repositório (`pnpm lint`, `pnpm test`,
   `pnpm typecheck`) rodam **dentro dos containers**, onde o workspace já está instalado:
   `docker compose -f docker-compose.base44.yml exec -T web pnpm --filter @agro/web typecheck`.
+- **`next dev` reescreve `apps/web/next-env.d.ts`** (o arquivo é gerado): os imports passam de
+  `.next/types/…` (estado commitado, o de um `next build`) para `.next/dev/types/…` na primeira
+  compilação do dev server. É por isso que a árvore aparece suja nesse arquivo; não é alteração de
+  ninguém e o valor do dev é o que faz o `typecheck` passar na sandbox.
 - **Supabase não é necessário para rodar.** As migrations rodam em **Postgres 16 puro** (é o que o
   próprio CI faz, `.github/workflows/ci.yml` job `integration`). O que o Supabase fornecia fora do
   Postgres não é usado no fluxo local: `AUTH_MODE=local` (login por e-mail/senha em `erp.users`) e
@@ -34,9 +38,18 @@ organização DEMO).
   criam schema, papéis, políticas e triggers.
 - **Pacotes do workspace precisam de `dist/`.** Os `exports` de `@agro/shared`, `@erp/plataforma`,
   `@agro/domain` e `@agro/db` apontam para `dist/index.js`; por isso o `setup` builda os quatro
-  antes de subir API e web. Editar `packages/*/src` exige rebuild (`pnpm --filter <pacote> build`)
-  para API e web verem a mudança; `apps/api/src` e `apps/web/src` recarregam sozinhos
-  (`tsx watch`, `next dev`).
+  antes de subir API e web. **`@agro/api` também**: o `setup` builda esse quinto pacote
+  (`./server` → `dist/server.js`) porque a ponte `/api/*` da web
+  (`apps/web/src/server/erp-api-bridge.ts`) importa `@agro/api/server` — sem o `dist/` o
+  `pnpm --filter @agro/web typecheck`/`build` falha com `Cannot find module '@agro/api/server'` e
+  as rotas `apps/web/src/app/api/[...path]/route.ts` e `.../health/route.ts` respondem 500. É a
+  mesma ordem do CI (`quality` e `e2e` buildam `@agro/api` antes de typecheck/build da web).
+  Editar `packages/*/src` exige rebuild (`pnpm --filter <pacote> build`) para API e web verem a
+  mudança; `apps/api/src` e `apps/web/src` recarregam sozinhos (`tsx watch`, `next dev`).
+  No preview a ponte `/api/*` continua **fora de uso**: o navegador fala direto com a API em `3333`
+  (`NEXT_PUBLIC_API_URL`) e a ponte exige `DATABASE_URL`, que o serviço `web` não recebe — um 500 ali
+  é esperado e não significa app quebrado. O que **não** é esperado é `Can't resolve '@agro/api/server'`:
+  isso é o `dist/` do `@agro/api` faltando, e o conserto é o `setup` buildá-lo.
 - **Duas origens, e a página é que manda no CORS.** A web fica em `3000` e a API em `3333`; o
   navegador chama `NEXT_PUBLIC_API_URL` (host **público** da sandbox, não `localhost`).
   `WEB_ORIGIN` da API recebe a origem **pública** da página (`https://3000-${BASE44_PUBLIC_HOST_SUFFIX}`).

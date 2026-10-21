@@ -70,6 +70,7 @@ services:
         pnpm --filter @erp/plataforma build &&
         pnpm --filter @agro/domain build &&
         pnpm --filter @agro/db build &&
+        pnpm --filter @agro/api build &&
         pnpm --filter @agro/db seed
 
   # A API fala com o banco como `erp_app` (sem BYPASSRLS), exatamente como em produção —
