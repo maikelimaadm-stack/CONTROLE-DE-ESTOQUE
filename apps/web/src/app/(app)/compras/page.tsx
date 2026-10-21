@@ -99,12 +99,16 @@ function Documentos() {
   // A DIVISÃO entre as duas tabelas é do usuário: o divisor arrasta a altura do painel de itens (estado de tela).
   const [alturaDosItens, setAlturaDosItens] = React.useState(ALTURA_PADRAO_DOS_ITENS);
   const [itensRecolhidos, setItensRecolhidos] = React.useState(false);
-  return <div data-testid="compras-documentos" data-especie={atual} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+  const [maximizado, setMaximizado] = React.useState(false);
+  const dividir = (altura: number) => { setAlturaDosItens(altura); setItensRecolhidos(altura <= 34); };
+  const recolher = () => { setMaximizado(false); setItensRecolhidos((v) => !v); if (alturaDosItens <= 34) setAlturaDosItens(ALTURA_PADRAO_DOS_ITENS); };
+  return <div data-testid="compras-documentos" data-especie={atual} className="compras-paineis flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div data-compras-mestre hidden={maximizado} className={maximizado ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
       <DocumentosDeCompraList especie={atual} barra={barra} onSelecionar={aoSelecionar} />
     </div>
-    <DivisorEntreTabelas valor={alturaDosItens} onChange={setAlturaDosItens} onAbrir={() => setItensRecolhidos(false)} onRecolher={() => setItensRecolhidos((v) => !v)} />
-    <ItensDaNota documento={selecionado} altura={alturaDosItens} recolhido={itensRecolhidos} onRecolher={() => setItensRecolhidos((v) => !v)} />
+    {!maximizado && <DivisorEntreTabelas valor={itensRecolhidos ? 34 : alturaDosItens} onChange={dividir} onRecolher={recolher} />}
+    <ItensDaNota documento={selecionado} altura={alturaDosItens} recolhido={itensRecolhidos} onRecolher={recolher}
+      maximizado={maximizado} onMaximizar={() => { setMaximizado((v) => !v); setItensRecolhidos(false); }} />
   </div>;
 }
 

@@ -91,7 +91,7 @@ export function DocumentosDeCompraList({ especie, barra, onSelecionar }: { espec
 
 
   return <>
-    <DocList key={especie} title="Documentos de compra" endpoint="/api/compras/documentos" base="/compras" entity="documentos_compra"
+    <DocList referenceHeaders key={especie} title="Documentos de compra" endpoint="/api/compras/documentos" base="/compras" entity="documentos_compra"
       // A rota do detalhe sai da ESPÉCIE DA LINHA (o que o servidor classificou), nunca do filtro ativo.
       rowHref={(r) => rotaDoDocumento(r)}
       onSelectionChange={onSelecionar}

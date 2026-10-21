@@ -1,45 +1,80 @@
 "use client";
 import * as React from "react";
-import { Check, GripVertical, Search, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { GripVertical, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/**
- * Configurador de colunas do painel de itens — o modal "modelo único" do HTML de referência: duas listas
- * (Disponíveis × Na tabela), procurar coluna, "Restaurar padrão" e "Pronto". Clicar numa coluna troca de lista.
- * Ao menos uma coluna fica sempre na tabela.
- */
-export function ColunasDosItens({ colunas, ocultas, onMudar, onRestaurar, onFechar }: {
+/** Duas listas do HTML: clique transfere, arraste transfere ou muda a ordem. */
+export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestaurar, onFechar, titulo = "Colunas dos itens" }: {
   colunas: { key: string; label: string }[]; ocultas: Set<string>;
-  onMudar: (key: string, ocultar: boolean) => void; onRestaurar: () => void; onFechar: () => void;
+  onMudar: (key: string, ocultar: boolean) => void; onOrdenar: (keys: string[]) => void;
+  onRestaurar: () => void; onFechar: () => void; titulo?: string;
 }) {
   const [busca, setBusca] = React.useState("");
-  const casa = (l: string) => l.toLowerCase().includes(busca.toLowerCase());
+  const [arrastada, setArrastada] = React.useState<string | null>(null);
+  const [alvo, setAlvo] = React.useState<string | null>(null);
+  const dialogo = React.useRef<HTMLDivElement>(null);
+  const fechar = React.useRef(onFechar); fechar.current = onFechar;
+  React.useEffect(() => {
+    const anterior = document.activeElement as HTMLElement | null;
+    dialogo.current?.querySelector<HTMLInputElement>("input")?.focus();
+    const teclado = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); fechar.current(); }
+      if (e.key !== "Tab") return;
+      const botoes = dialogo.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input, [tabindex="0"]');
+      if (!botoes?.length) return;
+      const primeiro = botoes[0]!, ultimo = botoes[botoes.length - 1]!;
+      if (e.shiftKey && document.activeElement === primeiro) { e.preventDefault(); ultimo.focus(); }
+      if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primeiro.focus(); }
+    };
+    document.addEventListener("keydown", teclado);
+    return () => { document.removeEventListener("keydown", teclado); anterior?.focus(); };
+  }, []);
   const livres = colunas.filter((c) => ocultas.has(c.key));
   const usadas = colunas.filter((c) => !ocultas.has(c.key));
-  const lista = (itens: typeof colunas, on: boolean, vazio: string) => <div className="dbox-l">
-    {itens.filter((c) => casa(c.label)).map((c) => {
+  const soltar = (e: React.DragEvent, ocultar: boolean, antes?: string) => {
+    e.preventDefault(); e.stopPropagation();
+    const key = arrastada ?? e.dataTransfer.getData("text/plain");
+    if (!colunas.some((c) => c.key === key)) return;
+    if (ocultar && !ocultas.has(key) && usadas.length <= 1) return;
+    onMudar(key, ocultar);
+    const ordem = colunas.map((c) => c.key).filter((k) => k !== key);
+    const indice = antes ? ordem.indexOf(antes) : -1;
+    if (antes !== key) { ordem.splice(indice < 0 ? ordem.length : indice, 0, key); onOrdenar(ordem); }
+    setArrastada(null); setAlvo(null);
+  };
+  const lista = (itens: typeof colunas, on: boolean, vazio: string) => <div className="dbox-l" data-testid={on ? "colunas-na-tabela" : "colunas-disponiveis"}
+    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => soltar(e, !on)}>
+    {itens.filter((c) => c.label.toLowerCase().includes(busca.toLowerCase())).map((c) => {
       const travada = on && usadas.length <= 1;
-      return <div key={c.key} role="button" tabIndex={0} className={cn("dlin", on && "on")} title={travada ? "Ao menos uma coluna fica na tabela" : on ? "Clique para ocultar" : "Clique para exibir"}
-        onClick={() => !travada && onMudar(c.key, on)} onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !travada) { e.preventDefault(); onMudar(c.key, on); } }}>
-        <span className="chk">{on && <Check strokeWidth={3} />}</span>
-        <span className="dlin-l">{c.label}</span>
-        <span className="gripe"><GripVertical size={13} /></span>
+      return <div key={c.key} role="button" tabIndex={0} draggable data-coluna={c.key} aria-label={c.label} aria-disabled={travada}
+        className={cn("dlin", on && "on", arrastada === c.key && "indo", alvo === c.key && arrastada !== c.key && "mira")}
+        title={travada ? "Ao menos uma coluna fica na tabela" : on ? "Clique para ocultar · arraste para reordenar" : "Clique para exibir · arraste para a tabela"}
+        onDragStart={(e) => { e.dataTransfer.setData("text/plain", c.key); e.dataTransfer.effectAllowed = "move"; setArrastada(c.key); }}
+        onDragEnd={() => { setArrastada(null); setAlvo(null); }}
+        onDragOver={(e) => { e.preventDefault(); setAlvo(c.key); }} onDrop={(e) => soltar(e, !on, c.key)}
+        onClick={() => !travada && onMudar(c.key, on)}
+        onKeyDown={(e) => {
+          if ((e.key === "Enter" || e.key === " ") && !travada) { e.preventDefault(); onMudar(c.key, on); }
+          if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+            e.preventDefault(); const keys = colunas.map((x) => x.key), i = keys.indexOf(c.key), j = i + (e.key === "ArrowUp" ? -1 : 1);
+            if (j >= 0 && j < keys.length) { [keys[i], keys[j]] = [keys[j]!, keys[i]!]; onOrdenar(keys); }
+          }
+        }}>
+        <span className="dlin-l">{c.label}</span><span className="gripe"><GripVertical size={13} /></span>
       </div>;
     })}
-    {itens.filter((c) => casa(c.label)).length === 0 && <span className="dvaz">{vazio}</span>}
+    {!itens.some((c) => c.label.toLowerCase().includes(busca.toLowerCase())) && <span className="dvaz">{vazio}</span>}
   </div>;
-  return <div className="b1ref">
+  return createPortal(<div className="b1ref">
     <div className="mdl" onClick={(e) => { if (e.target === e.currentTarget) onFechar(); }}>
-      <div className="mdlc" role="dialog" aria-label="Colunas dos itens">
-        <div className="mdl-h">
-          <span className="mdl-t">Colunas dos itens</span>
-          <span style={{ flexGrow: 1 }} />
+      <div className="mdlc" ref={dialogo} role="dialog" aria-modal="true" aria-label={titulo}>
+        <div className="mdl-h"><span className="mdl-t">{titulo}</span><span style={{ flexGrow: 1 }} />
           <button type="button" className="tb-btn tb-btn-out sm" onClick={onRestaurar}>Restaurar padrão</button>
           <button type="button" className="rm" aria-label="Fechar" onClick={onFechar}><X size={14} /></button>
         </div>
         <div className="mdl-b">
-          <label className="cfgb"><Search size={14} />
-            <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar coluna nas duas listas…" aria-label="Procurar coluna" />
+          <label className="cfgb"><Search size={14} /><input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar coluna nas duas listas…" aria-label="Procurar coluna" />
             {busca && <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => setBusca("")}><X size={12} /></button>}
           </label>
           <div className="dcol">
@@ -47,11 +82,10 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onRestaurar, onFech
             <div className="dbox"><span className="dbox-h">Na tabela<span className="bd t-positive">{usadas.length}</span></span>{lista(usadas, true, "Nenhuma coluna com esse texto.")}</div>
           </div>
         </div>
-        <div className="mdl-f">
-          <span className="ltmp" style={{ flexGrow: 1, paddingLeft: 6 }}>{usadas.length} de {colunas.length} colunas na tabela</span>
+        <div className="mdl-f"><span className="ltmp" style={{ flexGrow: 1, paddingLeft: 6 }}>Arraste para ordenar ou mover entre as listas · <b>{usadas.length}</b> de {colunas.length}</span>
           <button type="button" className="tb-btn novo sm" onClick={onFechar}>Pronto</button>
         </div>
       </div>
     </div>
-  </div>;
+  </div>, document.body);
 }

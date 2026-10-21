@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, Columns3, ChevronDown, ChevronUp, X } from "lucide-react";
+import { Boxes, Columns3, ChevronDown, ChevronUp, Maximize, Minimize, X } from "lucide-react";
 import { D } from "@agro/shared";
 import { api } from "@/lib/api";
 import { brl, dateBR, num } from "@/lib/utils";
@@ -42,7 +42,7 @@ const loteEValidade = (it: Row) => {
   return [lote, validade].filter(Boolean).join(" · ") || "—";
 };
 
-export function ItensDaNota({ documento, altura, recolhido, onRecolher }: { documento: Row | null; /** altura do painel, vinda do divisor arrastável */ altura: number; recolhido: boolean; onRecolher: () => void }) {
+export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximizado, onMaximizar }: { documento: Row | null; altura: number; recolhido: boolean; onRecolher: () => void; maximizado: boolean; onMaximizar: () => void }) {
   const especie = documento ? texto(documento["especie"]) : "";
   const id = documento ? texto(documento["id"]) : "";
   const variante = varianteDeCompra(especie);
@@ -81,6 +81,8 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher }: { docu
 
   const [sort, setSort] = React.useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [colWidths, setColWidths] = React.useState<Record<string, number>>({});
+  const [ordem, setOrdem] = React.useState<string[]>([]);
+  const [congeladas, setCongeladas] = React.useState(0);
   const [ocultas, setOcultas] = React.useState<Set<string>>(new Set());
   const [filtros, setFiltros] = React.useState<Record<string, FiltroAtivo>>({});
   const [filtrando, setFiltrando] = React.useState<string | null>(null);
@@ -101,12 +103,13 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher }: { docu
     return [...linhas].sort((a, b) => {
       const av = col.text ? col.text(a) : String(a[sort.key] ?? "");
       const bv = col.text ? col.text(b) : String(b[sort.key] ?? "");
-      if (col.kind === "number") { const na = Number(av) || 0; const nb = Number(bv) || 0; return dir * (na - nb); }
+      if (col.kind === "number") { const na = Number(a[sort.key]) || 0; const nb = Number(b[sort.key]) || 0; return dir * (na - nb); }
       return dir * av.localeCompare(bv, "pt-BR", { numeric: true, sensitivity: "base" });
     });
   }, [filtradas, sort, colunas]);
 
-  const visibleColumns = React.useMemo(() => colunas.filter((c) => !ocultas.has(c.key)).map((c) => ({ ...c, width: colWidths[c.key] ?? c.width })), [colunas, colWidths, ocultas]);
+  const colunasOrdenadas = React.useMemo(() => [...colunas].sort((a, b) => (ordem.indexOf(a.key) < 0 ? 999 : ordem.indexOf(a.key)) - (ordem.indexOf(b.key) < 0 ? 999 : ordem.indexOf(b.key))), [colunas, ordem]);
+  const visibleColumns = React.useMemo(() => colunasOrdenadas.filter((c) => !ocultas.has(c.key)).map((c) => ({ ...c, width: colWidths[c.key] ?? c.width })), [colunasOrdenadas, colWidths, ocultas]);
 
   const totalQtd = React.useMemo(() => itens.reduce((acc, it) => acc.plus(D(texto(it["quantidade"]) || "0")), D(0)), [itens]);
   const totalPendente = React.useMemo(() => itens.reduce((acc, it) => acc.plus(D(texto(it["saldo"]) || "0")), D(0)), [itens]);
@@ -115,7 +118,7 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher }: { docu
 
   const onSort = (k: string) => setSort((s) => s?.key === k && s.dir === "asc" ? { key: k, dir: "desc" } : { key: k, dir: "asc" });
 
-  return <section data-testid="compras-itens-da-nota" aria-label="Itens do documento selecionado" className={recolhido ? "itpan recolhido" : "itpan"} style={{ height: altura }}>
+  return <section data-testid="compras-itens-da-nota" aria-label="Itens do documento selecionado" className={recolhido ? "itpan recolhido" : maximizado ? "itpan cheio" : "itpan"} style={maximizado ? undefined : { height: recolhido ? 34 : altura }}>
     <div className="itbar">
       <span className="itt">Itens</span>
       {documento && <>
@@ -133,10 +136,10 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher }: { docu
         </span>
         <span className="vdiv" aria-hidden="true" />
       </>}
-      {menuColunas && <ColunasDosItens colunas={colunas} ocultas={ocultas}
+      {menuColunas && <ColunasDosItens colunas={colunasOrdenadas} ocultas={ocultas} onOrdenar={setOrdem}
         onMudar={(k, ocultar) => setOcultas((p) => { const n = new Set(p); if (ocultar) n.add(k); else n.delete(k); return n; })}
-        onRestaurar={() => { setOcultas(new Set()); setColWidths({}); }} onFechar={() => setMenuColunas(false)} />}
-      {documento && <span className="grp"><button type="button" className="ib" aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} title={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={onRecolher}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button></span>}
+        onRestaurar={() => { setOcultas(new Set()); setColWidths({}); setOrdem([]); setCongeladas(0); }} onFechar={() => setMenuColunas(false)} />}
+      <span className="grp"><button type="button" className="ib" data-testid="itens-maximizar" aria-label={maximizado ? "Restaurar tamanho" : "Maximizar o painel"} title={maximizado ? "Restaurar tamanho" : "Maximizar o painel"} onClick={onMaximizar}>{maximizado ? <Minimize /> : <Maximize />}</button><button type="button" className="ib" data-testid="itens-recolher" aria-expanded={!recolhido} aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} title={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={onRecolher}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button></span>
     </div>
     {recolhido ? null : !documento
       ? <div className="itvazio">
@@ -157,6 +160,8 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher }: { docu
             : <div className="itrolo">
               <Base1Grid
                 columns={visibleColumns}
+                referenceHeaders
+                frozen={congeladas} onFreeze={setCongeladas}
                 rows={sortedRows}
                 sort={sort ?? undefined}
                 onSort={onSort}

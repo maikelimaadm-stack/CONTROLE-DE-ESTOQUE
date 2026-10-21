@@ -14,6 +14,9 @@ import { FilterChip } from "./filter-chip";
 import { ColumnsDialog } from "./columns-dialog";
 import { Base1Cards, CardsLayoutPopover, CardFieldsPopover } from "./cards";
 import { Base1Grid } from "./grid";
+import { FiltroDeColuna, casa, type FiltroAtivo, type Tipo } from "@/features/compras/filtro-de-coluna";
+import { ColunasDosItens } from "@/features/compras/colunas-dos-itens";
+import { dateBR } from "@/lib/utils";
 import { HistoryDialog } from "./history-dialog";
 import { AttachmentsDialog } from "./attachments-dialog";
 import type { SelectClick } from "./cards";
@@ -31,6 +34,8 @@ export interface PageParams { page: number; pageSize: number; sort?: string; dir
 export interface RecordProps { row: Row | null; index: number; total: number; go: (i: number) => void; onExit: () => void; refresh: () => void; rightSlot: React.ReactNode; mode: "view" | "edit" | "new"; setMode: (m: "view" | "edit" | "new") => void; copyFrom?: Row | null }
 
 export interface Base1ListProps {
+  /** Cabeçalhos do HTML: filtros locais sobre os registros carregados; não altera a consulta do servidor. */
+  referenceHeaders?: boolean;
   moduleId: string; title: string; columns: Base1Column[]; filters: Base1FilterDef[];
   fetchPage: (p: PageParams) => Promise<PageResult>;
   /** total sem filtros (rodapé "Totais"); padrão: total da consulta sem filtros/pesquisa */
@@ -98,6 +103,9 @@ export function Base1List(props: Base1ListProps) {
   const prefs = p.prefs;
   const [view, setView] = React.useState<ViewMode>(prefs.view.mode);
   React.useEffect(() => { if (view !== "record") setView(prefs.view.mode); }, [prefs.view.mode]);
+  const [headerFilters, setHeaderFilters] = React.useState<Record<string, FiltroAtivo>>({});
+  const [headerOpen, setHeaderOpen] = React.useState<string | null>(null);
+  const [headerOrder, setHeaderOrder] = React.useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [values, setValues] = React.useState<FilterValues>(defaultValues ?? {});
   const [applied, setApplied] = React.useState<{ search: string; params: Record<string, string> }>({ search: "", params: toParams(filters, defaultValues ?? {}) });
   const [search, setSearch] = React.useState(""); const [favOnly, setFavOnly] = React.useState(false);
@@ -129,7 +137,23 @@ export function Base1List(props: Base1ListProps) {
   });
   const allRows = React.useMemo(() => q.data?.pages.flatMap((pg) => pg.items) ?? [], [q.data]);
   // "Buscar favoritos": mostra só os registros marcados (selecionados) entre os carregados
-  const rows = React.useMemo(() => (favOnly ? allRows.filter((r) => favorites.has(String(r["id"]))) : allRows).filter((r) => !props.rowVisible || props.rowVisible(r)), [allRows, favOnly, favorites, props.rowVisible]);
+  const loadedRows = React.useMemo(() => (favOnly ? allRows.filter((r) => favorites.has(String(r["id"]))) : allRows).filter((r) => !props.rowVisible || props.rowVisible(r)), [allRows, favOnly, favorites, props.rowVisible]);
+  const headerText = (key: string, r: Row) => {
+    const c = columns.find((x) => x.key === key);
+    return c?.kind === "date" ? dateBR(String(r[key] ?? "")) : c?.text ? c.text(r) : String(r[key] ?? "");
+  };
+  const headerType = (key: string): Tipo => { const c = columns.find((x) => x.key === key); return c?.kind === "number" ? "num" : c?.kind === "date" ? "data" : "texto"; };
+  const headerActive = props.referenceHeaders && Object.keys(headerFilters).length > 0;
+  const rows = React.useMemo(() => {
+    if (!props.referenceHeaders) return loadedRows;
+    const result = loadedRows.filter((r) => Object.entries(headerFilters).every(([k, f]) => casa(f, headerType(k), headerText(k, r))));
+    if (headerOrder) result.sort((a, b) => {
+      const k = headerOrder.key, av = a[k], bv = b[k];
+      const cmp = headerType(k) === "num" ? Number(av) - Number(bv) : String(av ?? "").localeCompare(String(bv ?? ""), "pt-BR", { numeric: true });
+      return (headerOrder.dir === "asc" ? 1 : -1) * cmp;
+    });
+    return result;
+  }, [loadedRows, headerFilters, headerOrder, props.referenceHeaders, columns]);
   const total = q.data?.pages[0]?.total ?? 0; const totals = q.data?.pages[0]?.totals;
   /**
    * ID GLOBAL: COLUNA DE IDENTIDADE, FORA DA CONFIGURAÇÃO DE COLUNAS (PRE-BASE2-05B.1).
@@ -301,19 +325,20 @@ export function Base1List(props: Base1ListProps) {
         : <IconBtn size="sm" aria-label="Configurar colunas da tabela" title="Configurar colunas da tabela" onClick={() => setColsDlg(true)}><Columns3 className="h-4 w-4" /></IconBtn>}
       </div>
     </div>
+    {headerActive && <div className="flex items-center gap-2 text-[11.5px] text-slate-500"><span>Filtro de cabeçalho: {rows.length} de {loadedRows.length} documentos carregados</span><button type="button" className="fchip-lim" onClick={() => setHeaderFilters({})}>Limpar filtros de cabeçalho</button></div>}
     {/* corpo */}
     <div className="flex min-h-0 flex-1 gap-2">
       <div className="mg-shell mg-shell--fill min-w-0 flex-1">
         {q.error && <div className="p-2"><ErrorBox error={q.error} /></div>}
         {view === "cards"
           ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={colunasDosCards} fields={cardFieldsExibidos} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelectClick={onSelectClick} actions={rowActions} favorites={favorites} onFavorite={toggleFavorite} scrollToId={scrollToId} /></div>
-          : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelectClick={onSelectClick} onToggle={onToggle} onToggleAll={onToggleAll} onOpen={(r) => enterRecord(r)} frozen={frozen} scrollToId={scrollToId}
+          : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid referenceHeaders={props.referenceHeaders} filteredKeys={new Set(Object.keys(headerFilters))} columns={visibleColumns} rows={rows} loading={q.isLoading} sort={props.referenceHeaders ? headerOrder ?? undefined : sort} onSort={props.referenceHeaders ? (key) => setHeaderOrder((s) => ({ key, dir: s?.key === key && s.dir === "asc" ? "desc" : "asc" })) : onSort} selected={selected} onSelectClick={onSelectClick} onToggle={onToggle} onToggleAll={onToggleAll} onOpen={(r) => enterRecord(r)} frozen={frozen} scrollToId={scrollToId}
             onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n - deslocamentoIdentidade, colunasDoUsuario.length)) }))} onHide={(k) => updCols((c) => { if (k === CHAVE_COLUNA_ID_GLOBAL) return c; const keys = colunasDoUsuario.map((x) => x.key); const idx = keys.indexOf(k); const fz = c.frozen ?? 0; return { ...c, visible: keys.filter((x) => x !== k), frozen: idx >= 0 && idx < fz ? fz - 1 : fz }; })} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
-            onFilter={(k) => { const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}
-            footer={footerTotals && totals ? comColunaDeIdentidade(footerTotals(totals), deslocamentoIdentidade) : undefined} /></div>}
+            onFilter={(k) => { if (props.referenceHeaders) { setHeaderOpen(k); return; } const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}
+            footer={!headerActive && footerTotals && totals ? comColunaDeIdentidade(footerTotals(totals), deslocamentoIdentidade) : undefined} /></div>}
         {/* rodapé (mg-records-summary) */}
         <div className="mg-summary no-print">
-          <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {selected.size}</span><span className="mg-summary__item">Listados: {allRows.length}</span><span className="mg-summary__item">Filtrados: {total}</span><span className="mg-summary__item">Totais: {filtersActive ? grand.data ?? "…" : total}</span>{summaryExtra?.(totals)}</div>
+          <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {selected.size}</span><span className="mg-summary__item">Listados: {allRows.length}</span><span className="mg-summary__item">Filtrados: {headerActive ? `${rows.length} carregados` : total}</span><span className="mg-summary__item">Totais: {filtersActive ? grand.data ?? "…" : total}</span>{summaryExtra?.(totals)}</div>
           <span className="flex items-center gap-2">
             <select aria-label="Quantidade de registros por carregamento" className="mg-pill-select" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>{BASE1_PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}</select>
             <IconBtn aria-label="Carregar mais registros" title="Carregar mais registros" disabled={!q.hasNextPage || q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}><ChevronsDown /></IconBtn>
@@ -321,7 +346,16 @@ export function Base1List(props: Base1ListProps) {
         </div>
       </div>
     </div>
-    <ColumnsDialog open={colsDlg} onOpenChange={setColsDlg} columns={columns} visible={colunasDoUsuario.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: [...keys, ...columns.map((x) => x.key).filter((x) => !keys.includes(x))], frozen: Math.min(c.frozen ?? 0, keys.length) }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
+    {headerOpen && <FiltroDeColuna rotulo={columns.find((c) => c.key === headerOpen)?.label ?? ""} tipo={headerType(headerOpen)}
+      ancora={`[data-testid="b1-list"] [aria-label="Abrir menu da coluna ${columns.find((c) => c.key === headerOpen)?.label ?? ""}"]`}
+      valores={loadedRows.map((r) => headerText(headerOpen, r))} atual={headerFilters[headerOpen] ?? null}
+      onAplicar={(f) => { const key = headerOpen; setHeaderFilters((p) => { const n = { ...p }; if (f) n[key] = f; else delete n[key]; return n; }); setHeaderOpen(null); }} onFechar={() => setHeaderOpen(null)} />}
+    {props.referenceHeaders && colsDlg && <ColunasDosItens titulo="Colunas da tabela" colunas={[...columns].sort((a, b) => (orderRank.get(a.key) ?? 1e6) - (orderRank.get(b.key) ?? 1e6))}
+      ocultas={new Set(columns.filter((c) => !visibleKeys.includes(c.key)).map((c) => c.key))}
+      onMudar={(key, ocultar) => updCols((c) => ({ ...c, visible: ocultar ? visibleKeys.filter((k) => k !== key) : [...visibleKeys, key] }))}
+      onOrdenar={(order) => updCols((c) => ({ ...c, order }))}
+      onRestaurar={() => updCols(() => ({}))} onFechar={() => setColsDlg(false)} />}
+    <ColumnsDialog open={!props.referenceHeaders && colsDlg} onOpenChange={setColsDlg} columns={columns} visible={colunasDoUsuario.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: [...keys, ...columns.map((x) => x.key).filter((x) => !keys.includes(x))], frozen: Math.min(c.frozen ?? 0, keys.length) }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
     {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={one ? rowId(one) : undefined} title={title} />}
     {entity && <AttachmentsDialog open={attachDlg} onOpenChange={setAttachDlg} entity={entity} entityId={one ? rowId(one) : null} title={title} />}
     {onDelete && <Confirm open={Boolean(delRow)} onOpenChange={() => setDelRow(null)} title="Confirme a exclusão" text={props.deleteText ?? (selectedRows.length > 1 ? `Excluir os ${selectedRows.length} registros selecionados? A ação fica registrada na auditoria.` : "Excluir o registro selecionado? A ação fica registrada na auditoria.")} danger onConfirm={async () => { if (delRow) { for (const r of selectedRows.length > 1 ? selectedRows : [delRow]) await onDelete(r); setDelRow(null); setSelected(new Set()); void q.refetch(); } }} />}

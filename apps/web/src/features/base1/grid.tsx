@@ -18,12 +18,12 @@ export const SELECT_COLUMN_WIDTH = 36;
  * Congelamento como no MG: "Congelar" na coluna N congela todas até N (contagem à esquerda); clicar na âncora
  * (última congelada) descongela todas.
  */
-export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelectClick, onToggle, onToggleAll, onOpen, frozen = 0, onFreeze, onHide, onResize, onAutoFit, onFilter, footer, rowKey, emptyText, scrollToId, filteredKeys }: {
+export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelectClick, onToggle, onToggleAll, onOpen, frozen = 0, onFreeze, onHide, onResize, onAutoFit, onFilter, footer, rowKey, emptyText, scrollToId, filteredKeys, referenceHeaders = false }: {
   columns: Base1Column[]; rows: Row[]; loading?: boolean; sort?: { key: string; dir: "asc" | "desc" }; onSort?: (key: string) => void;
   selected: Set<string>; onSelectClick: (id: string, mod: SelectClick) => void; onToggle: (id: string) => void; onToggleAll: (on: boolean) => void; onOpen?: (r: Row) => void;
   frozen?: number; onFreeze?: (n: number) => void; onHide?: (key: string) => void;
   onResize?: (key: string, width: number) => void; onAutoFit?: (key: string) => void; onFilter?: (key: string) => void; density?: "compact" | "normal"; footer?: React.ReactNode;
-  rowKey?: (r: Row) => string; emptyText?: string; scrollToId?: string | null; /** colunas com filtro ativo (o botão do menu fica destacado) */ filteredKeys?: Set<string>;
+  rowKey?: (r: Row) => string; emptyText?: string; scrollToId?: string | null; /** colunas com filtro ativo (o botão do menu fica destacado) */ filteredKeys?: Set<string>; referenceHeaders?: boolean;
 }) {
   const key = rowKey ?? ((r: Row) => String(r["id"]));
   const allOn = rows.length > 0 && rows.every((r) => selected.has(key(r)));
@@ -94,6 +94,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
                 // desabilitado, exatamente como antes. Sem essa separação, corrigir o menu da identidade
                 // mudaria a interface de todas as outras colunas — regressão fora do objetivo.
                 if (!itens.length) return null;
+                if (referenceHeaders && onFilter && c.filterable !== false) return <button type="button" aria-label={`Abrir menu da coluna ${c.label}`} aria-haspopup="menu" className={cn("th-menu", filteredKeys?.has(c.key) && "is-on")} onClick={() => onFilter(c.key)}>{filteredKeys?.has(c.key) ? <Filter /> : <MoreVertical />}</button>;
                 return <B1Popover className="w-52 p-1" align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className={cn("th-menu", filteredKeys?.has(c.key) && "is-on")}>{filteredKeys?.has(c.key) ? <Filter /> : <MoreVertical />}</button>}>
                   <MenuList onPick={(k) => { setMenuFor(null); if (k === "filter") onFilter?.(c.key); if (k === "fit") onAutoFit?.(c.key); if (k === "freeze") onFreeze?.(isAnchor ? 0 : i + 1); if (k === "hide") onHide?.(c.key); }} items={itens} />
                 </B1Popover>;

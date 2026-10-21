@@ -16,13 +16,18 @@ const OPS: Record<Tipo, [string, string][]> = {
   data: [["", "Sem condição"], ["ig", "É"], ["dif", "É diferente de"], ["men", "Antes de"], ["mai", "Depois de"], ["entre", "Está entre"]],
   texto: [["", "Sem condição"], ["ig", "É igual a"], ["dif", "É diferente de"], ["com", "Começa com"], ["ter", "Termina com"], ["cont", "Contém"], ["ncont", "Não contém"]]
 };
-const numDe = (v: string) => { const n = Number(v.replace(/[^0-9,.-]/g, "").replace(/\./g, "").replace(",", ".")); return v.trim() === "" || isNaN(n) ? null : n; };
-const dataDe = (v: string) => { const m = v.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/); if (!m) return null; let a = Number(m[3]); if (a < 100) a += 2000; return a * 10000 + Number(m[2]) * 100 + Number(m[1]); };
+const numDe = (v: string) => { if (!/[0-9]/.test(v)) return null; const n = Number(v.replace(/[^0-9,.-]/g, "").replace(/\./g, "").replace(",", ".")); return v.trim() === "" || isNaN(n) ? null : n; };
+const dataDe = (v: string) => {
+  const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if (!m) return null;
+  let a = Number(m[3]); if (a < 100) a += 2000;
+  const mes = Number(m[2]), dia = Number(m[1]), data = new Date(a, mes - 1, dia);
+  return data.getFullYear() === a && data.getMonth() === mes - 1 && data.getDate() === dia ? a * 10000 + mes * 100 + dia : null;
+};
 
 /** a linha passa no filtro? (condição E valores marcados) */
 export function casa(f: FiltroAtivo, tipo: Tipo, valor: string): boolean {
   if (f.valores && !f.valores.has(valor)) return false;
-  if (!f.op || f.v1.trim() === "") return true;
+  if (!f.op || f.v1.trim() === "" || (f.op === "entre" && f.v2.trim() === "")) return true;
   if (tipo === "texto") {
     const a = valor.toLowerCase(), b = f.v1.toLowerCase();
     return f.op === "ig" ? a === b : f.op === "dif" ? a !== b : f.op === "com" ? a.startsWith(b) : f.op === "ter" ? a.endsWith(b) : f.op === "cont" ? a.includes(b) : !a.includes(b);
@@ -51,6 +56,12 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
   const [opAberto, setOpAberto] = React.useState(false);
   const [busca, setBusca] = React.useState("");
   const [pos, setPos] = React.useState<React.CSSProperties>({ visibility: "hidden" });
+  const fechar = React.useRef(onFechar); fechar.current = onFechar;
+  React.useEffect(() => {
+    const teclado = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); fechar.current(); } };
+    document.addEventListener("keydown", teclado);
+    return () => document.removeEventListener("keydown", teclado);
+  }, []);
   React.useLayoutEffect(() => {
     const el = document.querySelector(ancora)?.closest("th");
     if (!el) return;
@@ -97,7 +108,7 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
       </label>
       <div className="ph2 fph" aria-hidden="true"><span /><span>Valor</span><span className="r">Linhas</span></div>
       <button type="button" className="pr fvr ftodos" role="checkbox" aria-checked={todos} onClick={() => setSel((p) => { const n = new Set(p); for (const [v] of vistos) { if (todos) n.delete(v); else n.add(v); } return n; })}>
-        <span className="fck"><Chk on={todos} parte={algum} /></span><span className="pn">(Selecionar Tudo)</span><span className="r">{valores.length}</span>
+        <span className="fck"><Chk on={todos} parte={algum} /></span><span className="pn">(Selecionar Tudo)</span><span className="r">{sel.size} de {contagem.length}</span>
       </button>
       <div className="fpop-l">
         {vistos.map(([v, n]) => <button type="button" key={v} className={cn("pr fvr", sel.has(v) && "on")} role="checkbox" aria-checked={sel.has(v)} onClick={() => setSel((p) => { const s = new Set(p); if (s.has(v)) s.delete(v); else s.add(v); return s; })}>
@@ -108,7 +119,7 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
       <div className="fpop-f">
         <span style={{ flexGrow: 1 }} />
         <button type="button" className="tb-btn tb-btn-out xs" onClick={onFechar}>Cancelar</button>
-        <button type="button" className="tb-btn novo xs" disabled={sel.size === 0} onClick={aplicar}>Aplicar</button>
+        <button type="button" className="tb-btn novo xs" onClick={aplicar}>Aplicar</button>
       </div>
     </div>
   </div>, document.body);
