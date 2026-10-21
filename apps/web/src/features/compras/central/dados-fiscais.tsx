@@ -222,19 +222,36 @@ export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
         <div data-testid="compras-classificacao-unica" className="space-y-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Classificação da compra</p>
           <ColunaDeCampos>
-            <CampoDaCentral rotulo="Natureza Financeira" obrigatorio erro={e.erro("categoria_financeira_id")} icone="pesquisa"
-              preenchido={Boolean(h.categoria_financeira_id)} testId="compras-classificacao-natureza">
-              <RefSelect resource="financial_categories" value={h.categoria_financeira_id}
-                buscarOpcoes={opcoesDeNaturezaDeDespesa}
-                onChange={(v) => e.mudar({ categoria_financeira_id: v ?? "" })}
-                labelHint={e.dica("categoria_financeira_id")} />
-            </CampoDaCentral>
-            <CampoDaCentral rotulo="Centro de Resultado" obrigatorio erro={e.erro("centro_custo_id")} icone="pesquisa"
-              preenchido={Boolean(h.centro_custo_id)} testId="compras-classificacao-centro">
-              <RefSelect resource="cost_centers" value={h.centro_custo_id} filter={{ kind: "analytic" }}
-                onChange={(v) => e.mudar({ centro_custo_id: v ?? "" })}
-                labelHint={e.dica("centro_custo_id")} />
-            </CampoDaCentral>
+            {(["categoria_financeira_id", "centro_custo_id"] as const).map((c) => {
+              const natureza = c === "categoria_financeira_id";
+              const valor = natureza ? h.categoria_financeira_id : h.centro_custo_id;
+              const dc = {
+                ...(e.layout ? { "data-campo": c, "data-obrigatorio": String(e.obrigatorio(c)), ...(e.forcados.has(c) ? { "data-forcado": "true" } : {}) } : {}),
+                ...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" as const } : {}),
+              };
+              const aviso = e.padraoInvalido(c)
+                ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p>
+                : null;
+              const campo = <CampoDaCentral
+                rotulo={natureza ? "Natureza Financeira" : "Centro de Resultado"}
+                obrigatorio={e.obrigatorio(c)} erro={e.erro(c)} icone="pesquisa" preenchido={Boolean(valor)}
+                testId={natureza ? "compras-classificacao-natureza" : "compras-classificacao-centro"}
+                abaixo={aviso} dica={e.motivoNaEdicao(c) ?? undefined} {...dc}>
+                {natureza
+                  ? <RefSelect resource="financial_categories" value={h.categoria_financeira_id}
+                      buscarOpcoes={opcoesDeNaturezaDeDespesa}
+                      onChange={(v) => e.mudar({ categoria_financeira_id: v ?? "" })}
+                      labelHint={e.dica("categoria_financeira_id")} />
+                  : <RefSelect resource="cost_centers" value={h.centro_custo_id} filter={{ kind: "analytic" }}
+                      onChange={(v) => e.mudar({ centro_custo_id: v ?? "" })}
+                      labelHint={e.dica("centro_custo_id")} />}
+              </CampoDaCentral>;
+              return e.travado(c)
+                ? <fieldset key={c} disabled data-editavel="false" data-travado-pela-top={e.travadoPelaTop(c) ? "true" : undefined}
+                    data-travado-na-edicao={e.travadoNaEdicao(c) ? "true" : undefined} data-motivo={e.motivoNaEdicao(c) ?? undefined}
+                    style={{ display: "contents" }}>{campo}</fieldset>
+                : <React.Fragment key={c}>{campo}</React.Fragment>;
+            })}
           </ColunaDeCampos>
           <p className="text-[12px] text-slate-600" data-testid="compras-rateio-simples">100% do documento nesta classificação.</p>
           <Button size="sm" variant="outline" data-testid="compras-rateio-adicionar-por-valor" onClick={e.ativarRateioPorValor}>

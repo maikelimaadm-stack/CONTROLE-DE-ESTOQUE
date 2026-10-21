@@ -246,8 +246,9 @@ async function abrirCriacaoDeCompra(page: Page, top: string, c: CenarioDaCompra,
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await escolher(page, "Natureza Financeira", c.natureza.label);
-  await escolher(page, "Centro de Resultado", c.centro.label);
+  // Sentido 2 = WEB DA BASE: rótulos da base (`Natureza de despesa`), não os deste HEAD.
+  await escolher(page, "Natureza de despesa", c.natureza.label);
+  await escolher(page, "Centro de resultado", c.centro.label);
   // Decisão 319: Local de estoque padrão acima da grade (a linha nasce com ele).
   await escolher(page, "Local de estoque", c.nomeArmazem);
 }

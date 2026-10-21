@@ -309,9 +309,9 @@ describe("ID Global e travas", () => {
    *
    * Depois da prévia rápida (sem INSERT por linha), a importação simulada NÃO segura RowExclusiveLock em
    * `erp.products`. A barreira observa a conexão da prévia por `pg_stat_activity` (backend ativo nesta base,
-   * fora do amostrador) e amostra `pg_locks` de TODOS os outros backends: a prévia nunca deve segurar trava
-   * de escrita em `sequencias_id_global`/`registros_globais`. Com a correção, criar uma pessoa (que reserva
-   * ID Global) termina ENQUANTO a prévia ainda roda.
+   * fora do amostrador) e amostra `pg_locks` SÓ desse PID: a prévia nunca deve segurar trava de escrita em
+   * `sequencias_id_global`/`registros_globais`. Criar pessoa durante a amostra segura o contador de verdade
+   * e não conta contra a prévia. Com a correção, a pessoa termina ENQUANTO a prévia ainda roda.
    *
    * Controle sequencial (evita verde vacuoso): depois que a prévia termina, criar outra pessoa ainda funciona
    * e o contador anda de novo.
@@ -332,12 +332,13 @@ describe("ID Global e travas", () => {
         where datname = current_database() and pid <> pg_backend_pid()
           and state = 'active' and query not ilike '%pg_stat_activity%' and query not ilike '%pg_locks%'
         order by backend_start desc limit 1`)).rows[0]?.pid ?? null;
-    const travasDeEscritaNoIdGlobal = async () => Number((await admin.query<{ n: string }>(
+    /** Só as travas da PRÉVIA — criar pessoa durante a amostra segura o contador de verdade e não conta contra G11. */
+    const travasDeEscritaDaPrevia = async (pidPrevia: number) => Number((await admin.query<{ n: string }>(
       `select count(*)::text n from pg_locks l
         join pg_class c on c.oid = l.relation join pg_namespace n on n.oid = c.relnamespace
         where l.database = ${banco} and n.nspname = 'erp'
           and c.relname in ('sequencias_id_global', 'registros_globais')
-          and l.mode <> 'AccessShareLock' and l.granted and l.pid <> pg_backend_pid()`)).rows[0]!.n);
+          and l.mode <> 'AccessShareLock' and l.granted and l.pid = $1`, [pidPrevia])).rows[0]!.n);
 
     const marca: { previaFim: number | null } = { previaFim: null };
     const previa = enviar(wb, "products", true).then((r) => { marca.previaFim = performance.now(); return r; });
@@ -352,13 +353,14 @@ describe("ID Global e travas", () => {
       }
       expect(marca.previaFim, "a prévia terminou antes de ser vista ativa: aumente o volume").toBeNull();
       expect(pid, "a prévia não foi vista em pg_stat_activity").not.toBeNull();
+      const pidPrevia = pid!;
 
-      // 2) amostra travas de ID Global em QUALQUER outro backend até a prévia terminar
+      // 2) amostra travas de ID Global SÓ do PID da prévia até ela terminar
       amostrador = (async () => {
         while (marca.previaFim === null) {
           amostras.total += 1;
-          if ((await pidDaPrevia()) !== null) amostras.pidVisto += 1;
-          amostras.comTravaDoIdGlobal += await travasDeEscritaNoIdGlobal();
+          if ((await pidDaPrevia()) === pidPrevia) amostras.pidVisto += 1;
+          amostras.comTravaDoIdGlobal += await travasDeEscritaDaPrevia(pidPrevia);
           await espera(10);
         }
       })();

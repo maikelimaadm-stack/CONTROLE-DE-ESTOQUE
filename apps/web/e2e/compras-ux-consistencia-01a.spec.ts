@@ -168,7 +168,8 @@ test("UX1-1 — compra ABERTA com plano (entrada + 2 parcelas + obs): consultar 
   await expect(page.getByTestId("compras-parcela-valor-0")).toHaveValue(/100/);
   await expect(page.getByTestId("compras-parcela-valor-1")).toHaveValue(/200/);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await expect(page.getByTestId("compras-rateio-e-itens").or(page.getByTestId("compras-rateio"))).toBeVisible();
+  // `compras-rateio` é filho de `compras-rateio-e-itens` — `.or()` resolve 2 nós e quebra o strict mode.
+  await expect(page.getByTestId("compras-rateio-e-itens")).toBeVisible();
   // Dados principais NÃO duplicam rateio
   await expect(page.getByTestId(`${P}-dados`).locator('[data-testid^="compras-rateio-linha-"]')).toHaveCount(0);
   await foto(page, pasta, "ux1-1-edicao-1440x900");
