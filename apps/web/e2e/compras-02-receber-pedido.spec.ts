@@ -110,7 +110,7 @@ test("CP-W1 — pedido → Próximos passos → Central em modo receber (em part
   await expect(linhaB).toBeVisible();
   await expect(linhaA.getByTestId("central-compras-produto"), "produto do pedido, travado").toHaveAttribute("data-travado", "");
   await expect(linhaA.getByTestId("central-compras-produto").locator("button"), "produto do pedido, sem pesquisa").toHaveCount(0);
-  await expect(linhaA.getByTestId("central-compras-saldo-da-origem")).toHaveText("10,0000");
+  await expect(linhaA.getByTestId("central-compras-saldo-da-origem")).toHaveText("10");
   await expect(page.getByTestId("compras-itens").getByRole("button", { name: "Adicionar produto" }), "item fora do pedido é outra compra").toHaveCount(0);
 
   // (3) EM PARTES: a linha B sai; a A recebe 4 de 10, a 21,00 (vale o preço da NOTA), no armazém informado.
@@ -161,9 +161,9 @@ test("CP-W1 — pedido → Próximos passos → Central em modo receber (em part
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
   const ordem = (await api<PedidoLido>(page, "GET", `/api/compras/pedidos/${c.pedido.id}`)).itens.map((i) => i.id);
   const esperado = (a: string, b: string) => ordem.map((id) => (id === c.itemA.id ? a : b));
-  // Recebido e Saldo na escala da compra (4 casas, `numeric(18,4)`), como antes da Central nova (VISUAL-UX-04b, S1).
-  await expect(page.getByTestId("doc-item-faturado")).toHaveText(esperado("4,0000", "0,0000"));
-  await expect(page.getByTestId("doc-item-saldo")).toHaveText(esperado("6,0000", "2,0000"));
+  // Recebido e Saldo em pt-BR (zeros à direita cortados; o servidor continua em 4 casas).
+  await expect(page.getByTestId("doc-item-faturado")).toHaveText(esperado("4", "0"));
+  await expect(page.getByTestId("doc-item-saldo")).toHaveText(esperado("6", "2"));
   await page.getByRole("tab", { name: /^Compras geradas/ }).click();
   await expect(page.getByTestId("compras-geradas").getByTestId("compras-gerada")).toHaveText([/\S/]);
   await expect(page.getByTestId("compras-encerrar-saldo"), "com compra e saldo, encerrar o saldo passa a valer").toBeVisible();

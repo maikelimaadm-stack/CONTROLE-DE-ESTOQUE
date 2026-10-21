@@ -116,6 +116,9 @@ export function fonteDoHeadContem(trecho: string, pasta: string): boolean {
 
 /** O web do commit (por padrão, a base desta execução) já tem a tela da XML-02? */
 export const webDaBaseTemAXml02 = (sha: string = shaDaBase()) => fonteDoCommitContem(sha, MARCA_DA_XML02.web, "apps/web/src");
+/** O web do commit já usa a tabela de itens sem fator/conversão na tela (`aba-itens.tsx` com `quantidade-nota`). */
+export const webDaBaseTemImportacaoSemFatorNaTela = (sha: string = shaDaBase()) =>
+  fonteDoCommitContem(sha, "quantidade-nota", "apps/web/src/features/compras/importacao/aba-itens.tsx");
 /** A API do commit (por padrão, a base desta execução) já monta o sugerido pela descrição? */
 export const apiDaBaseTemAXml02 = (sha: string = shaDaBase()) => fonteDoCommitContem(sha, MARCA_DA_XML02.api, "apps/api/src");
 
@@ -315,3 +318,23 @@ export async function gerarCompraPelaTela(page: Page, c: CenarioDaXml02, importa
 /** O que o corpo do Gerar mandou em cada item: `[n_item, produto_id, lembrar_vinculo]` (a chave ausente vira `null`). */
 export const lembrarNoCorpo = (corpo: { itens: { n_item: number; produto_id: string; lembrar_vinculo?: boolean }[] }) =>
   corpo.itens.map((i) => [i.n_item, i.produto_id, Object.hasOwn(i, "lembrar_vinculo") ? i.lembrar_vinculo : null]);
+
+/** Sufixos de testid que saíram da aba Itens (fator, conversão, lembrar, estoque/imobilizado na linha). */
+export const CAMPOS_AVANCADOS_REMOVIDOS_DO_ITEM = [
+  "fator", "tipo-fator", "quantidade-interna", "unitario-interno", "lembrar", "gera-estoque", "imobilizado", "fator-origem", "fator-pergunta", "fator-aviso"
+] as const;
+
+/** O item não mostra fator/conversão/qtd interna/lembrar/estoque na linha (UX da importação XML). */
+export async function expectCamposAvancadosAusentes(page: Page, nItem: number) {
+  const pede = `importacao-item-${nItem}`;
+  for (const sufixo of CAMPOS_AVANCADOS_REMOVIDOS_DO_ITEM) {
+    await expect(page.getByTestId(`${pede}-${sufixo}`), `item ${nItem}: sem ${sufixo} na tela`).toHaveCount(0);
+  }
+}
+
+/** Quantidade da nota na tabela (pt-BR via `numeroBR`). */
+export function quantidadeNotaBR(quantidade: string) {
+  const n = Number(String(quantidade).replace(",", "."));
+  const inteiro = Math.abs(n - Math.round(n)) < 1e-9;
+  return new Intl.NumberFormat("pt-BR", { minimumFractionDigits: inteiro ? 0 : 2, maximumFractionDigits: inteiro ? 0 : 2 }).format(n);
+}

@@ -499,6 +499,18 @@ export const TESTIDS_DA_XML04 = {
   formaAtributoOrigem: "data-origem", formaAtributoTrava: "data-travado-pela-top"
 } as const;
 
+/** Reexporta os asserts da aba Itens sem fator/conversão (mesmo contrato da XML-02). */
+export { CAMPOS_AVANCADOS_REMOVIDOS_DO_ITEM, expectCamposAvancadosAusentes, quantidadeNotaBR } from "./xml-02-comum";
+
+/** Fator que o corpo do Gerar leva com a tela sem campo (estado válido ou "1"). */
+export function fatorNoCorpoDoItem(item: ItemDoCenario, vinculo?: { fator?: string | null }) {
+  if (item.grupo === "fora_do_cadastro" || item.grupo === "principal") return "1";
+  if (item.grupo === "alternativa") return item.alternativa!.fator;
+  if (item.grupo === "vinculo") return item.fatorDoVinculo!;
+  const f = vinculo?.fator;
+  return f && /^\d/.test(String(f)) ? D(String(f)).toFixed() : "1";
+}
+
 /** Uma marca de "confira o fator" numa propriedade booleana do `fatorPelaNota` (E1 (c), pelo fio). */
 const NOME_DE_AVISO = /diverg|confer|confira|aviso/i;
 

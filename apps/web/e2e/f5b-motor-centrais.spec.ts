@@ -119,7 +119,7 @@ async function linhaNovaESubtotal(page: Page, p: string, fmt: (v: string | numbe
   // desmarcada, a célula deixa de ser campo e mostra a quantidade formatada
   await linha.getByTestId(`${p}-selecionar-item`).click();
   await expect(linha, "a linha foi desmarcada").toHaveAttribute("aria-selected", "false");
-  await expect(linha.getByTestId(`${p}-quantidade`), "a célula não ativa mostra a quantidade em 2 casas").toHaveText("2,50");
+  await expect(linha.getByTestId(`${p}-quantidade`), "a célula não ativa mostra a quantidade em pt-BR (2,5)").toHaveText("2,5");
   await expect(subtotal, "desmarcar não muda o subtotal").toHaveText(fmt(31));
 }
 
@@ -145,7 +145,7 @@ test("F5B-M1 — Central de Vendas: o subtotal do servidor e os rótulos de semp
   await expect(page.getByTestId("central-vendas-linha"), "a grade tem o item do servidor").toHaveCount(1);
   await expect(page.getByTestId("central-vendas-itens-rodape"), "o rodapé da consulta tem a linha do subtotal").toContainText("Subtotal dos itens");
   await expect(page.getByTestId("central-vendas-subtotal"), "o subtotal é o do servidor").toHaveText(reais(lida.subtotal));
-  await expect(page.getByTestId("central-vendas-quantidade"), "a quantidade em 2 casas, como sempre na venda").toHaveText("2,50");
+  await expect(page.getByTestId("central-vendas-quantidade"), "a quantidade em pt-BR na venda").toHaveText("2,5");
   const r = await rotulosDaConsulta(page, "central-vendas");
   expect(r.colunas, "a grade: as colunas de sempre, com os rótulos fixos, nenhuma a mais").toEqual(COLUNAS_DA_CONSULTA_DE_VENDA);
   expect(r.configurarColunas, "o Configurar colunas da grade: os mesmos rótulos").toEqual(caixas(COLUNAS_DA_CONSULTA_DE_VENDA));
@@ -181,7 +181,7 @@ test("F5B-M2 — Central de Compras: o subtotal do servidor e os rótulos de sem
   await expect(page.getByTestId("central-compras-linha"), "a grade tem o item do servidor").toHaveCount(1);
   await expect(page.getByTestId("central-compras-itens-rodape"), "o rodapé da consulta tem a linha do subtotal").toContainText("Subtotal dos itens");
   await expect(page.getByTestId("central-compras-subtotal"), "o subtotal é o do servidor").toHaveText(reais(lida.valor_itens));
-  await expect(page.getByTestId("central-compras-quantidade"), "a quantidade em 4 casas, como já era na compra").toHaveText("3,0000");
+  await expect(page.getByTestId("central-compras-quantidade"), "a quantidade inteira em pt-BR na compra").toHaveText("3");
   const r = await rotulosDaConsulta(page, "central-compras");
   expect(r.colunas, "a grade: as colunas de sempre, com os rótulos fixos, nenhuma a mais").toEqual(COLUNAS_DA_CONSULTA_DE_COMPRA);
   expect(r.configurarColunas, "o Configurar colunas da grade: os mesmos rótulos").toEqual(caixas(COLUNAS_DA_CONSULTA_DE_COMPRA));

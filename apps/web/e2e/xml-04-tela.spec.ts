@@ -5,8 +5,8 @@ import { api, login, uniq } from "./helpers";
 import { codigoTop, criarTop, type Opcao } from "./central-compras-fixtures";
 import { campoDoFormulario, escolherNoSeletor } from "./xml-02-comum";
 import {
-  TESTIDS_DA_XML04, abrirConferenciaDaXml04, caminho, cenarioDaXml04, compraNoBanco, contarPedidosDaTop, dataComoSeDigita, duplicatasQueSomam, expect, importarNotaDaXml04, irParaAba,
-  ligacaoNoBanco, ligacoesVivasDoCodigo, nDo, notaDoCenario, seletorVazio, test, textoNormalizado, vinculoNoFio, vinculosDoFornecedor,
+  TESTIDS_DA_XML04, abrirConferenciaDaXml04, caminho, cenarioDaXml04, compraNoBanco, contarPedidosDaTop, dataComoSeDigita, duplicatasQueSomam, expect, expectCamposAvancadosAusentes, fatorNoCorpoDoItem, importarNotaDaXml04, irParaAba,
+  ligacaoNoBanco, ligacoesVivasDoCodigo, nDo, notaDoCenario, quantidadeNotaBR, seletorVazio, test, textoNormalizado, vinculoNoFio, vinculosDoFornecedor,
   type CenarioDaXml04, type ConferenciaNoFioDaXml04
 } from "./xml-04-comum";
 
@@ -107,7 +107,7 @@ async function divergenciasNaTela(page: Page): Promise<[string, string, string][
 
 /* ═════════════════════════════════════════════ X4-T1 ═════════════════════════════════════════════ */
 
-test("X4-T1 — o FATOR na aba Itens: a unidade principal e a alternativa com o fator do cadastro e a origem; o uCom fora do cadastro com o campo vazio, a pergunta e o Gerar bloqueado até digitar; o lembrado com o aviso dos dois números; e o Gerar grava o fator de cada item, a forma da nota e só o vínculo pedido", async ({ page, ligacoes }) => {
+test("X4-T1 — aba Itens sem fator na tela: quantidade da nota em pt-BR, corpo com fator automático (cadastro/vínculo ou \"1\"); o Gerar grava a compra, a forma da nota e os vínculos lembrados", async ({ page, ligacoes }) => {
   test.setTimeout(240_000);
   await login(page);
   const c = await cenarioDaXml04(page);
@@ -138,47 +138,12 @@ test("X4-T1 — o FATOR na aba Itens: a unidade principal e a alternativa com o 
   await irParaAba(page, "itens");
   for (const [k, i] of papeis.entries()) {
     const k1 = k + 1;
-    const origem = doItem(page, k1, "fator-origem"); const pergunta = doItem(page, k1, "fator-pergunta"); const aviso = doItem(page, k1, "fator-aviso");
-    await expect(doItem(page, k1, "tipo-fator"), `${i.papel}: a conversão multiplica`).toHaveValue("multiply");
-    if (i.grupo === "principal") {
-      // (a) a unidade PRINCIPAL: 1, do cadastro
-      await expect(doItem(page, k1, "fator"), `(a) ${i.papel}: o fator 1`).toHaveValue("1");
-      await expect(origem, `(a) ${i.papel}: a origem`).toHaveText(`Fator do cadastro: unidade principal do produto (${i.uCom}).`);
-      await expect(origem).toHaveAttribute("data-origem", "unidade_principal");
-      await expect(doItem(page, k1, "quantidade-interna")).toHaveText(D(i.quantidade).toFixed(4));
-    } else if (i.grupo === "alternativa") {
-      // (b) a unidade ALTERNATIVA: o fator dela, do cadastro
-      await expect(doItem(page, k1, "fator"), `(b) ${i.papel}: o fator da alternativa`).toHaveValue(i.alternativa!.fator);
-      await expect(origem, `(b) ${i.papel}: a origem`).toHaveText(`Fator do cadastro: unidade ${i.uCom} do produto.`);
-      await expect(origem).toHaveAttribute("data-origem", "unidade_do_produto");
-      await expect(doItem(page, k1, "quantidade-interna")).toHaveText(D(i.quantidade).times(D(i.alternativa!.fator)).toFixed(4));
-    } else if (i.grupo === "fora_do_cadastro") {
-      // (c) o uCom FORA do cadastro: o campo VAZIO (nunca o "1" calado) e a pergunta dizendo a unidade
-      await expect(doItem(page, k1, "fator"), `(c) ${i.papel}: o campo vazio`).toHaveValue("");
-      await expect(pergunta, `(c) ${i.papel}: a pergunta com a unidade`).toHaveText(`A unidade ${i.uCom} da nota não está no cadastro do produto: informe o fator.`);
-      await expect(origem, `(c) ${i.papel}: sem origem`).toHaveCount(0);
-      await expect(doItem(page, k1, "quantidade-interna"), `(c) ${i.papel}: sem conta`).toHaveText("—");
-    } else {
-      // (d) o LEMBRADO que discorda: o fator do vínculo no campo e o aviso com os DOIS números
-      await expect(doItem(page, k1, "fator"), `(d) ${i.papel}: o fator do vínculo`).toHaveValue(i.fatorDoVinculo!);
-      await expect(origem, `(d) ${i.papel}: a origem`).toHaveText("Fator do vínculo lembrado.");
-      await expect(origem).toHaveAttribute("data-origem", "vinculo");
-      await expect(aviso, `(d) ${i.papel}: o aviso com os dois números`).toHaveText(
-        `O vínculo lembrado usa o fator ${i.fatorDoVinculo} (${MULTIPLICA}) e o cadastro do produto diz ${i.alternativa!.fator} (${MULTIPLICA}) para a unidade ${i.uCom}: vale o do vínculo.`);
-      await expect(doItem(page, k1, "lembrar"), `(d) ${i.papel}: o lembrado nasce com "Lembrar" marcado`).toBeChecked();
-    }
-    if (i.grupo !== "fora_do_cadastro") await expect(pergunta, `${i.papel}: sem pergunta`).toHaveCount(0);
-    if (i.grupo !== "vinculo") await expect(aviso, `${i.papel}: sem aviso`).toHaveCount(0);
+    await expectCamposAvancadosAusentes(page, k1);
+    await expect(doItem(page, k1, "quantidade-nota"), `${i.papel}: quantidade da nota em pt-BR`).toHaveText(quantidadeNotaBR(i.quantidade));
   }
-
-  // As divergências: a pergunta é a pendência de sempre (o fator inválido, BLOQUEIA); o aviso do vínculo é da tela (não
-  // bloqueia); o aviso do servidor do fator a informar não aparece (a tela o assumiu).
+  await expect(page.getByTestId("importacao-criar-produtos"), "o lote Criar produtos da nota continua na aba").toBeVisible();
   const doFator = (await divergenciasNaTela(page)).filter(([codigo]) => /fator/.test(codigo));
-  expect(doFator.map(([codigo, bloqueia, texto]) => [codigo, bloqueia, textoNormalizado(texto).replace(/\s*Ir para .*$/, "")]), "as divergências do fator na aba Divergências").toEqual([
-    ["item_fator_invalido", "sim", `Bloqueia: Item ${n.U1}: informe o fator (maior que zero, até 6 casas).`],
-    ["item_fator_invalido", "sim", `Bloqueia: Item ${n.U2}: informe o fator (maior que zero, até 6 casas).`],
-    ["fator_do_vinculo_diferente_do_cadastro", "nao", `Aviso: Item ${n.V}: O vínculo lembrado usa o fator 6 (${MULTIPLICA}) e o cadastro do produto diz 12 (${MULTIPLICA}) para a unidade CX: vale o do vínculo.`]
-  ]);
+  expect(doFator.filter(([, bloqueia]) => bloqueia === "sim"), "sem bloqueio de fator na tela (avisos do servidor podem aparecer)").toEqual([]);
 
   // O FINANCEIRO resolvido: a forma da nota (ligada) já escolhida; o vencimento (a condição: as duplicatas não fecham), a natureza e o centro.
   const forma = await formaNaTela(page);
@@ -194,42 +159,23 @@ test("X4-T1 — o FATOR na aba Itens: a unidade principal e a alternativa com o 
   await expect(page.getByTestId("importacao-vencimento")).toHaveValue("2026-11-16");
   await classificarODocumento(page, c);
 
-  // (c) O "GERAR COMPRA" BLOQUEADO ATÉ DIGITAR: as únicas pendências que bloqueiam são os dois fatores.
-  const gerar = page.getByTestId("importacao-gerar-compra");
-  await expect(gerar, "(c) com os dois fatores perguntados, o Gerar fica bloqueado").toBeDisabled();
-  expect((await divergenciasNaTela(page)).filter(([, bloqueia]) => bloqueia === "sim").map(([codigo, , texto]) => [codigo, /Item (\d+):/.exec(texto)?.[1]]),
-    "(c) o que bloqueia: só os dois fatores a informar").toEqual([["item_fator_invalido", String(n.U1)], ["item_fator_invalido", String(n.U2)]]);
-  await irParaAba(page, "itens");
-  await doItem(page, n.U1, "fator").fill("20");
-  await expect(doItem(page, n.U1, "fator-origem"), "(c) digitado: a origem vira \"informado na tela\"").toHaveText("Fator informado na tela.");
-  await expect(doItem(page, n.U1, "fator-origem")).toHaveAttribute("data-origem", "informado");
-  await expect(doItem(page, n.U1, "fator-pergunta"), "(c) digitado: a pergunta sai").toHaveCount(0);
-  await expect(doItem(page, n.U1, "quantidade-interna")).toHaveText(D(papeis[n.U1 - 1]!.quantidade).times(20).toFixed(4));
-  await expect(gerar, "(c) com um fator ainda perguntado, o Gerar continua bloqueado").toBeDisabled();
-  await doItem(page, n.U2, "fator").fill("10");
-  await expect(doItem(page, n.U2, "fator-origem")).toHaveText("Fator informado na tela.");
-  await expect(gerar, "(c) os dois digitados: o Gerar destrava").toBeEnabled();
-
-  // (j) O VÍNCULO SÓ NASCE NO GERAR: o U1 com "Lembrar" (a referência nasce desmarcada); até o clique, o banco só tem o do V.
-  await expect(doItem(page, n.U1, "lembrar"), "premissa: o sugerido pela referência nasce sem \"Lembrar\"").not.toBeChecked();
-  await doItem(page, n.U1, "lembrar").check();
-  const codigoU1 = c.codigoDo("U1"); const codigoV = c.codigoDo("V");
+  const codigoU1 = c.codigoDo("U1"); const codigoU2 = c.codigoDo("U2"); const codigoV = c.codigoDo("V");
   const doV = `${codigoV}|CX|${c.produtos.get(n.V)!.id}|multiply|6`;
-  expect(vinculosDoFornecedor(c.fornecedor), "(j) antes do Gerar (a conferência lida, o fator digitado): só o vínculo do V").toEqual([doV]);
+  expect(vinculosDoFornecedor(c.fornecedor), "(j) antes do Gerar: só o vínculo prévio do V").toEqual([doV]);
 
   const { corpo, compra } = await gerarCompra(page, id);
   expect(compra.situacao, "(j) a compra nasceu aberta").toBe("aberto");
   expect(D(compra.valor_total).toFixed(2), "(j) com o total da nota").toBe(c.nota.vNF);
-  const fatoresCertos = papeis.map((i) => (i.grupo === "principal" ? "1" : i.grupo === "alternativa" ? i.alternativa!.fator : i.grupo === "vinculo" ? i.fatorDoVinculo! : i.papel === "U1" ? "20" : "10"));
-  expect(corpo.itens.map((i) => [i.n_item, D(i.fator).toFixed(), i.tipo_fator, i.lembrar_vinculo ?? null]), "(j) o corpo: o fator de cada item e o \"Lembrar\" (só o U1 e o V)")
-    .toEqual(papeis.map((i, k) => [k + 1, fatoresCertos[k], "multiply", i.papel === "U1" || i.grupo === "vinculo"]));
+  const fatoresCertos = papeis.map((i, k) => fatorNoCorpoDoItem(i, vinculoNoFio(conf, k + 1)));
+  expect(corpo.itens.map((i) => [i.n_item, D(i.fator).toFixed(), i.tipo_fator, i.lembrar_vinculo ?? null]), "(j) o corpo: fator automático e lembrar_vinculo true em todos")
+    .toEqual(papeis.map((i, k) => [k + 1, D(fatoresCertos[k]).toFixed(), "multiply", true]));
   expect(corpo.financeiro.forma_pagamento_id, "(j) o corpo: a forma da nota").toBe(c.formaCerta.id);
   const gravada = compraNoBanco(compra.id);
   expect(gravada, "(j) NO BANCO: a forma da nota no documento e o fator de cada item").toEqual({
     forma: c.formaCerta.id, itens: papeis.map((_, k) => `${k + 1}|${c.produtos.get(k + 1)!.id}|multiply|${fatoresCertos[k]}`)
   });
-  expect(vinculosDoFornecedor(c.fornecedor), "(j) NO BANCO: o vínculo do U1 nasceu no Gerar (fator 20); o do V continua o do operador (6), nunca o do cadastro")
-    .toEqual([`${codigoU1}|BD|${c.produtos.get(n.U1)!.id}|multiply|20`, doV].sort());
+  expect(vinculosDoFornecedor(c.fornecedor), "(j) NO BANCO: U1 e U2 nasceram no Gerar com fator 1; o V continua")
+    .toEqual([`${codigoU1}|BD|${c.produtos.get(n.U1)!.id}|multiply|1`, `${codigoU2}|FD|${c.produtos.get(n.U2)!.id}|multiply|1`, doV].sort());
 });
 
 /* ═════════════════════════════════════════════ X4-T2 ═════════════════════════════════════════════ */

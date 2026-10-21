@@ -6,7 +6,7 @@ import { vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
 import {
   COMMITS_DA_XML02, MARCA_DA_XML02, ROTULO, TEXTO_DA_CONFERENCIA_DA_REFERENCIA, TEXTO_DA_CONFERENCIA_DO_PALPITE, abrirConferencia, caixaDoProduto, cenarioDaXml02, fonteDoCommitContem,
   fonteDoHeadContem, gerarCompraPelaTela, importarNota, itemDo, lembrarNoCorpo, lerConferencia, produtoDo, resumoDoVinculo, vinculoDe,
-  vinculosLembradosDo, webDaBaseTemAXml02, type ConferenciaNoFio
+  vinculosLembradosDo, webDaBaseTemAXml02, webDaBaseTemImportacaoSemFatorNaTela, type ConferenciaNoFio
 } from "./xml-02-comum";
 
 /**
@@ -98,13 +98,15 @@ test("XML-02 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
   for (const [k, prod] of [[n.D, p.D], [n.R, p.R]] as const) {
     await expect(item(k), `item ${k}: o web da base desenhou o sugerido`).toHaveAttribute("data-vinculo", "sugerido");
     await expect(caixaDoProduto(page, k), `item ${k}: com o produto escolhido`).toContainText(`${prod.codigo} — ${prod.descricao}`);
-    await expect(page.getByTestId(`importacao-item-${k}-quantidade-interna`), `item ${k}: a conta feita`).not.toHaveText("—");
+    const qtdInterna = page.getByTestId(`importacao-item-${k}-quantidade-interna`);
+    if (await qtdInterna.count()) await expect(qtdInterna, `item ${k}: a conta feita`).not.toHaveText("—");
+    else await expect(page.getByTestId(`importacao-item-${k}-quantidade-nota`), `item ${k}: quantidade da nota`).toBeVisible();
   }
 
-  // O QUE A JANELA MOSTRA: o rótulo (no web da base a etiqueta não tem testid — lida pelo texto do cartão), o "Lembrar"
-  // e o "Criar produto" de cada item.
+  const semFatorNaTela = webDaBaseTemImportacaoSemFatorNaTela();
+  // O QUE A JANELA MOSTRA: o rótulo, o "Criar produto" e (se existir) o "Lembrar".
   const rotuloNaTela = async (k: number) => (await item(k).getByText(/^Sugerido( \(.+\))?$/).allTextContents()).join(" | ");
-  const lembrarNaTela = (k: number) => page.getByTestId(`importacao-item-${k}-lembrar`).isChecked();
+  const lembrarNaTela = async (k: number) => ((await page.getByTestId(`importacao-item-${k}-lembrar`).count()) > 0 ? await page.getByTestId(`importacao-item-${k}-lembrar`).isChecked() : null);
   const doCartao = async (k: number) => ({
     rotulo: await rotuloNaTela(k), lembrar: await lembrarNaTela(k), criarProduto: await page.getByTestId(`importacao-item-${k}-criar-produto`).count(),
     conferenciaDaDescricao: await page.getByTestId(`importacao-item-${k}-sugestao-descricao`).count(),
@@ -114,10 +116,14 @@ test("XML-02 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
   const linha = (o: typeof observado.D) => `rótulo="${o.rotulo}" Lembrar=${o.lembrar ? "MARCADO" : "desmarcado"} Criar produto=${o.criarProduto} linha do palpite (descrição/referência)=${o.conferenciaDaDescricao}/${o.conferenciaDaReferencia}`;
   console.log(`[skew] XML-02 · K2 · mundo ${mundo} · na tela da base: item ${n.D} (descrição) ${linha(observado.D)} | item ${n.R} (referência) ${linha(observado.R)}`);
   if (mundo === "novo") {
-    expect(observado, "mundo novo: o web da base é o deste HEAD — os dois palpites").toEqual({
-      D: { rotulo: ROTULO.descricao, lembrar: false, criarProduto: 1, conferenciaDaDescricao: 1, conferenciaDaReferencia: 0 },
-      R: { rotulo: ROTULO.referencia, lembrar: false, criarProduto: 1, conferenciaDaDescricao: 0, conferenciaDaReferencia: 1 }
-    });
+    expect(observado.D?.rotulo, "mundo novo: palpite da descrição").toBe(ROTULO.descricao);
+    expect(observado.R?.rotulo, "mundo novo: palpite da referência").toBe(ROTULO.referencia);
+    if (!semFatorNaTela) {
+      expect(observado, "mundo novo (com Lembrar na tela): os dois palpites desmarcados").toEqual({
+        D: { rotulo: ROTULO.descricao, lembrar: false, criarProduto: 1, conferenciaDaDescricao: 1, conferenciaDaReferencia: 0 },
+        R: { rotulo: ROTULO.referencia, lembrar: false, criarProduto: 1, conferenciaDaDescricao: 0, conferenciaDaReferencia: 1 }
+      });
+    }
     await expect(page.getByTestId(`importacao-item-${n.D}-sugestao-descricao`)).toHaveText(TEXTO_DA_CONFERENCIA_DO_PALPITE);
     await expect(page.getByTestId(`importacao-item-${n.R}-sugestao-referencia`)).toHaveText(TEXTO_DA_CONFERENCIA_DA_REFERENCIA);
   }
@@ -134,8 +140,13 @@ test("XML-02 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
   console.log(`[skew] XML-02 · K2 · mundo ${mundo} · gerar ${g.status} | lembrar_vinculo no corpo: ${JSON.stringify(lembrarNoCorpo(g.corpo).map(([k, , l]) => [k, l]))}`
     + ` | vínculos lembrados do fornecedor depois: ${gravados.length} (o do palpite da descrição ${gravado("D")}; o da referência ${gravado("R")})`);
   if (mundo === "novo") {
-    expect(lembrarNoCorpo(g.corpo), "mundo novo: os dois palpites vão com lembrar_vinculo false").toEqual([[n.D, p.D.id, false], [n.R, p.R.id, false]]);
-    expect(gravados, "mundo novo: o banco NÃO ganha par nenhum do fornecedor").toEqual([]);
+    if (semFatorNaTela) {
+      expect(lembrarNoCorpo(g.corpo), "mundo novo (sem fator na tela): lembrar_vinculo true nos dois palpites").toEqual([[n.D, p.D.id, true], [n.R, p.R.id, true]]);
+      expect(gravados.sort(), "mundo novo: o banco ganha os dois pares").toEqual([par("D"), par("R")].sort());
+    } else {
+      expect(lembrarNoCorpo(g.corpo), "mundo novo: os dois palpites vão com lembrar_vinculo false").toEqual([[n.D, p.D.id, false], [n.R, p.R.id, false]]);
+      expect(gravados, "mundo novo: o banco NÃO ganha par nenhum do fornecedor").toEqual([]);
+    }
   } else {
     expect(gravados, "mundo legado: o web da base deixa \"Lembrar\" marcado na referência, e o par dela é gravado (o risco da janela, observado)").toContain(par("R"));
   }

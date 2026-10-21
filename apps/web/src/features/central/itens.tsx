@@ -3,7 +3,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, Copy, FileText, Grid3x3, Lock, Plus, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
-import { cn, brl, num, dateBR } from "@/lib/utils";
+import { cn, brl, num, numeroBR, dateBR } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Input } from "@/components/ui";
 import { StockCell, totalDaLinhaExibido, type ItemRow } from "@/features/docs/shared";
@@ -364,11 +364,11 @@ export function ItensDaCentral({
           aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId={tid("armazem")}
           onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} />}</td>;
       case "estoque": return <td key={k} className={cn(grade.numero, grade.estoque)}>{saldoDoItem(it)}</td>;
-      case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{num(maxDaOrigem(it) ?? "0", 4)}</td>;
+      case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{numeroBR(maxDaOrigem(it) ?? "0", 4)}</td>;
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
         {ativa && !daOrigem?.quantidadeTravada && !travas(it).quantidade
           ? <input className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} type="number" step="0.0001" min="0" max={maxDaQuantidade(it)} value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} />
-          : <span data-testid={tid("quantidade")}>{num(linhaNovaEmBranco ? it.quantity : it.quantity || "0", casasDaQuantidade)}</span>}
+          : <span data-testid={tid("quantidade")}>{numeroBR(linhaNovaEmBranco ? it.quantity : it.quantity || "0", casasDaQuantidade)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
       case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario ? <input className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} /> : dinheiro(it.unit_value ?? "0")}</td>;
@@ -467,7 +467,7 @@ export function ItensDaCentral({
       case "produto": return <>{campoDeReferencia("product_id", "products")}{pesquisaEmFluxo("product_id")}</>;
       case "armazem": return <>{campoDeReferencia("warehouse_id", "warehouses")}{pesquisaEmFluxo("warehouse_id")}</>;
       case "estoque": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "estoque" : undefined}>{saldoDoItem(it)}</CampoDaCentral>;
-      case "saldo": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" testId={tid("item-saldo")}>{num(maxDaOrigem(it) ?? "0", 4)}</CampoDaCentral>;
+      case "saldo": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" testId={tid("item-saldo")}>{numeroBR(maxDaOrigem(it) ?? "0", 4)}</CampoDaCentral>;
       case "unidade": return <CampoDaCentral rotulo="Unidade" estado="travado" testId={tid("item-unidade")}><UnidadeTravada produto={it.product_id} /></CampoDaCentral>;
       case "quantidade": return campoNumerico(k, "quantity", it.quantity, { step: "0.0001", max: maxDaQuantidade(it), ...(daOrigem ? { desabilitado: daOrigem.quantidadeTravada } : {}), ...(travas(it).quantidade ? { desabilitado: true, dica: travas(it).motivos?.quantidade } : {}) });
       case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { step: "0.000001", ...(travas(it).unitario ? { desabilitado: true, dica: travas(it).motivos?.unitario } : {}) });

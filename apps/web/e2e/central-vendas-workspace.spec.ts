@@ -587,7 +587,7 @@ test("W13 — três visões do MESMO items: Grade, Formulário e Mostrar grade e
   await page.getByRole("button", { name: "Grade", exact: true }).click();
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
   // a coluna 6 (índice 5) é Quantidade: o NÚMERO é o que foi digitado; a unidade do produto vem ao lado, à parte
-  await expect(linhaDaGrade(page, 1).locator("td").nth(5).getByTestId("central-vendas-quantidade")).toHaveText("7,00");
+  await expect(linhaDaGrade(page, 1).locator("td").nth(5).getByTestId("central-vendas-quantidade")).toHaveText("7");
 
   // Grade e formulário (Fase B: a opção de Configurar colunas): as duas ao mesmo tempo, sobre o mesmo item marcado
   await marcarLinha(page, 1);
@@ -1260,7 +1260,7 @@ test("W28 — unidade do produto: sufixo da quantidade e campo travado, pela lei
 
   await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-unidade"), "linha selecionada: ao lado do campo").toHaveText(unidade);
   await adicionarItemComProduto(page, 1);
-  await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-quantidade"), "linha não selecionada: número").toHaveText("1,00");
+  await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-quantidade"), "linha não selecionada: número").toHaveText("1");
   await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-unidade"), "e unidade").toHaveText(unidade);
   await marcarLinha(page, 0);
   await page.getByRole("button", { name: "Formulário", exact: true }).click();

@@ -3,7 +3,7 @@ import { D } from "@agro/shared";
 import { login, api } from "./helpers";
 import {
   COBRANCA_DO_CENARIO, ITENS_DO_CENARIO, Gestos, TESTIDS_DA_XML04, cadastroDaLigacaoNoDominio, caminho, cenarioDaXml04, comparacoesDasDuplicatas, dataComoSeDigita,
-  escolherNoSeletorContando, expect, fatorSemRespaldo, formasDoNumeroNoTexto, marcasDaXml04NoFio, origemDoFator, seletorVazio, test, textoNormalizado, vinculoLembrado,
+  escolherNoSeletorContando, expect, expectCamposAvancadosAusentes, fatorNoCorpoDoItem, fatorSemRespaldo, formasDoNumeroNoTexto, marcasDaXml04NoFio, origemDoFator, seletorVazio, test, textoNormalizado, vinculoLembrado,
   type OrigemDoFator
 } from "./xml-04-comum";
 
@@ -118,7 +118,7 @@ async function abrirConferencia(page: Page, id: string): Promise<ConferenciaNoFi
 /** O fator digitado é o certo? (texto decimal válido, igual ao certo) */
 const fatorCerto = (valor: string, certo: string) => /^\d{1,12}(\.\d{1,6})?$/.test(valor) && D(valor).eq(D(certo));
 
-interface ItemAoAbrir { n: number; fator: string; tipo: string; localVazio: boolean; marcasNaTela: string[] }
+interface ItemAoAbrir { n: number; fator: string; tipo: string; localVazio: boolean; marcasNaTela: string[]; temFatorNaTela: boolean }
 interface FinanceiroAoAbrir { formaVazia: boolean; modoCondicao: boolean; condicaoVazia: boolean; vencimentoVazio: boolean; naturezaVisivel: boolean; naturezaVazia: boolean; centroVazio: boolean }
 
 /** A forma de pagamento ao abrir (aba Financeiro), sem nenhum gesto: vazia?, a origem declarada e o porquê do campo vazio. */
@@ -193,12 +193,18 @@ test("XML-04 MEDIÇÃO — nota de 10 itens: fatores a digitar/conferir (E1), fo
         const cartao = page.getByTestId(pede);
         await expect(cartao, `medição: o cartão do item ${n} mostra a situação da resposta`).toHaveAttribute("data-vinculo", vinculo(n).situacao);
         const testids = await cartao.locator("[data-testid]").evaluateAll((els) => els.map((e) => e.getAttribute("data-testid") ?? ""));
-        const marcasNaTela = testids.filter((t) => t.startsWith(`${pede}-`) && t !== `${pede}-fator` && t !== `${pede}-tipo-fator` && /fator/i.test(t) && /aviso|confer|diverg/i.test(t));
+        const campoFator = page.getByTestId(`${pede}-fator`);
+        const temFatorNaTela = (await campoFator.count()) > 0;
+        const marcasNaTela = temFatorNaTela ? testids.filter((t) => t.startsWith(`${pede}-`) && t !== `${pede}-fator` && t !== `${pede}-tipo-fator` && /fator/i.test(t) && /aviso|confer|diverg/i.test(t)) : [];
         const local = page.getByTestId(`${pede}-local`);
+        const itemCenario = ITENS_DO_CENARIO[n - 1]!;
         itensAoAbrir.set(n, {
-          n, fator: await page.getByTestId(`${pede}-fator`).inputValue(), tipo: await page.getByTestId(`${pede}-tipo-fator`).inputValue(),
-          localVazio: (await local.count()) > 0 ? await seletorVazio(local) : false, marcasNaTela
+          n,
+          fator: temFatorNaTela ? await campoFator.inputValue() : fatorNoCorpoDoItem(itemCenario, vinculo(n)),
+          tipo: temFatorNaTela ? await page.getByTestId(`${pede}-tipo-fator`).inputValue() : "multiply",
+          localVazio: (await local.count()) > 0 ? await seletorVazio(local) : false, marcasNaTela, temFatorNaTela
         });
+        if (!temFatorNaTela) await expectCamposAvancadosAusentes(page, n);
       }
     }
     if (aba === "financeiro") {
@@ -233,8 +239,8 @@ test("XML-04 MEDIÇÃO — nota de 10 itens: fatores a digitar/conferir (E1), fo
     const c1 = conf.divergencias.filter((d) => d.nItem === n && /fator/i.test(d.codigo)).map((d) => `servidor:${d.codigo}`);
     const c3 = divergenciasNaTela.filter((d) => /fator/i.test(d.codigo) && d.texto.includes(`Item ${n}:`)).map((d) => `lista:${d.codigo}`);
     const avisos = [...c1, ...lido.marcasNaTela.map((t) => `tela:${t}`), ...c3, ...(origem.avisoNoFio ? [`fio:fatorPelaNota.${origem.avisoNoFio}`] : [])];
-    const digitar = !fatorCerto(lido.fator, item.fatorCerto) || lido.tipo !== "multiply";
-    const regra = digitar ? "a" : fatorSemRespaldo(origem) ? "b" : avisos.length > 0 ? "c" : null;
+    const digitar = lido.temFatorNaTela && (!fatorCerto(lido.fator, item.fatorCerto) || lido.tipo !== "multiply");
+    const regra = !lido.temFatorNaTela ? null : digitar ? "a" : fatorSemRespaldo(origem) ? "b" : avisos.length > 0 ? "c" : null;
     return { n, papel: item.papel, regra, fator: lido.fator, tipo: lido.tipo, certo: item.fatorCerto, origem: `${origem.doFio ? "fio" : "hoje"}:${origem.origem}`, avisos };
   });
   const E1 = E1_itens.filter((i) => i.regra !== null).length;
@@ -277,19 +283,24 @@ test("XML-04 MEDIÇÃO — nota de 10 itens: fatores a digitar/conferir (E1), fo
   await expect(top).toHaveValue(c.top);
 
   // ITENS: o fator onde está errado ou vazio; a conversão; o Local quando a TOP o exige
-  const itensComAcao = E1_itens.filter((i) => !fatorCerto(i.fator, i.certo) || i.tipo !== "multiply" || (regras.exigeArmazem && itensAoAbrir.get(i.n)!.localVazio));
+  const itensComAcao = E1_itens.filter((i) => {
+    const ab = itensAoAbrir.get(i.n)!;
+    const fatorPrecisa = ab.temFatorNaTela && (!fatorCerto(i.fator, i.certo) || i.tipo !== "multiply");
+    return fatorPrecisa || (regras.exigeArmazem && ab.localVazio);
+  });
   if (itensComAcao.length > 0) {
     await g.click(page.getByTestId("importacao-aba-itens-rotulo"), "aba Itens");
     await expect(page.getByTestId("importacao-aba-itens")).toBeVisible();
     for (const i of itensComAcao) {
       const pede = `importacao-item-${i.n}`;
-      const campo = page.getByTestId(`${pede}-fator`);
-      await expect(campo, `item ${i.n}: o campo Fator reaberto é o que foi medido`).toHaveValue(i.fator);
-      if (!fatorCerto(i.fator, i.certo)) await g.fill(campo, i.certo, `item ${i.n} fator`);
-      if (i.tipo !== "multiply") await g.selectOption(page.getByTestId(`${pede}-tipo-fator`), "multiply", `item ${i.n} conversão`);
-      if (regras.exigeArmazem && itensAoAbrir.get(i.n)!.localVazio) await escolherNoSeletorContando(page, g, page.getByTestId(`${pede}-local`), c.local.nome, `item ${i.n} Local`);
-      const q = c.nota.itens[i.n - 1]!.quantidade;
-      await expect(page.getByTestId(`${pede}-quantidade-interna`), `item ${i.n}: a quantidade interna é qCom × o fator certo`).toHaveText(D(q).times(D(i.certo)).toFixed(4));
+      const ab = itensAoAbrir.get(i.n)!;
+      if (ab.temFatorNaTela) {
+        const campo = page.getByTestId(`${pede}-fator`);
+        await expect(campo, `item ${i.n}: o campo Fator reaberto é o que foi medido`).toHaveValue(i.fator);
+        if (!fatorCerto(i.fator, i.certo)) await g.fill(campo, i.certo, `item ${i.n} fator`);
+        if (i.tipo !== "multiply") await g.selectOption(page.getByTestId(`${pede}-tipo-fator`), "multiply", `item ${i.n} conversão`);
+      }
+      if (regras.exigeArmazem && ab.localVazio) await escolherNoSeletorContando(page, g, page.getByTestId(`${pede}-local`), c.local.nome, `item ${i.n} Local`);
     }
   }
 
@@ -329,8 +340,9 @@ test("XML-04 MEDIÇÃO — nota de 10 itens: fatores a digitar/conferir (E1), fo
   const gravada = await api<{ itens: Record<string, unknown>[] }>(page, "GET", `/api/compras/compras/${compra.id}`);
   const porItem = [...gravada.itens].sort((a, b) => Number(a["n_item_nota"]) - Number(b["n_item_nota"]))
     .map((i) => [Number(i["n_item_nota"]), String(i["produto_id"]), D(String(i["fator_conversao"])).toFixed(), String(i["tipo_fator_conversao"]), D(String(i["quantidade"])).toFixed(4)]);
-  expect(porItem, "premissa: cada item da compra com o produto, o fator CERTO e a quantidade interna = qCom × fator")
-    .toEqual(ITENS_DO_CENARIO.map((item, k) => [k + 1, c.produtos.get(k + 1)!.id, D(item.fatorCerto).toFixed(), "multiply", D(item.quantidade).times(D(item.fatorCerto)).toFixed(4)]));
+  const fatorGravado = (item: (typeof ITENS_DO_CENARIO)[number]) => fatorNoCorpoDoItem(item);
+  expect(porItem, "premissa: cada item com o produto, o fator do corpo automático e qCom × fator")
+    .toEqual(ITENS_DO_CENARIO.map((item, k) => [k + 1, c.produtos.get(k + 1)!.id, D(fatorGravado(item)).toFixed(), "multiply", D(item.quantidade).times(D(fatorGravado(item))).toFixed(4)]));
 
   /* ── a saída ── */
   const marcas = marcasDaXml04NoFio(conf);
@@ -357,9 +369,15 @@ test("XML-04 MEDIÇÃO — nota de 10 itens: fatores a digitar/conferir (E1), fo
 
   /* ── O MUNDO NOVO, AFIRMADO; a base, reproduzida ── */
   if (mundo === "novo") {
-    expect(E1_itens.filter((i) => i.regra !== null).map((i) => [i.papel, i.regra]), "XML-04: E1 = 3 — os dois fatores PERGUNTADOS (uCom fora do cadastro) e o lembrado que discorda do cadastro")
-      .toEqual([["U1", "a"], ["U2", "a"], ["V", "a"]]);
-    expect(E1, `XML-04: E1 cai (base ${MEDIDO_NA_BASE.E1})`).toBeLessThan(MEDIDO_NA_BASE.E1);
+    const semFatorNaTela = ITENS_DO_CENARIO.every((_, k) => !itensAoAbrir.get(k + 1)!.temFatorNaTela);
+    if (semFatorNaTela) {
+      expect(E1, "XML-04 (sem fator na tela): E1 = 0 — nada a digitar/conferir").toBe(0);
+      expect(E1_itens.every((i) => i.regra === null), "nenhum item entra na regra E1").toBe(true);
+    } else {
+      expect(E1_itens.filter((i) => i.regra !== null).map((i) => [i.papel, i.regra]), "XML-04: E1 = 3 — os dois fatores PERGUNTADOS e o lembrado que discorda")
+        .toEqual([["U1", "a"], ["U2", "a"], ["V", "a"]]);
+      expect(E1, `XML-04: E1 cai (base ${MEDIDO_NA_BASE.E1})`).toBeLessThan(MEDIDO_NA_BASE.E1);
+    }
     expect([E2, E2_semLigacao], "XML-04: com o tPag ligado a forma NÃO é perguntada; sem a ligação, é").toEqual(["nao", "sim"]);
     expect(fin.formaVazia, "XML-04: a forma da nota veio escolhida").toBe(false);
     expect(E3, "XML-04: os três números continuam na conferência").toBe(3);

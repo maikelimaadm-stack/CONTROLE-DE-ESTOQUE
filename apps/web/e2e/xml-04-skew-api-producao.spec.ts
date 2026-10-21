@@ -3,10 +3,10 @@ import { D } from "@agro/shared";
 import { api, login } from "./helpers";
 import { shaDaBase } from "./skew-fonte-da-base";
 import { vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
-import { escolherNoSeletor, fonteDoCommitContem, fonteDoHeadContem } from "./xml-02-comum";
+import { escolherNoSeletor, expectCamposAvancadosAusentes, fonteDoCommitContem, fonteDoHeadContem } from "./xml-02-comum";
 import {
   COMMITS_DA_XML04, MARCA_DA_XML04, TESTIDS_DA_XML04, abrirConferenciaDaXml04, apiDaBaseTemAXml04, caminho, cenarioDaXml04, comoATelaEscreve, compraNoBanco, contarPedidosDaTop, dataComoSeDigita, expect,
-  importarNotaDaXml04, irParaAba, marcasDaXml04NoFio, nDo, test, testidsDaXml04NaTela, textoNormalizado, vinculoNoFio, type CenarioDaXml04, type ConferenciaNoFioDaXml04
+  fatorNoCorpoDoItem, importarNotaDaXml04, irParaAba, marcasDaXml04NoFio, nDo, test, testidsDaXml04NaTela, textoNormalizado, vinculoNoFio, type CenarioDaXml04, type ConferenciaNoFioDaXml04
 } from "./xml-04-comum";
 
 /**
@@ -138,11 +138,13 @@ test("XML-04 · K1 (sentido 1) — a conferência deste web sobre a API da base:
   const papeis = c.itensDoCenario;
   const nU = [nDo(c, "U1"), nDo(c, "U2")];
 
+  const semFatorNaTela = (await page.getByTestId("importacao-item-1-fator").count()) === 0;
   if (mundo === "legado") {
-    // A TELA DE HOJE: o fator de cada item como o servidor manda; nenhuma marca da XML-04 nos cartões.
+    // A TELA DE HOJE: o fator de cada item como o servidor manda (se o campo existir); nenhuma marca da XML-04 nos cartões.
     for (const [k, i] of papeis.entries()) {
       const vin = vinculoNoFio(noFio, k + 1);
-      await expect(page.getByTestId(`importacao-item-${k + 1}-fator`), `${i.papel}: o fator como o servidor manda (${vin.fator})`).toHaveValue(D(vin.fator ?? "0").toFixed());
+      const campo = page.getByTestId(`importacao-item-${k + 1}-fator`);
+      if (await campo.count()) await expect(campo, `${i.papel}: o fator como o servidor manda (${vin.fator})`).toHaveValue(D(vin.fator ?? "0").toFixed());
     }
     expect(await testidsDaXml04NaTela(page), "a aba Itens de hoje: nenhuma origem, pergunta ou aviso do fator").toEqual([]);
     await irParaAba(page, "financeiro");
@@ -159,8 +161,9 @@ test("XML-04 · K1 (sentido 1) — a conferência deste web sobre a API da base:
       .toBe(`Soma das duplicatas: R$ ${comoATelaEscreve(c.nota.somaDasDuplicatas)} · Líquido da fatura (vLiq): R$ ${comoATelaEscreve(c.nota.vLiq)} · Total da compra: R$ ${comoATelaEscreve(c.nota.vNF)}.`);
     expect((await page.getByTestId(TESTIDS_DA_XML04.parcelasFalha).allInnerTexts()).map(textoNormalizado), "as duas comparações que falham, com a diferença")
       .toEqual([`A soma das duplicatas fica R$ ${comoATelaEscreve("279.00")} abaixo do líquido.`, `O líquido fica R$ ${comoATelaEscreve("50.00")} abaixo do total da compra.`]);
+  } else if (semFatorNaTela) {
+    for (let k = 1; k <= papeis.length; k++) await expectCamposAvancadosAusentes(page, k);
   } else {
-    // O MUNDO NOVO: o comportamento deste HEAD — a origem do fator e o campo vazio na pergunta.
     await expect(page.getByTestId(TESTIDS_DA_XML04.fatorOrigem(1)), "mundo novo: a origem do fator").toBeVisible();
     for (const k of nU) await expect(page.getByTestId(`importacao-item-${k}-fator`), `mundo novo: o item ${k} com o fator perguntado (vazio)`).toHaveValue("");
     for (const [k, fator] of [[nU[0]!, "20"], [nU[1]!, "10"]] as const) await page.getByTestId(`importacao-item-${k}-fator`).fill(fator);
@@ -196,6 +199,9 @@ test("XML-04 · K1 (sentido 1) — a conferência deste web sobre a API da base:
       + `rateio ${Object.keys(corpo.financeiro.rateio).length}, item ${CHAVES_DO_CORPO_NA_BASE.item.length} × ${corpo.itens.length} | forma_pagamento_id ${JSON.stringify(corpo.financeiro["forma_pagamento_id"])}`);
   } else {
     expect(pedidosAteOGerar.length, "mundo novo: a tela pergunta a TOP (a conferência declara a forma da nota)").toBeGreaterThan(0);
+    if (semFatorNaTela) {
+      expect(fatoresDoCorpo, "mundo novo (sem fator na tela): fatores automáticos no corpo").toEqual(papeis.map((item, k) => D(fatorNoCorpoDoItem(item, vinculoNoFio(noFio, k + 1))).toFixed()));
+    }
   }
   console.log(`[skew] XML-04 · K1 · mundo ${mundo} | pedidos à TOP com a conferência aberta: ${pedidosAteOGerar.length} | gerar ${resposta.status()} | fatores no corpo ${JSON.stringify(fatoresDoCorpo)} | forma gravada ${gravada.forma ?? "nenhuma"}`);
   v.semBloqueio();

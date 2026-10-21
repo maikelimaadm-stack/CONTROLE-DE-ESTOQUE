@@ -10,8 +10,8 @@ import { arquivoDaNota, base64DaNota, cnpjDeEmitenteSintetico, notaSintetica, ty
  * │ IX-1 importar e gerar: Documentos de Compras › "Importar XML" → o diálogo; o destinatário é o   │
  * │      CNPJ das DUAS empresas do seed → o servidor pede a escolha (422 com as candidatas, nunca    │
  * │      "a primeira") → a conferência; o fornecedor é o cadastro com o CNPJ do emitente; o item sem │
- * │      vínculo recebe o produto, o fator 12 (CX → UN) e o Local de estoque; a quantidade e o       │
- * │      unitário internos da tela são as contas do domínio (120,0000 e 8,333334); o total confere  │
+ * │      vínculo recebe o produto e o Local de estoque; a quantidade da nota na tabela (10 CX); o    │
+ * │      corpo manda fator "1" (sem conversão na tela); o total confere                             │
  * │      com o vNF; as parcelas são as duplicatas; "Gerar compra" leva só DECISÕES (nenhum valor) e  │
  * │      abre a consulta da compra ABERTA — conferida também pela API (valor_total = vNF, a chave,  │
  * │      o IPI, as parcelas da nota; a importação "gerada").                                          │
@@ -96,7 +96,7 @@ async function enviarEscolhendoAEmpresa(page: Page, dialogo: Locator, empresa: s
 
 /* ═════════════════════════════════ IX-1 ═════════════════════════════════ */
 
-test("IX-1 — importar o XML e gerar a compra: escolha da empresa, fornecedor pelo emitente, produto + fator 12, total = vNF, parcelas da nota; a compra nasce ABERTA", async ({ page }) => {
+test("IX-1 — importar o XML e gerar a compra: escolha da empresa, fornecedor pelo emitente, produto + quantidade da nota, fator 1 no corpo, total = vNF, parcelas da nota; a compra nasce ABERTA", async ({ page }) => {
   await login(page);
   const c = await cenario(page, "IX1");
   const nota = notaSintetica({ emitenteCnpj: c.emitente, emitenteNome: `Emitente sintético ${uniq("IX1")}` });
@@ -117,19 +117,17 @@ test("IX-1 — importar o XML e gerar a compra: escolha da empresa, fornecedor p
   await expect(page.getByTestId("importacao-gerar-compra"), "premissa: com o item sem produto, Gerar compra fica travado").toBeDisabled();
   await page.getByTestId("importacao-top").selectOption(c.top);
 
-  // ITENS: o item sem vínculo; produto, fator 12 (CX → UN), Local de estoque
+  // ITENS: o item sem vínculo; produto, quantidade da nota (pt-BR), Local de estoque — sem fator/conversão na tela
   await page.getByTestId("importacao-aba-itens-rotulo").click();
   const item = page.getByTestId("importacao-item-1");
   await expect(item).toHaveAttribute("data-vinculo", "nenhum");
-  await expect(item.getByTestId("importacao-item-1-quantidade-nota")).toContainText("10.0000 CX");
+  await expect(item.getByTestId("importacao-item-1-quantidade-nota")).toHaveText("10");
+  for (const sufixo of ["fator", "tipo-fator", "quantidade-interna", "unitario-interno", "lembrar"]) {
+    await expect(item.getByTestId(`importacao-item-1-${sufixo}`)).toHaveCount(0);
+  }
   await escolherNoSeletor(page, item.getByTestId("importacao-item-1-produto"), c.produto.nome);
-  await item.getByTestId("importacao-item-1-fator").fill("12");
-  await expect(item.getByTestId("importacao-item-1-tipo-fator")).toHaveValue("multiply");
-  await expect(item.getByTestId("importacao-item-1-quantidade-interna"), "10 × 12").toHaveText("120.0000");
-  await expect(item.getByTestId("importacao-item-1-unitario-interno"), "1.000,00 ÷ 120, arredondado para cima (a linha fecha o vProd)").toHaveText("8.333334");
+  await expect(item.getByTestId("importacao-item-1-criar-produto")).toBeVisible();
   await escolherNoSeletor(page, item.getByTestId("importacao-item-1-local"), c.local.nome);
-  // "Lembrar" mora na linha de apoio (irmã da linha principal), não dentro de importacao-item-1.
-  await expect(page.getByTestId("importacao-item-1-lembrar"), "lembrar o vínculo vem marcado").toBeChecked();
 
   // FINANCEIRO: as duplicatas da nota; natureza e centro do documento
   await page.getByTestId("importacao-aba-financeiro-rotulo").click();
@@ -152,7 +150,7 @@ test("IX-1 — importar o XML e gerar a compra: escolha da empresa, fornecedor p
   expect(resposta.status(), "a compra foi gerada").toBe(201);
   const enviado = resposta.request().postDataJSON() as { fornecedor_id: string; tipo_operacao_id: string; financeiro: Record<string, unknown>; itens: Record<string, unknown>[] };
   expect(enviado).toMatchObject({ fornecedor_id: c.fornecedor.id, tipo_operacao_id: c.top, financeiro: { parcelas: "nota", rateio: { tipo: "documento", categoria_financeira_id: c.ref.natureza.id, centro_custo_id: c.ref.centro.id } } });
-  expect(enviado.itens, "uma decisão por item da nota: produto, fator em TEXTO, local").toEqual([expect.objectContaining({ n_item: 1, produto_id: c.produto.id, fator: "12", tipo_fator: "multiply", armazem_id: c.local.id, lembrar_vinculo: true })]);
+  expect(enviado.itens, "uma decisão por item da nota: produto, fator 1, local, lembrar sempre").toEqual([expect.objectContaining({ n_item: 1, produto_id: c.produto.id, fator: "1", tipo_fator: "multiply", armazem_id: c.local.id, lembrar_vinculo: true, gera_estoque: true, imobilizado: false })]);
   for (const valor of ["quantidade", "valor_unitario", "desconto", "valor_total"]) expect(Object.hasOwn(enviado.itens[0]!, valor), `${valor} não vai no corpo: o servidor relê da nota`).toBe(false);
   const compra = (await resposta.json()) as { id: string; codigo: string; situacao: string; valor_total: string; importacao_id: string };
   expect(compra).toMatchObject({ situacao: "aberto", valor_total: "1080.00", importacao_id: conf.id });
@@ -167,7 +165,7 @@ test("IX-1 — importar o XML e gerar a compra: escolha da empresa, fornecedor p
     valor_ipi: "50.00", frete: "30.00", valor_total: "1080.00", tipo_documento_fiscal: "nfe", uf_nota: "GO", importacao_id: conf.id
   });
   expect(gravada["parcelas_nota"], "as parcelas da nota (as duplicatas)").toEqual(nota.duplicatas);
-  expect(gravada.itens.map((i) => [i["quantidade"], i["valor_unitario"], i["fator_conversao"], i["unidade_nota"]]), "a quantidade e o unitário internos").toEqual([["120.0000", "8.333334", "12.000000", "CX"]]);
+  expect(gravada.itens.map((i) => [i["quantidade"], i["valor_unitario"], i["fator_conversao"], i["unidade_nota"]]), "a quantidade e o unitário (fator 1, sem conversão na tela)").toEqual([["10.0000", "100.000000", "1.000000", "CX"]]);
   const depois = await api<{ situacao: string; documentoCompra: { id: string } | null }>(page, "GET", `/api/compras/importacoes/${conf.id}`);
   expect(depois, "a importação ficou gerada, ligada à compra").toMatchObject({ situacao: "gerada", documentoCompra: { id: compra.id } });
 });
@@ -184,7 +182,7 @@ test("IX-2 — a mesma nota de novo: o servidor recusa (409, já está na Compra
   const compra = await api<{ id: string; codigo: string; situacao: string }>(page, "POST", `/api/compras/importacoes/${conf.id}/gerar-compra`, {
     tipo_operacao_id: c.top, fornecedor_id: c.fornecedor.id,
     financeiro: { parcelas: "nota", rateio: { tipo: "documento", categoria_financeira_id: c.ref.natureza.id, centro_custo_id: c.ref.centro.id } },
-    itens: [{ n_item: 1, produto_id: c.produto.id, fator: "12", tipo_fator: "multiply", armazem_id: c.local.id }]
+    itens: [{ n_item: 1, produto_id: c.produto.id, fator: "1", tipo_fator: "multiply", armazem_id: c.local.id, lembrar_vinculo: true }]
   });
   expect(compra.situacao, "premissa: a nota já está numa compra aberta").toBe("aberto");
 

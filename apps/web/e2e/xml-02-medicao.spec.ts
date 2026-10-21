@@ -198,10 +198,10 @@ async function resolverNaTela(page: Page, r: Registro, nItem: number, caso: Caso
   Promise<{ caminho: CaminhoNaTela; sugestaoErrada: boolean }> {
   const pede = `importacao-item-${nItem}`;
   const caixa = page.getByTestId(`${pede}-produto`).getByRole("combobox");
-  const quantidadeInterna = page.getByTestId(`${pede}-quantidade-interna`);
+  const quantidadeNota = page.getByTestId(`${pede}-quantidade-nota`);
   const resolvido = async () => {
     await expect(caixa, `${caso.rotulo}: a caixa Produto mostra o produto certo`).toContainText(certo.descricao);
-    await expect(quantidadeInterna, `${caso.rotulo}: com o produto, a quantidade interna é calculada`).not.toHaveText("—");
+    await expect(quantidadeNota, `${caso.rotulo}: a quantidade da nota continua visível`).toBeVisible();
   };
   const veioComProduto = v.situacao === "lembrado" || v.situacao === "sugerido";
   if (veioComProduto && v.produto?.id === certo.id) { await resolvido(); return { caminho: "ja_escolhido", sugestaoErrada: false }; }
@@ -317,7 +317,7 @@ test("XML-02 MEDIÇÃO — nota de 12 itens de um fornecedor: o que a conferênc
         sem produto no cadastro pendem na aba Itens ── */
   for (const [k, caso] of NOTA_DA_FASE_0.entries()) {
     if (caso.produto !== null) continue;
-    await expect(page.getByTestId(`importacao-item-${k + 1}-quantidade-interna`), `${caso.rotulo}: sem produto, sem quantidade interna`).toHaveText("—");
+    await expect(page.getByTestId(`importacao-item-${k + 1}-quantidade-nota`), `${caso.rotulo}: a quantidade da nota permanece na tabela`).toBeVisible();
   }
   const semProduto = NOTA_DA_FASE_0.filter((x) => x.produto === null).length;
   await expect(contador, "premissa: no fim, só os itens sem produto no cadastro pendem na aba Itens").toHaveText(String(semProduto));

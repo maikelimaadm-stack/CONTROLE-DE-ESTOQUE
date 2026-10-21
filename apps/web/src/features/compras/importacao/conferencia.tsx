@@ -8,7 +8,7 @@ import { formatarChaveDeAcesso, type ConferenciaDaImportacaoNfe } from "@agro/do
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { enumLabel } from "@/lib/copy";
-import { brl, dateBR } from "@/lib/utils";
+import { brl, dateBR, numeroBR } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { empresaDestinoDoRegistro } from "@/lib/empresa-ativa";
 import { entendeLayoutDocumento } from "@/features/sales/tipo-operacao-select";
@@ -91,7 +91,7 @@ function ResumoDaNota({ conf }: { conf: ConferenciaDaImportacaoNfe }) {
         <tbody>
           {conf.nota.itens.map((i) => <tr key={i.nItem}>
             <td>{i.nItem}</td><td className="font-mono text-[11px]">{i.codigo}</td><td>{i.descricao}</td>
-            <td className="num text-right">{i.quantidade}</td><td>{i.unidade}</td><td className="num text-right">{brl(i.valorProdutos)}</td>
+            <td className="num text-right tabular-nums">{numeroBR(i.quantidade)}</td><td>{i.unidade}</td><td className="num text-right">{brl(i.valorProdutos)}</td>
           </tr>)}
         </tbody>
       </table>
