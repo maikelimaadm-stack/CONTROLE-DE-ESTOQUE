@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { Plus, X } from "lucide-react";
 import { buildInstallments } from "@agro/domain";
 import { cn, num } from "@/lib/utils";
 import { Button, Input } from "@/components/ui";
@@ -56,24 +57,24 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
     </CampoDaCentral>
 
     {e.ajustarParcelas && <div data-testid="compras-parcelas-lista" className="mt-0.5 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
-      <div aria-hidden className={GRADE + " border-b border-slate-200 bg-slate-50 px-2 py-1 text-[10.5px] font-semibold uppercase tracking-wide text-slate-500"}>
-        <span>Vencimento</span><span>Valor</span><span>Observação</span><span />
+      <div aria-hidden className={GRADE + " border-b border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500"}>
+        <span>vencimento</span><span>valor</span><span>observação</span><span />
       </div>
       {linhas.length === 0 && <p className="px-2 py-2 text-[12px] text-slate-500">Nenhuma parcela. Use “Adicionar parcela”.</p>}
       {linhas.map((l, k) => <div key={k} data-testid="compras-parcela" className={GRADE + " px-2 py-1.5"}>
-        <DataDaCentral rotulo={`Vencimento da parcela ${k + 1}`} value={l.vencimento} onChange={(v) => mudarLinha(k, "vencimento", v)} />
+        <DataDaCentral className="mg-input" rotulo={`Vencimento da parcela ${k + 1}`} value={l.vencimento} onChange={(v) => mudarLinha(k, "vencimento", v)} />
         <Input className="min-w-0" data-testid={`compras-parcela-valor-${k}`} type="number" step="0.01" min="0" inputMode="decimal"
           placeholder="0,00" value={l.valor} onChange={(ev) => mudarLinha(k, "valor", ev.target.value)} />
         <Input className="min-w-0" data-testid={`compras-parcela-observacao-${k}`} value={l.observacao ?? ""} maxLength={500}
           placeholder="Observação" onChange={(ev) => mudarLinha(k, "observacao", ev.target.value)} />
-        <Button size="sm" variant="ghost" className="justify-self-end text-[12px] text-slate-500 hover:text-rose-600"
-          data-testid={`compras-parcela-remover-${k}`} aria-label={`Remover parcela ${k + 1}`}
-          onClick={() => definir(linhas.filter((_, j) => j !== k))}>Remover</Button>
+        <Button size="sm" variant="ghost" className="!h-6 !w-6 !min-h-6 !p-0 justify-self-end text-slate-400 hover:text-rose-600"
+          data-testid={`compras-parcela-remover-${k}`} aria-label={`Remover parcela ${k + 1}`} title="Remover parcela"
+          onClick={() => definir(linhas.filter((_, j) => j !== k))}><X className="h-3.5 w-3.5" aria-hidden /></Button>
       </div>)}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1 text-[12px]">
-        <Button size="sm" variant="outline" data-testid="compras-parcela-adicionar"
+        <Button size="sm" data-testid="compras-parcela-adicionar"
           onClick={() => definir([...linhas, { vencimento: "", valor: "", observacao: "" }])} disabled={linhas.length >= 120}>
-          Adicionar parcela
+          <Plus className="h-3.5 w-3.5" aria-hidden /> Adicionar parcela
         </Button>
         <span data-testid="compras-parcelas-soma" className={cn("ml-auto", Math.abs(somaLinhas - e.totalExibido) > 0.005 ? "text-amber-700" : "text-slate-600")}>
           Soma: {num(somaLinhas, 2)}{Math.abs(somaLinhas - e.totalExibido) > 0.005 ? ` (deve fechar o total: ${num(e.totalExibido, 2)})` : ""}
