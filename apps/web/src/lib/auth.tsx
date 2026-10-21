@@ -87,7 +87,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // toda troca de sessão (login, logout, troca de organização, sessão expirada) apaga as entregas em memória entre
   // telas (ex.: dados da Receita do "Novo pelo CNPJ", AJUSTES 01 R1 W-5) antes de recarregar o contexto
   useEffect(() => { void refresh(); const h = () => { esquecerEntregas(); void refresh(); }; window.addEventListener("agro:session", h); return () => window.removeEventListener("agro:session", h); }, [refresh]);
-  useEffect(() => { if (!loading && !session?.token && !pathname.startsWith("/login")) router.replace("/login"); }, [loading, session, pathname, router]);
+  // localStorage é a fonte da verdade na corrida pós-login: setSession grava o token e dispara
+  // agro:session, mas o React ainda pode ter session=null + loading=false quando o /login
+  // navega para /. Sem consultar getSession(), o gate devolvia o usuário ao login na hora.
+  useEffect(() => {
+    if (loading) return;
+    const temToken = Boolean(session?.token || getSession()?.token);
+    if (pathname.startsWith("/login")) {
+      if (temToken) router.replace("/");
+      return;
+    }
+    if (!temToken) router.replace("/login");
+  }, [loading, session, pathname, router]);
   const perms = useMemo(() => new Set(ctx?.permissions ?? []), [ctx]);
   const value: AuthState = useMemo(() => ({
     session, ctx, loading,

@@ -1,6 +1,17 @@
 "use client";
 import { lerSessaoArmazenada } from "@erp/plataforma";
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+/**
+ * Base da API. Na Vercel a Fastify mora no mesmo host (Hobby = um projeto).
+ * Mesma origem: variável ausente, vazia, ou o marcador `same-origin`.
+ * (O client bundle não vê `process.env.VERCEL`; vazio/ausente sem marcador
+ * caía em `localhost:3333` e o login virava "Failed to fetch".)
+ */
+export const API_URL = (() => {
+  const explicita = process.env.NEXT_PUBLIC_API_URL;
+  if (explicita === "" || explicita === "same-origin") return "";
+  if (explicita !== undefined) return explicita.replace(/\/$/, "");
+  return "http://localhost:3333";
+})();
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) { super(message); }
@@ -67,7 +78,16 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
   if (opts.raw) return res as unknown as T;
   const text = await res.text();
   const data = text ? (JSON.parse(text) as unknown) : null;
-  if (!res.ok) { const e = (data as { error?: { code: string; message: string; details?: unknown } })?.error; if (res.status === 401 && (e?.code ?? "UNAUTHENTICATED") === "UNAUTHENTICATED") encerrarSessaoExpirada(); throw new ApiError(res.status, e?.code ?? "ERROR", e?.message ?? res.statusText, e?.details); }
+  if (!res.ok) {
+    const e = (data as { error?: { code: string; message: string; details?: unknown } })?.error;
+    // Só encerra se ESTA chamada mandou Bearer e a sessão atual ainda é a mesma.
+    // Senão um 401 atrasado (pedido antigo, ou sem token no meio do login) apaga a sessão nova.
+    if (res.status === 401 && (e?.code ?? "UNAUTHENTICATED") === "UNAUTHENTICATED") {
+      const atual = getSession();
+      if (s?.token && atual?.token === s.token) encerrarSessaoExpirada();
+    }
+    throw new ApiError(res.status, e?.code ?? "ERROR", e?.message ?? res.statusText, e?.details);
+  }
   return data as T;
 }
 export const qs = (o: Record<string, unknown>) => { const p = new URLSearchParams(); for (const [k, v] of Object.entries(o)) { if (v === undefined || v === null || v === "") continue; if (Array.isArray(v)) v.forEach((x) => p.append(k, String(x))); else p.set(k, String(v)); } const s = p.toString(); return s ? `?${s}` : ""; };

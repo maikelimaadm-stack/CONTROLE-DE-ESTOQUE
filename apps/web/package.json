@@ -19,6 +19,8 @@
     "e2e:mobile": "node e2e/aviso-mobile.mjs && playwright test --grep @mobile"
   },
   "dependencies": {
+    "@agro/api": "workspace:*",
+    "@agro/db": "workspace:*",
     "@agro/domain": "workspace:*",
     "@agro/shared": "workspace:*",
     "@erp/plataforma": "workspace:*",
@@ -39,6 +41,7 @@
     "@turf/intersect": "^7.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "fastify": "^5.12.3",
     "lucide-react": "^1.43.0",
     "maplibre-gl": "^5.24.0",
     "next": "^16.3.4",
@@ -60,6 +63,7 @@
     "@types/react-dom": "^19.2.0",
     "eslint": "^10.10.0",
     "eslint-config-next": "^16.3.4",
+    "light-my-request": "^6.6.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.70.0",

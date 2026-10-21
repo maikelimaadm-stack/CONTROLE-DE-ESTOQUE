@@ -1,4 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "ignoreCommand": "echo 'apps/api e implantada no Railway (ver docs/DEPLOYMENT.md); build Vercel ignorado' && exit 0"
+  "framework": "fastify",
+  "fluid": true,
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build && pnpm --filter @agro/api build"
 }

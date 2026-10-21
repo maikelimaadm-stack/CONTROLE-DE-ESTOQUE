@@ -3,7 +3,7 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getResource } from "@agro/domain";
 import { toast } from "@/lib/toast";
-import { api, download, encerrarSessaoExpirada } from "@/lib/api";
+import { api, download, encerrarSessaoExpirada, getSession } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button, Dialog, Field, NativeSelect } from "@/components/ui";
 import { botoesDoAtualizar, cadastroAceitaAtualizar, ehRecusaDeParametro, nomeDoModelo, resumoDaAtualizacao, urlDaImportacao, urlDoModelo, type AcaoImportacao, type AlteracaoNaPrevia } from "./importacao-acao";
@@ -75,9 +75,14 @@ export function ImportDialog({ resourceKey, labelPlural, open, onOpenChange, avi
       let corpo: Resposta;
       try {
         // `modo` só vai quando é parcial e `acao` só no ATUALIZAR: prévia e "Importar tudo" saem iguais às de antes e valem com a API anterior
+        const tokenDaChamada = getSession()?.token;
         const res = await api<Response>(urlDaImportacao(resourceKey, simular, modo, acaoPedida), { method: "POST", body: { arquivo_base64: a.base64 }, raw: true });
-        // `raw` escapa do tratamento de sessão de `api()`: a sessão expirada termina aqui do mesmo jeito
-        if (res.status === 401) { descartar(); encerrarSessaoExpirada(); return; }
+        // `raw` escapa do tratamento de sessão de `api()`: encerra só se o Bearer desta chamada ainda é o atual
+        if (res.status === 401) {
+          descartar();
+          if (tokenDaChamada && getSession()?.token === tokenDaChamada) encerrarSessaoExpirada();
+          return;
+        }
         corpo = (await res.json()) as Resposta;
       } catch { falhou(); return; }
       // servidor sem o ATUALIZAR: recusou o `acao` antes de abrir o arquivo (ou respondeu sem a forma do ATUALIZAR) —

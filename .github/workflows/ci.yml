@@ -29,7 +29,8 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages
-        run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
+        # @agro/api entra porque a ponte Vercel do web importa `@agro/api/server` (types em dist/).
+        run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build && pnpm --filter @agro/api build
       - run: pnpm lint
       - run: pnpm typecheck
       - name: Unit tests (shared, domain, api)
@@ -152,8 +153,10 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
+      # A ponte Vercel do web importa `@agro/api/server` (dist/). Sem build da API o next build do HEAD novo
+      # falha com Module not found — o job e2e já faz os dois; o skew precisa do mesmo.
       - name: Build web (HEAD novo)
-        run: pnpm --filter @agro/web build
+        run: pnpm --filter @agro/api build && pnpm --filter @agro/web build
       # O banco é migrado e semeado pelo HEAD NOVO (0014, 0015 e as correções desta rodada). Só a API é antiga:
       # é exatamente a combinação da janela de rollout, em que o web sobe antes do servidor.
       - name: Seed e2e database (HEAD novo)

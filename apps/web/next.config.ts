@@ -6,6 +6,19 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.resolve(process.cwd(), "../.."),
   reactStrictMode: true,
   transpilePackages: ["@agro/domain", "@agro/shared"],
+  // Fastify + pg na ponte da API (mesmo projeto Vercel; Hobby não cria segundo projeto)
+  serverExternalPackages: [
+    "fastify",
+    "@fastify/cors",
+    "@fastify/helmet",
+    "@fastify/rate-limit",
+    "pg",
+    "pino",
+    "exceljs",
+    "bcryptjs",
+    "jose",
+    "tar-stream"
+  ],
   // standalone só fora da Vercel (Docker); na Vercel o tracing é feito pela plataforma
   output: process.env.VERCEL ? undefined : "standalone",
   typescript: { ignoreBuildErrors: false },
