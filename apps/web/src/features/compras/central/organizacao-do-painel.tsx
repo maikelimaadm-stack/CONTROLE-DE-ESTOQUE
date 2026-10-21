@@ -3,7 +3,7 @@ import * as React from "react";
 import { num } from "@/lib/utils";
 import { Input } from "@/components/ui";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
-import { PainelColuna, PainelLargo, PainelRepartido, TitulosDoDocumento } from "@/features/central/painel";
+import { PainelColuna, PainelLargo, TitulosDoDocumento } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
 import { linkDoTituloDeCompra } from "./adaptador";
 import type { EstadoDaCriacao } from "./estado";
@@ -14,9 +14,10 @@ import {
 
 /**
  * Organização do painel da Central de Compras — identificar → produtos → fechar
- * (Totais / Financeiro / Rateio e classificação / Fiscal / Entrega e transporte).
+ * (Totais / Financeiro / Vínculos / Rateio e classificação / Fiscal / Entrega e transporte).
  * A conta do documento mora na aba Totais (subtotal dos produtos, despesas, frete, seguro, desconto e total final);
- * o Financeiro fica só com o pagamento (condição, tipo de título, forma, vencimento e parcelas, com a entrada).
+ * o Financeiro fica só com o pagamento (condição, tipo de título, forma, vencimento e parcelas, com a entrada), e os
+ * títulos que o documento vincula moram na aba Vínculos.
  * O total do documento aparece uma vez só, na aba Totais — sem a faixa de fechamento fora das abas. Observação nos
  * Dados principais. Valores em dinheiro sem o símbolo "R$" (decisão do usuário, 10/2026).
  */
@@ -66,8 +67,9 @@ function CampoSeguro({ e }: { e: EstadoDaCriacao }) {
 }
 
 /**
- * O lado direito do Financeiro: as contas que o documento VINCULA. O tipo de título que as contas vão nascer com
- * subiu para a coluna do pagamento (antes dos vencimentos) — ele não é uma conta.
+ * A aba VÍNCULOS: as contas que o documento vincula (e os documentos ligados a ele). O tipo de título que as contas
+ * vão nascer com fica no Financeiro, junto do pagamento — ele não é uma conta. Aba própria porque a lista de títulos
+ * não convive com as parcelas na mesma coluna.
  */
 function VinculosDoDocumento() {
   return <div className="space-y-2" data-testid="compras-vinculos">
@@ -109,8 +111,8 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
     </PainelColuna>
   });
 
-  /* O PAGAMENTO na aba Financeiro: condição, tipo de título, forma de pagamento e só então o vencimento e as
-     parcelas (com a entrada, quando há). Os totais do documento ficam na aba Totais; à direita, as contas. */
+  /* O PAGAMENTO na aba Financeiro: condição, tipo de título, forma de pagamento, vencimento e as parcelas (com a
+     entrada, quando há). Os totais do documento ficam na aba Totais; as contas vinculadas, na aba Vínculos. */
   const financeiro = presentes(FINANCEIRO);
   const tipoTitulo = fiscalNoPainel(e);
   /* Com a lista de parcelas manual, a data de cada parcela é o cronograma — o "Vencimento" solto não aparece. */
@@ -122,18 +124,25 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
       /* O pagamento fica na coluna de 330px; a tabela de parcelas ocupa a largura do painel, abaixo dele, para
          vencimento, valor e observação caberem na mesma linha. */
       content: <div className="space-y-3">
-        <PainelRepartido lado={<VinculosDoDocumento />}>
+        <PainelColuna>
           {financeiro.includes("condicao_pagamento_id") && <React.Fragment>{desenharCampo("condicao_pagamento_id")}</React.Fragment>}
           {tipoTitulo && <div className="max-w-[300px]"><TipoDeTituloDaCriacao e={e} /></div>}
           {financeiro.includes("forma_pagamento_id") && <React.Fragment>{desenharCampo("forma_pagamento_id")}</React.Fragment>}
           {vencimentoSolto && <Divisor />}
           {vencimentoSolto && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
-        </PainelRepartido>
+        </PainelColuna>
         {financeiro.includes("plano_parcelas") &&
           <div className="max-w-[960px]" data-testid="compras-financeiro-parcelas">{desenharCampo("plano_parcelas")}</div>}
       </div>
     });
   }
+
+  /* OS VÍNCULOS do documento (os títulos que nascem dele) têm aba própria: a lista não divide mais o espaço com o
+     pagamento nem com as parcelas. */
+  abas.push({
+    value: valorUnico("vinculos"), label: "Vínculos",
+    content: <PainelLargo><VinculosDoDocumento /></PainelLargo>
+  });
 
   const rateioCampos = presentes(RATEIO_CAMPOS);
   if (rateioNoPainel(e) || rateioCampos.length) abas.push({
