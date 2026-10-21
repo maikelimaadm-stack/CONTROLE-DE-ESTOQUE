@@ -1,11 +1,13 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes } from "lucide-react";
+import { Boxes, Columns3, ChevronDown, ChevronUp, X } from "lucide-react";
 import { D } from "@agro/shared";
 import { api } from "@/lib/api";
 import { brl, dateBR, num } from "@/lib/utils";
 import { Base1Grid } from "@/features/base1/grid";
+import { B1Popover, MgCheck } from "@/features/base1/ui";
+import { FiltroDeColuna } from "./filtro-de-coluna";
 import type { Base1Column, Row } from "@/features/base1/types";
 import { varianteDeCompra } from "./variantes";
 
@@ -79,8 +81,19 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
 
   const [sort, setSort] = React.useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [colWidths, setColWidths] = React.useState<Record<string, number>>({});
+  const [ocultas, setOcultas] = React.useState<Set<string>>(new Set());
+  const [filtros, setFiltros] = React.useState<Record<string, Set<string>>>({});
+  const [filtrando, setFiltrando] = React.useState<string | null>(null);
+  const [recolhido, setRecolhido] = React.useState(false);
+  const [menuColunas, setMenuColunas] = React.useState(false);
+  React.useEffect(() => { setFiltros({}); setFiltrando(null); }, [id]);
+
+  const textoDaCelula = React.useCallback((k: string, r: Row) => { const c = colunas.find((x) => x.key === k); return c?.text ? c.text(r) : texto(r[k]); }, [colunas]);
+  // filtro de cabeçalho: apresentação sobre as linhas já lidas (valores marcados por coluna), nunca consulta nova
+  const filtradas = React.useMemo(() => linhas.filter((r) => Object.entries(filtros).every(([k, vs]) => vs.has(textoDaCelula(k, r)))), [linhas, filtros, textoDaCelula]);
 
   const sortedRows = React.useMemo(() => {
+    const linhas = filtradas;
     if (!sort) return linhas;
     const col = colunas.find((c) => c.key === sort.key);
     if (!col) return linhas;
@@ -91,9 +104,9 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
       if (col.kind === "number") { const na = Number(av) || 0; const nb = Number(bv) || 0; return dir * (na - nb); }
       return dir * av.localeCompare(bv, "pt-BR", { numeric: true, sensitivity: "base" });
     });
-  }, [linhas, sort, colunas]);
+  }, [filtradas, sort, colunas]);
 
-  const visibleColumns = React.useMemo(() => colunas.map((c) => ({ ...c, width: colWidths[c.key] ?? c.width })), [colunas, colWidths]);
+  const visibleColumns = React.useMemo(() => colunas.filter((c) => !ocultas.has(c.key)).map((c) => ({ ...c, width: colWidths[c.key] ?? c.width })), [colunas, colWidths, ocultas]);
 
   const totalQtd = React.useMemo(() => itens.reduce((acc, it) => acc.plus(D(texto(it["quantidade"]) || "0")), D(0)), [itens]);
   const totalPendente = React.useMemo(() => itens.reduce((acc, it) => acc.plus(D(texto(it["saldo"]) || "0")), D(0)), [itens]);
@@ -102,7 +115,7 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
 
   const onSort = (k: string) => setSort((s) => s?.key === k && s.dir === "asc" ? { key: k, dir: "desc" } : { key: k, dir: "asc" });
 
-  return <section data-testid="compras-itens-da-nota" aria-label="Itens do documento selecionado" className="itpan" style={{ height: altura }}>
+  return <section data-testid="compras-itens-da-nota" aria-label="Itens do documento selecionado" className={recolhido ? "itpan recolhido" : "itpan"} style={{ maxHeight: altura }}>
     <div className="itbar">
       <span className="itt">Itens</span>
       {documento && <>
@@ -113,8 +126,23 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
       </>}
       {!documento && <span className="itbar-info">nenhum documento selecionado</span>}
       <span style={{ flexGrow: 1 }} />
+      {documento && itens.length > 0 && !recolhido && <>
+        {Object.keys(filtros).length > 0 && <button type="button" className="fchip-lim" onClick={() => setFiltros({})}><X className="h-3 w-3" /> Limpar filtros</button>}
+        <span className="grp">
+          <B1Popover open={menuColunas} onOpenChange={setMenuColunas} className="w-60 p-1" title="Colunas dos itens"
+            trigger={<button type="button" className="ib" aria-label="Configurar colunas dos itens" title={`Configurar colunas · ${colunas.length - ocultas.size} de ${colunas.length} colunas`}><Columns3 /></button>}
+            footer={<button type="button" className="tb-btn tb-btn-out sm" onClick={() => { setOcultas(new Set()); setColWidths({}); }}>Restaurar padrão</button>}>
+            {colunas.map((c) => { const on = !ocultas.has(c.key); return <label key={c.key} className="fval cursor-pointer">
+              <MgCheck checked={on} disabled={on && ocultas.size >= colunas.length - 1} onChange={() => setOcultas((p) => { const n = new Set(p); if (on) n.add(c.key); else n.delete(c.key); return n; })} />
+              <span className="fval-l">{c.label}</span>
+            </label>; })}
+          </B1Popover>
+        </span>
+        <span className="vdiv" aria-hidden="true" />
+      </>}
+      {documento && <span className="grp"><button type="button" className="ib" aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} title={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={() => setRecolhido((v) => !v)}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button></span>}
     </div>
-    {!documento
+    {recolhido ? null : !documento
       ? <div className="itvazio">
         <Boxes className="h-4 w-4" />
         <b>Nenhum documento selecionado</b>
@@ -142,11 +170,21 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
                 onToggleAll={() => {}}
                 onResize={(k, w) => setColWidths((p) => ({ ...p, [k]: w }))}
                 onAutoFit={(k) => setColWidths((p) => { const n = { ...p }; delete n[k]; return n; })}
+                onHide={(k) => setOcultas((p) => new Set(p).add(k))}
+                onFilter={(k) => setFiltrando(k)}
+                filteredKeys={new Set(Object.keys(filtros))}
               />
+              {filtrando && <FiltroDeColuna
+                rotulo={colunas.find((c) => c.key === filtrando)?.label ?? ""}
+                ancora={`[data-testid="compras-itens-da-nota"] [aria-label="Abrir menu da coluna ${colunas.find((c) => c.key === filtrando)?.label ?? ""}"]`}
+                valores={linhas.map((r) => textoDaCelula(filtrando, r))}
+                marcados={filtros[filtrando] ?? null}
+                onAplicar={(vs) => { const k = filtrando; setFiltros((p) => { const n = { ...p }; if (vs) n[k] = vs; else delete n[k]; return n; }); setFiltrando(null); }}
+                onFechar={() => setFiltrando(null)} />}
             </div>}
-    {documento && itens.length > 0 && (
+    {documento && itens.length > 0 && !recolhido && (
       <div className="itfoot">
-        <span className="itf">Itens <b>{itens.length}</b></span>
+        <span className="itf">Itens <b>{filtradas.length === itens.length ? itens.length : `${filtradas.length} de ${itens.length}`}</b></span>
         <span className="itf">Quantidade <b>{num(totalQtd.toFixed(4), 4)}</b></span>
         {ehPedido && totalPendente.gt(0) && <span className="itf">Pendente <b>{num(totalPendente.toFixed(4), 4)}</b></span>}
         <span className="itf">Desconto <b>{brl(desconto)}</b></span>

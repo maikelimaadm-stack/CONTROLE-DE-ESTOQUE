@@ -112,7 +112,8 @@ export function DocumentosDeCompraList({ especie, barra, onSelecionar }: { espec
         if (!alvo) return [];
         return [{ label: `Cancelar ${alvo.especieMinuscula}`, danger: true, onClick: () => setCancelando(alvo) }];
       }}
-      summaryExtra={(t) => <span className="mg-summary__item">Total (filtro) <b className="text-slate-800">{brl(t?.valor_total ?? t?.total ?? "0")}</b></span>} />
+      // "Total (filtro)" é a linha de rodapé da grade, sob a coluna Total (como em Vendas e no HTML de referência).
+      totals={(t) => <tr><td colSpan={10} className="px-2 py-1">Total (filtro)</td><td className="num">{brl(t["valor_total"] ?? t["total"] ?? "0")}</td><td /></tr>} />
     <DialogoCancelarDocumento prefixoTestid={PREFIXO_CENTRAL_COMPRAS} aberto={cancelando !== null}
       onFechar={() => { if (!cancelarM.isPending) setCancelando(null); }}
       especie={cancelando?.especieMinuscula ?? ""} codigo={cancelando?.codigo ?? ""}
