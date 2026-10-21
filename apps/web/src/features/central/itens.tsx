@@ -174,9 +174,12 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
 export function ItensDaCentral({
   prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, pesquisaDeProduto = null, reservaEstoque = null,
   armazemPorItem, armazemForcado = false, estoqueNaGrade = true, custoMedioNoUnitario = true, lote = null, daOrigem = null, linhaUnica = false,
-  linhaNovaEmBranco = false, subtotal: comSubtotal = true, casasDaQuantidade = 2, travasDaLinha = null, aceitaLinhaNova = true
+  linhaNovaEmBranco = false, subtotal: comSubtotal = true, casasDaQuantidade = 2, travasDaLinha = null, aceitaLinhaNova = true,
+  semSimboloDeMoeda = false
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
+  /** Dinheiro na tela: com o símbolo (o de sempre) ou só o número de duas casas (`semSimboloDeMoeda`, a compra). */
+  const dinheiro = (v: string | number) => (semSimboloDeMoeda ? num(v, 2) : brl(v));
   // a capacidade da pesquisa nova é perguntada ao montar os itens (uma vez por sessão): ao abrir a pesquisa ela já chegou
   const fonteDaPesquisa = useFonteDaPesquisaDeProdutos();
   const { doSistema, doCatalogo } = colunasDaEspecie;
@@ -368,10 +371,10 @@ export function ItensDaCentral({
           : <span data-testid={tid("quantidade")}>{num(linhaNovaEmBranco ? it.quantity : it.quantity || "0", casasDaQuantidade)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
-      case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario ? <input className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} /> : brl(it.unit_value ?? "0")}</td>;
-      case "desconto": return <td key={k} className={grade.numero}>{Number(it.discount || 0) ? brl(it.discount!) : "—"}</td>;
+      case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario ? <input className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} /> : dinheiro(it.unit_value ?? "0")}</td>;
+      case "desconto": return <td key={k} className={grade.numero}>{Number(it.discount || 0) ? dinheiro(it.discount!) : "—"}</td>;
       case "descontoPercentual": return <td key={k} className={grade.numero}>{Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : "—"}</td>;
-      case "total": return <td key={k} className={cn(grade.numero, grade.forte)}>{brl(totalDaLinhaExibido(it))}</td>;
+      case "total": return <td key={k} className={cn(grade.numero, grade.forte)}>{dinheiro(totalDaLinhaExibido(it))}</td>;
       case "lote": {
         const aceita = loteDe(it).lote;
         return <td key={k} data-testid={tid("lote")}>{ativa && aceita
@@ -470,7 +473,7 @@ export function ItensDaCentral({
       case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { step: "0.000001", ...(travas(it).unitario ? { desabilitado: true, dica: travas(it).motivos?.unitario } : {}) });
       case "desconto": return campoNumerico(k, "discount", it.discount ?? "", { step: "0.01", ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
       case "descontoPercentual": return campoNumerico(k, "discount_percent", it.discount_percent ?? "", { step: "0.01", max: "100", ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
-      case "total": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "total" : undefined}><span data-testid={tid("item-total")}>{brl(totalDaLinhaExibido(it))}</span></CampoDaCentral>;
+      case "total": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "total" : undefined}><span data-testid={tid("item-total")}>{dinheiro(totalDaLinhaExibido(it))}</span></CampoDaCentral>;
       case "lote": return campoDeTexto(k, "provider_lot", it.provider_lot ?? "", loteDe(it).lote);
       case "validade": return campoDeTexto(k, "expiration_date", it.expiration_date ?? "", loteDe(it).validade);
     }
@@ -546,7 +549,7 @@ export function ItensDaCentral({
     <div className={grade.rodape} data-testid={tid("itens-rodape")}>
       <span className={grade.rodapeTitulo}>Itens <span className={grade.rodapeContagem} data-testid={tid("itens-contagem")}>({items.length})</span>
         {errosDosItens.length > 0 && <span className={grade.pontoErro} data-testid={tid("itens-erro")} title="Há itens com pendência" />}</span>
-      {comSubtotal && <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid={tid("subtotal")}>{brl(subtotal)}</b></span>}
+      {comSubtotal && <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid={tid("subtotal")}>{dinheiro(subtotal)}</b></span>}
     </div>
     {pesquisa?.modo === "flutuante" && <PainelDePesquisa recurso={pesquisa.campo === "product_id" ? "products" : "warehouses"}
       rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar local de estoque"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}

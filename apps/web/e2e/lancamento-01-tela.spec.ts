@@ -988,6 +988,7 @@ test("LANC-T11 — a compra de TOTAL ZERO com a TOP de 5 padrões: o par aparece
   await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
   await novaLinhaCom(page, m.produto);
   await expect(await entradaDaLinha(linhas(page).first(), "Valor unitário do item 1"), "premissa: o valor unitário fica no zero com que a linha nasce").toHaveValue("0");
+  await abrirAbaDoPainelDeCompras(page, "Totais");
   await expect(page.getByTestId("compras-total"), "premissa: o total do documento é zero").toContainText("0,00");
   await abrirRateio(page);
   for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${k}: continua semeado com o total zero`).toHaveAttribute("data-padrao-top", "semeado");

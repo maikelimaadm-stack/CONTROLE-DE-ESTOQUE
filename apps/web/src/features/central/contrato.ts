@@ -404,6 +404,11 @@ export interface PropsDosItens {
   travasDaLinha?: ((item: ItemRow) => TravasDaLinha) | null;
   /** EDITAR-02: `false` tira Adicionar e Duplicar (a edição que não aceita item novo). Padrão `true` (o de hoje). */
   aceitaLinhaNova?: boolean;
+  /**
+   * Decisão do usuário (10/2026, Central de Compras): os valores em dinheiro da grade, do formulário do item e do
+   * rodapé SEM o símbolo "R$" ("1.234,56"). Padrão `false`: o de hoje, com o símbolo.
+   */
+  semSimboloDeMoeda?: boolean;
 }
 
 /* ─────────────── M8 — itens-salvos.tsx e configurar-colunas.tsx ─────────────── */

@@ -75,6 +75,7 @@ export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) 
     {/* Local de estoque POR LINHA: a coluna é forçada na grade (cada item escolhe o seu); `armazemPadrao` só semeia a linha nova. */}
     <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} items={itens} onChange={setItens} layout={layout}
       erros={erros} armazemPadrao={localDoCabecalho} armazemPorItem armazemForcado estoqueNaGrade={false} custoMedioNoUnitario={false}
-      lote={controleDeLote} pesquisaDeProduto={PESQUISA_DE_PRODUTO_DA_ENTRADA} travasDaLinha={travasDaLinha} aceitaLinhaNova={aceitaLinhaNova} />
+      lote={controleDeLote} pesquisaDeProduto={PESQUISA_DE_PRODUTO_DA_ENTRADA} travasDaLinha={travasDaLinha} aceitaLinhaNova={aceitaLinhaNova}
+      semSimboloDeMoeda />
   </div>;
 }

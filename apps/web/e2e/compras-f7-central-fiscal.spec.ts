@@ -120,6 +120,7 @@ async function compraNaCentral(page: Page, c: Cenario) {
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("50");
+  await page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Totais" }).click();
   await expect(page.getByTestId("compras-total"), "premissa: sem os dados fiscais, o total é o dos itens").toContainText("100,00");
   await expect(central.getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão Dados adicionais").toHaveCount(0);
   await expect(page.getByTestId(`${P}-dados`).getByTestId("compras-dados-fiscais"), "fiscais fora dos Dados principais").toHaveCount(0);
@@ -161,6 +162,7 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await abaFinanceiro.click();
   await expect(abaFinanceiro).toHaveAttribute("aria-selected", "true");
   await page.getByTestId("compras-seguro").fill("5.50");
+  await page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Totais" }).click();
   await expect(page.getByTestId("compras-total"), "100,00 + IPI 10,00 + seguro 5,50").toContainText("115,50");
   const rateio = await abaDoRateio(page);
   const classificacao = rateio.getByTestId("compras-item-classificacao-0");

@@ -11,7 +11,7 @@ import { irParaPendenciaDaCompra, useBarraDaCriacao } from "./central/criacao-ba
 import { AvisosDaCriacao, DadosDaCriacao, identidadeDaCriacao } from "./central/criacao-dados";
 import { ItensDaCriacaoDeCompra } from "./central/criacao-itens";
 import { ItensDoRecebimento } from "./central/receber";
-import { CAMPOS_DOS_DADOS_PRINCIPAIS, abaDoCampoNoPainel, abasDoPainelDaCriacao, faixaDosTotaisDoPainel } from "./central/organizacao-do-painel";
+import { CAMPOS_DOS_DADOS_PRINCIPAIS, abaDoCampoNoPainel, abasDoPainelDaCriacao } from "./central/organizacao-do-painel";
 import { CentralDoOrcamento } from "./orcamento/central-orcamento";
 
 /**
@@ -116,7 +116,6 @@ function FormularioDeCompra(props: PropsDoEstadoDaCriacao) {
           {e.errosDeItens.map(([c, m]) => <li key={c}>{descreverCaminhoDeItem(c)}: {m}</li>)}
         </ul>}
       </> : null}
-      faixaDoPainel={faixaDosTotaisDoPainel(e)}
       abas={abas}
     />
     {barra.dialogos}

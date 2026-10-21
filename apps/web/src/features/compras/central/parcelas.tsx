@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { buildInstallments } from "@agro/domain";
-import { brl, dateBR } from "@/lib/utils";
+import { dateBR, num } from "@/lib/utils";
 import { Input, NativeSelect } from "@/components/ui";
 import { CampoDaCentral, ChaveSimNao, DataDaCentral } from "@/features/central/campo";
 import type { Plan } from "@/features/docs/shared";
@@ -82,7 +82,7 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
           className="grid grid-cols-[1fr_auto_auto] items-center gap-x-3 border-t border-slate-100 px-2 py-1 text-[12px]">
           <span className="text-slate-600">{x.isDownPayment ? "Entrada" : `${x.number}ª`}</span>
           <span className="tabular-nums text-slate-700">{dateBR(x.dueDate)}</span>
-          <span className="text-right font-medium tabular-nums text-slate-900">{brl(x.amount)}</span>
+          <span className="text-right font-medium tabular-nums text-slate-900">{num(x.amount, 2)}</span>
         </div>)}
       </div>}
     </>}

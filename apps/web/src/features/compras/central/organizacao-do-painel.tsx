@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { brl } from "@/lib/utils";
+import { num } from "@/lib/utils";
 import { Input } from "@/components/ui";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { PainelColuna, PainelLargo, PainelRepartido, TitulosDoDocumento } from "@/features/central/painel";
@@ -17,7 +17,8 @@ import {
  * (Totais / Financeiro / Rateio e classificação / Fiscal / Entrega e transporte).
  * A conta do documento mora na aba Totais (subtotal dos produtos, despesas, frete, seguro, desconto e total final);
  * o Financeiro fica só com o pagamento (condição, tipo de título, forma, vencimento e parcelas, com a entrada).
- * Fora das abas fica SÓ o fechamento do documento (`faixaDosTotaisDoPainel`). Observação nos Dados principais.
+ * O total do documento aparece uma vez só, na aba Totais — sem a faixa de fechamento fora das abas. Observação nos
+ * Dados principais. Valores em dinheiro sem o símbolo "R$" (decisão do usuário, 10/2026).
  */
 
 /** Campos do layout que a criação desenha no painel (nunca nos Dados principais). */
@@ -51,19 +52,6 @@ export type DesenharCampo = (campo: string) => React.ReactNode;
 export function camposDoPainelNoCabecalho(e: EstadoDaCriacao): Set<string> {
   const cabecalho = [...e.zonas.principais, ...e.zonas.adicionais];
   return new Set(cabecalho.filter((c) => CAMPOS_DO_PAINEL_DA_CRIACAO.includes(c)));
-}
-
-/**
- * O FECHAMENTO do documento, sempre visível e FORA das abas — só ele: o subtotal dos produtos e os ajustes que o
- * formam moram no Financeiro, cada um no seu lugar. É um campo como os outros (`CampoLeitura`), na largura do desenho.
- */
-export function faixaDosTotaisDoPainel(e: EstadoDaCriacao): React.ReactNode {
-  if (!e.mostrarFormulario) return null;
-  return <div data-testid="compras-faixa-totais" className="flex justify-end pb-2">
-    <div className="w-[300px] max-w-full">
-      <CampoLeitura rotulo="Total do documento" valor={brl(e.totalExibido)} testId="compras-total" />
-    </div>
-  </div>;
 }
 
 /** A régua entre os grupos do Financeiro (subtotal × ajustes × pagamento). */
@@ -111,13 +99,13 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
     value: valorUnico("totais"), label: "Totais",
     erro: comErro(totais) || Boolean(e.erro("seguro")),
     content: <PainelColuna>
-      <CampoLeitura rotulo="Total dos produtos" valor={brl(e.totalItens)} testId="compras-total-produtos" />
+      <CampoLeitura rotulo="Total dos produtos" valor={num(e.totalItens, 2)} testId="compras-total-produtos" />
       {ORDEM_DOS_TOTAIS.map((c) => {
         if (c === "seguro") return seguro ? <CampoSeguro key="seguro" e={e} /> : null;
         return totais.includes(c) ? <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment> : null;
       })}
       <Divisor />
-      <CampoLeitura rotulo="Total da compra" valor={brl(e.totalExibido)} testId="compras-total-final" />
+      <CampoLeitura rotulo="Total da compra" valor={num(e.totalExibido, 2)} testId="compras-total" />
     </PainelColuna>
   });
 

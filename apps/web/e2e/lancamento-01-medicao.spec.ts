@@ -466,6 +466,7 @@ async function medirCenario(page: Page, c: Cenario) {
     // A premissa do cenário: com produto na linha e o total zero, o documento não geraria título/previsto.
     const linhas = page.getByTestId(`${P}-linha`);
     if ((await linhas.count()) > 0 && !(await linhas.first().getByTestId(`${P}-produto`).innerText()).includes("Selecione")) {
+      await abrirAbaDoPainelDeCompras(page, "Totais");
       const total = page.getByTestId("compras-total");
       await expect(total, "o total do documento está à vista").toBeVisible();
       if (Number((await total.innerText()).replace(/\D/g, "")) === 0) {
