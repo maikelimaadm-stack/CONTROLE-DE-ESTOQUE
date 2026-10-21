@@ -186,13 +186,14 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
               <p className="text-[12px] text-slate-600" data-testid="compras-rateio-leitura-motivo">
                 Classificação e rateio gravados na compra. A edição aberta não altera estes campos — só o que a PATCH aceita.
               </p>
-              <RateioDaConsulta d={e.documentoEmEdicao} />
-              {!e.documentoEmEdicao["rateio_tipo"] && <PainelColuna>
-                <CampoLeitura rotulo="Natureza de despesa" adorno="pesquisa"
+              {/* Paridade com a consulta: natureza/centro do documento sempre; RateioDaConsulta só por_valor/por_produto. */}
+              <PainelColuna>
+                <CampoLeitura rotulo="Natureza financeira" adorno="pesquisa"
                   valor={[e.documentoEmEdicao["categoria_financeira_codigo"], e.documentoEmEdicao["categoria_financeira_nome"]].filter(Boolean).join(" — ")} />
                 <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa"
                   valor={[e.documentoEmEdicao["centro_custo_codigo"], e.documentoEmEdicao["centro_custo_nome"]].filter(Boolean).join(" — ")} />
-              </PainelColuna>}
+              </PainelColuna>
+              <RateioDaConsulta d={e.documentoEmEdicao} />
             </div>
           : null)}
     </PainelLargo>

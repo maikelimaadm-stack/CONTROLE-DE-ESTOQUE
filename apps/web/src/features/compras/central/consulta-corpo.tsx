@@ -9,7 +9,7 @@ import { statusTone } from "@/components/ui";
 import type { Row } from "@/features/docs/shared";
 import { CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { ItensSalvos } from "@/features/central/itens-salvos";
-import { PainelColuna, PainelLargo, PlanoEmLeitura, Relacao, Selo, TitulosDoDocumento, type ColunaDaRelacao } from "@/features/central/painel";
+import { PainelColuna, PainelLargo, Relacao, Selo, TitulosDoDocumento, type ColunaDaRelacao } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
 import { AprovacaoDoDocumento } from "@/features/aprovacoes/aprovacao-do-documento";
 import { zonasDaCentral, type ZonasDaCentral } from "../layout-da-central";
@@ -180,19 +180,18 @@ function ParcelasEmLeitura({ d, situacao }: { d: Row; situacao: string | null | 
       <p>{modelo.texto}</p>
       {modelo.comEntrada && <p>Com entrada.</p>}
       {modelo.primeiroVencimento && <p>Primeiro vencimento: {dataOuVazio(modelo.primeiroVencimento)}</p>}
-      <PlanoEmLeitura plano={d["plano_parcelas"]} />
     </div>;
   }
   const cols = confirmado
-    ? "grid-cols-[124px_104px_minmax(0,1fr)_minmax(72px,auto)]"
+    ? "grid-cols-[124px_104px_minmax(0,1fr)_minmax(88px,auto)]"
     : modelo.comEntrada
       ? "grid-cols-[72px_124px_104px_minmax(0,1fr)]"
       : "grid-cols-[124px_104px_minmax(0,1fr)]";
   return <div data-testid="compras-consulta-parcelas" className="mt-1 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
     <div aria-hidden className={`grid ${cols} gap-2 border-b border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500`}>
-      {modelo.comEntrada && !confirmado && <span>tipo</span>}
-      <span>vencimento</span><span>valor</span><span>observação</span>
-      {confirmado && <span>situação</span>}
+      {modelo.comEntrada && !confirmado && <span>Tipo</span>}
+      <span>Vencimento</span><span>Valor</span><span>Observação</span>
+      {confirmado && <span>Situação</span>}
     </div>
     {modelo.linhas.map((l, k) => <div key={k} data-testid="compras-consulta-parcela" data-entrada={l.entrada ? "sim" : "nao"} data-origem={l.origem}
       className={`grid ${cols} gap-2 px-2 py-1.5 text-[12px]`}>
@@ -200,7 +199,11 @@ function ParcelasEmLeitura({ d, situacao }: { d: Row; situacao: string | null | 
       <span className="text-slate-700">{dataOuVazio(l.vencimento)}</span>
       <span className="tabular-nums text-slate-900">{temValor(l.valor) ? brl(String(l.valor)) : ""}</span>
       <span className="text-slate-500">{l.observacao || "—"}</span>
-      {confirmado && <span className="text-slate-600">{l.situacaoTitulo || "—"}</span>}
+      {confirmado && <span className="text-slate-600">
+        {l.situacaoTitulo
+          ? <Selo tom={statusTone(l.situacaoTitulo, "title_status")} valor={l.situacaoTitulo}>{enumLabel("title_status", l.situacaoTitulo)}</Selo>
+          : "—"}
+      </span>}
     </div>)}
     {confirmado && <p className="px-2 py-1.5 text-[11px] text-slate-500" data-testid="compras-consulta-parcelas-titulos-aviso">
       Cronograma a partir dos títulos gerados. Detalhes de baixa na aba Vínculos.
@@ -266,7 +269,7 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
     value: "rateio", label: "Rateio e classificação",
     content: <PainelLargo>
       <PainelColuna>
-        <CampoLeitura rotulo="Natureza de despesa" adorno="pesquisa" valor={codigoNome(d["categoria_financeira_codigo"], d["categoria_financeira_nome"])} />
+        <CampoLeitura rotulo="Natureza financeira" adorno="pesquisa" valor={codigoNome(d["categoria_financeira_codigo"], d["categoria_financeira_nome"])} />
         <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa" valor={codigoNome(d["centro_custo_codigo"], d["centro_custo_nome"])} />
       </PainelColuna>
       <RateioDaConsulta d={d} />

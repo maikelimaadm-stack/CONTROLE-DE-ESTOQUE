@@ -149,7 +149,6 @@ function LinhaDoRateioPorValor({ e, k, l }: { e: EstadoDaCriacao; k: number; l: 
       {avancado && <div className="mt-2 grid grid-cols-12 gap-2" data-testid={`compras-rateio-linha-${k}-avancado`}>
         <div className="col-span-12 md:col-span-6">
           <CampoDaCentral rotulo="Conta contábil (opcional)" icone="pesquisa" preenchido={Boolean(l.contaId)}
-            dica={AJUDA_CONTA_CONTABIL}
             abaixo={<p className="text-[11px] text-slate-500">{AJUDA_CONTA_CONTABIL}</p>}>
             <RefSelect resource="chart_accounts" value={l.contaId} onChange={(v) => e.mudarLinhaDoRateio(k, { contaId: v ?? "" })} />
           </CampoDaCentral>
