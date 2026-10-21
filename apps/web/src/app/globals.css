@@ -161,9 +161,6 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-field .cmd-display-placeholder { visibility: hidden; }
 .mg-field .cmd-display { padding-right: 28px !important; }
 .mg-field .mg-dp-field { padding-right: 32px !important; }
-/* Data FORA do .mg-field (ex.: a linha de parcelas da compra): o mesmo visual do .mg-input, com o recuo do botão do
-   calendário — sem ele o texto do campo passava por baixo do ícone. */
-.mg-input.mg-dp-field { padding-left: 34px; }
 .cmd-chevron { position: absolute; right: 10px; top: 50%; width: 12px; height: 12px; margin-top: -6px; color: var(--mg-text-3); pointer-events: none; transition: transform .2s; z-index: 1; }
 .mg-field.is-open .cmd-chevron { transform: rotate(180deg); }
 .cmd-clear { position: absolute; right: 26px; top: 50%; margin-top: -7px; width: 14px; height: 14px; color: var(--mg-text-3); cursor: pointer; z-index: 2; } .cmd-clear:hover { color: var(--mg-red); }

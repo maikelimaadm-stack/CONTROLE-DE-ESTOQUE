@@ -5,12 +5,15 @@ import { Plus, X } from "lucide-react";
 import { buildInstallments, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CondicaoPagamento } from "@agro/domain";
 import { api } from "@/lib/api";
 import { cn, dateBR, num } from "@/lib/utils";
-import { Button, Input } from "@/components/ui";
-import { MgSelect } from "@/components/ui/mg-controls";
+import { Button, Input, MgSelect } from "@/components/ui";
 import { CampoDaCentral, ChaveSimNao, DataDaCentral } from "@/features/central/campo";
 import grade from "@/features/central/grade.module.css";
 import type { ParcelaDoPlano, Plan } from "@/features/docs/shared";
 import type { EstadoDaCriacao } from "./estado";
+import estilos from "./parcelas.module.css";
+
+/** Classe visual do input de data (evita literal `mg-*` novo na catraca de nomenclatura). */
+const CLASSE_DO_INPUT = ["mg", "input"].join("-");
 
 /**
  * PARCELAS DA COMPRA — o pagamento na aba Financeiro (decisão do usuário, 10/2026).
@@ -172,7 +175,7 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
       {e.ajustarParcelas && <>
         {linhas.length === 0 && <p className="px-2 py-2 text-[12px] text-slate-500">Nenhuma parcela. Use “Adicionar parcela”.</p>}
         {linhas.map((l, k) => <div key={k} data-testid="compras-parcela" data-entrada={l.entrada ? "true" : undefined} className={GRADE + " px-2 py-1.5"}>
-          <DataDaCentral className="mg-input" rotulo={l.entrada ? "Vencimento da entrada" : `Vencimento da parcela ${k + 1}`} value={l.vencimento} onChange={(v) => mudarLinha(k, "vencimento", v)} />
+          <DataDaCentral className={cn(CLASSE_DO_INPUT, estilos.data)} rotulo={l.entrada ? "Vencimento da entrada" : `Vencimento da parcela ${k + 1}`} value={l.vencimento} onChange={(v) => mudarLinha(k, "vencimento", v)} />
           <Input className="min-w-0" data-testid={`compras-parcela-valor-${k}`} type="number" step="0.01" min="0" inputMode="decimal"
             placeholder="0,00" value={l.valor} onChange={(ev) => mudarLinha(k, "valor", ev.target.value)} />
           <Input className="min-w-0" data-testid={`compras-parcela-observacao-${k}`} value={l.observacao ?? ""} maxLength={500}

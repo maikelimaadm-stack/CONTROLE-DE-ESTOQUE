@@ -7,7 +7,7 @@ import { brl } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
 import { Button, Input } from "@/components/ui";
-import { MgSelect } from "@/components/ui/mg-controls";
+import { MgSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { SimpleTable, type Row } from "@/features/docs/shared";

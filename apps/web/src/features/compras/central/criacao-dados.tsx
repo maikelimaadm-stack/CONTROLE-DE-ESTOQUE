@@ -5,7 +5,7 @@ import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
 import { useAuth } from "@/lib/auth";
 import { enumOptions } from "@/lib/copy";
 import { Input, LoadingState, Textarea } from "@/components/ui";
-import { MgSelect } from "@/components/ui/mg-controls";
+import { MgSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { MensagemTop } from "@/features/sales/tipo-operacao-select";
 import { CampoDaCentral, ColunaDeCampos, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
