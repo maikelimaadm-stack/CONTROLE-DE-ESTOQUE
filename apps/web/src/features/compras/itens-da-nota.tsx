@@ -6,8 +6,8 @@ import { D } from "@agro/shared";
 import { api } from "@/lib/api";
 import { brl, dateBR, num } from "@/lib/utils";
 import { Base1Grid } from "@/features/base1/grid";
-import { B1Popover, MgCheck } from "@/features/base1/ui";
-import { FiltroDeColuna } from "./filtro-de-coluna";
+import { FiltroDeColuna, casa, type FiltroAtivo, type Tipo } from "./filtro-de-coluna";
+import { ColunasDosItens } from "./colunas-dos-itens";
 import type { Base1Column, Row } from "@/features/base1/types";
 import { varianteDeCompra } from "./variantes";
 
@@ -82,7 +82,7 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
   const [sort, setSort] = React.useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [colWidths, setColWidths] = React.useState<Record<string, number>>({});
   const [ocultas, setOcultas] = React.useState<Set<string>>(new Set());
-  const [filtros, setFiltros] = React.useState<Record<string, Set<string>>>({});
+  const [filtros, setFiltros] = React.useState<Record<string, FiltroAtivo>>({});
   const [filtrando, setFiltrando] = React.useState<string | null>(null);
   const [recolhido, setRecolhido] = React.useState(false);
   const [menuColunas, setMenuColunas] = React.useState(false);
@@ -90,7 +90,8 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
 
   const textoDaCelula = React.useCallback((k: string, r: Row) => { const c = colunas.find((x) => x.key === k); return c?.text ? c.text(r) : texto(r[k]); }, [colunas]);
   // filtro de cabeçalho: apresentação sobre as linhas já lidas (valores marcados por coluna), nunca consulta nova
-  const filtradas = React.useMemo(() => linhas.filter((r) => Object.entries(filtros).every(([k, vs]) => vs.has(textoDaCelula(k, r)))), [linhas, filtros, textoDaCelula]);
+  const tipoDe = React.useCallback((k: string): Tipo => (colunas.find((c) => c.key === k)?.kind === "number" ? "num" : "texto"), [colunas]);
+  const filtradas = React.useMemo(() => linhas.filter((r) => Object.entries(filtros).every(([k, f]) => casa(f, tipoDe(k), textoDaCelula(k, r)))), [linhas, filtros, textoDaCelula, tipoDe]);
 
   const sortedRows = React.useMemo(() => {
     const linhas = filtradas;
@@ -115,7 +116,7 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
 
   const onSort = (k: string) => setSort((s) => s?.key === k && s.dir === "asc" ? { key: k, dir: "desc" } : { key: k, dir: "asc" });
 
-  return <section data-testid="compras-itens-da-nota" aria-label="Itens do documento selecionado" className={recolhido ? "itpan recolhido" : "itpan"} style={{ maxHeight: altura }}>
+  return <section data-testid="compras-itens-da-nota" aria-label="Itens do documento selecionado" className={recolhido ? "itpan recolhido" : "itpan"} style={{ height: altura }}>
     <div className="itbar">
       <span className="itt">Itens</span>
       {documento && <>
@@ -129,17 +130,13 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
       {documento && itens.length > 0 && !recolhido && <>
         {Object.keys(filtros).length > 0 && <button type="button" className="fchip-lim" onClick={() => setFiltros({})}><X className="h-3 w-3" /> Limpar filtros</button>}
         <span className="grp">
-          <B1Popover open={menuColunas} onOpenChange={setMenuColunas} className="w-60 p-1" title="Colunas dos itens"
-            trigger={<button type="button" className="ib" aria-label="Configurar colunas dos itens" title={`Configurar colunas · ${colunas.length - ocultas.size} de ${colunas.length} colunas`}><Columns3 /></button>}
-            footer={<button type="button" className="tb-btn tb-btn-out sm" onClick={() => { setOcultas(new Set()); setColWidths({}); }}>Restaurar padrão</button>}>
-            {colunas.map((c) => { const on = !ocultas.has(c.key); return <label key={c.key} className="fval cursor-pointer">
-              <MgCheck checked={on} disabled={on && ocultas.size >= colunas.length - 1} onChange={() => setOcultas((p) => { const n = new Set(p); if (on) n.add(c.key); else n.delete(c.key); return n; })} />
-              <span className="fval-l">{c.label}</span>
-            </label>; })}
-          </B1Popover>
+          <button type="button" className="ib" aria-label="Configurar colunas dos itens" title={`Configurar colunas · ${colunas.length - ocultas.size} de ${colunas.length} colunas`} onClick={() => setMenuColunas(true)}><Columns3 /></button>
         </span>
         <span className="vdiv" aria-hidden="true" />
       </>}
+      {menuColunas && <ColunasDosItens colunas={colunas} ocultas={ocultas}
+        onMudar={(k, ocultar) => setOcultas((p) => { const n = new Set(p); if (ocultar) n.add(k); else n.delete(k); return n; })}
+        onRestaurar={() => { setOcultas(new Set()); setColWidths({}); }} onFechar={() => setMenuColunas(false)} />}
       {documento && <span className="grp"><button type="button" className="ib" aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} title={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={() => setRecolhido((v) => !v)}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button></span>}
     </div>
     {recolhido ? null : !documento
@@ -178,7 +175,8 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
                 rotulo={colunas.find((c) => c.key === filtrando)?.label ?? ""}
                 ancora={`[data-testid="compras-itens-da-nota"] [aria-label="Abrir menu da coluna ${colunas.find((c) => c.key === filtrando)?.label ?? ""}"]`}
                 valores={linhas.map((r) => textoDaCelula(filtrando, r))}
-                marcados={filtros[filtrando] ?? null}
+                tipo={tipoDe(filtrando)}
+                atual={filtros[filtrando] ?? null}
                 onAplicar={(vs) => { const k = filtrando; setFiltros((p) => { const n = { ...p }; if (vs) n[k] = vs; else delete n[k]; return n; }); setFiltrando(null); }}
                 onFechar={() => setFiltrando(null)} />}
             </div>}

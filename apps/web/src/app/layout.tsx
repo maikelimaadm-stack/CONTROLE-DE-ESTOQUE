@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
+import "./b1ref.css";
 /**
  * DM SANS, SERVIDA DO PRÓPRIO PROJETO (FONTE-LOCAL-01).
  *
