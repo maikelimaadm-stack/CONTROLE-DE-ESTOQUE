@@ -270,6 +270,8 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
       return <div className="space-y-3">
         <PainelColuna>
           <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" valor={codigoNome(d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"])} />
+          <CampoLeitura rotulo="Tipo de título" adorno="pesquisa" testId="compras-consulta-tipo-titulo"
+            valor={t(d["tipo_titulo_nome"]) || (temValor(d["tipo_titulo_id"]) ? "Informado" : "")} />
           <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" valor={t(d["forma_pagamento_nome"])} />
           {mostrarVencimentoSolto && <CampoLeitura rotulo="Vencimento" adorno="data" valor={dataOuVazio(d["data_vencimento"])} />}
         </PainelColuna>
@@ -289,10 +291,15 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
   if (e.ehCompra) abas.push({
     value: "rateio", label: "Rateio e classificação",
     content: <PainelLargo>
-      <PainelColuna>
+      {/* Classificação única: Natureza/Centro do documento só quando não há rateio por valor/produto. */}
+      {!temValor(d["rateio_tipo"]) && <PainelColuna>
         <CampoLeitura rotulo="Natureza financeira" adorno="pesquisa" valor={codigoNome(d["categoria_financeira_codigo"], d["categoria_financeira_nome"])} />
         <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa" valor={codigoNome(d["centro_custo_codigo"], d["centro_custo_nome"])} />
-      </PainelColuna>
+      </PainelColuna>}
+      {temValor(d["classificacao_gasto"]) && <PainelColuna>
+        <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="travado" testId="compras-consulta-classificacao"
+          valor={typeof d["classificacao_gasto"] === "string" ? d["classificacao_gasto"].toUpperCase() : ""} />
+      </PainelColuna>}
       <RateioDaConsulta d={d} />
     </PainelLargo>
   });

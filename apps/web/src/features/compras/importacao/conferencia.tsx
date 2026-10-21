@@ -108,8 +108,15 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
   const varianteDaCompra = varianteDeCompra("compra");
   const tops = useTopsDaEspecie(varianteDaCompra?.segmento ?? "");
   const [solicitacao, setSolicitacao] = React.useState(solicitacaoId);
+  const topPreUpload = React.useMemo(() => {
+    try {
+      const v = sessionStorage.getItem("compras.importacao.topPreUpload");
+      if (v && tops.situacao === "pronto" && tops.dados.items.some((t) => t.id === v)) return v;
+    } catch { /* sem storage */ }
+    return null;
+  }, [tops]);
   const e = useEstadoDaConferencia(conf, {
-    topPadrao: tops.situacao === "pronto" ? tops.dados.defaultId : null,
+    topPadrao: topPreUpload ?? (tops.situacao === "pronto" ? tops.dados.defaultId : null),
     podeReceberPedido: can("pedidos_compra.edit"),
     solicitacaoId: solicitacao,
     compra: varianteDaCompra ? { segmento: varianteDaCompra.segmento, familia: varianteDaCompra.familia } : null,

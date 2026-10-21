@@ -104,6 +104,11 @@ export interface AberturaDaEdicao {
   /** O plano gravado é do operador (ajustado), não o da condição. */
   ajustarParcelas: boolean;
   plano: Plan;
+  /** EDITAR-02B: classificação gerencial gravada (tipo de título, CAPEX/OPEX, rateio). */
+  tipoTituloId: string;
+  classificacaoGasto: string;
+  rateioTipo: "documento" | "por_valor" | "por_produto";
+  rateioLinhas: { categoriaId: string; centroId: string; contaId: string; safraId: string; percentual: string }[];
 }
 
 /** O id do item salvo de uma linha da grade (vazio = item novo, incluído na edição). */
@@ -143,7 +148,12 @@ export function linhaDoItemSalvo(it: Row): ItemRow {
     expiration_date: data(it["validade"]),
     /* Nomes para a aba Classificação na edição (rótulo humano; não vão na PATCH). */
     product_code: texto(it["produto_codigo"]),
-    product_name: texto(it["produto_nome"])
+    product_name: texto(it["produto_nome"]),
+    /* EDITAR-02B: classificação do item (gera estoque / imobilizado / natureza / centro). */
+    compra_gera_estoque: it["gera_estoque"] === false ? false : true,
+    compra_imobilizado: it["imobilizado"] === true,
+    compra_natureza_id: texto(it["categoria_financeira_id"]),
+    compra_centro_id: texto(it["centro_custo_id"]),
   };
 }
 
@@ -165,7 +175,22 @@ export function aberturaDoDocumento(d: Row, plano: () => Plan): AberturaDaEdicao
   const itens = (Array.isArray(d["itens"]) ? (d["itens"] as unknown[]) : []).filter(ehObjeto).map(linhaDoItemSalvo);
   const lido = planoGravado(d["plano_parcelas"]);
   const ajustarParcelas = lido !== null && (d["parcelas_ajustadas"] === true || !aparado(d["condicao_pagamento_id"]));
-  return { cabecalho, itens, ajustarParcelas, plano: ajustarParcelas && lido ? lido : plano() };
+  const rateioTipoBruto = texto(d["rateio_tipo"]);
+  const rateioTipo = rateioTipoBruto === "por_valor" || rateioTipoBruto === "por_produto" ? rateioTipoBruto : "documento";
+  const rateioLinhas = (Array.isArray(d["rateio"]) ? (d["rateio"] as unknown[]) : []).filter(ehObjeto).map((l) => ({
+    categoriaId: texto(l["categoria_financeira_id"]),
+    centroId: texto(l["centro_custo_id"]),
+    contaId: texto(l["conta_contabil_id"]),
+    safraId: texto(l["safra_id"]),
+    percentual: texto(l["percentual"]),
+  }));
+  return {
+    cabecalho, itens, ajustarParcelas, plano: ajustarParcelas && lido ? lido : plano(),
+    tipoTituloId: texto(d["tipo_titulo_id"]),
+    classificacaoGasto: texto(d["classificacao_gasto"]),
+    rateioTipo,
+    rateioLinhas: rateioLinhas.length ? rateioLinhas : [{ categoriaId: "", centroId: "", contaId: "", safraId: "", percentual: "" }],
+  };
 }
 
 /* ═════════════════════════════════════ O CORPO DA PATCH ═════════════════════════════════════ */
@@ -234,7 +259,16 @@ function mudancasDoItem(gravado: ItemRow, atual: ItemRow, ehCompra: boolean): Re
 const planoCanonico = (p: Plan): string => JSON.stringify(Object.keys(p).sort().map((k) => [k, (p as unknown as Record<string, unknown>)[k]]));
 
 /** O estado da tela que a PATCH compara com a abertura. */
-export interface EstadoDaEdicao { cabecalho: CabecalhoDaEdicao; itens: readonly ItemRow[]; ajustarParcelas: boolean; plano: Plan }
+export interface EstadoDaEdicao {
+  cabecalho: CabecalhoDaEdicao;
+  itens: readonly ItemRow[];
+  ajustarParcelas: boolean;
+  plano: Plan;
+  tipoTituloId?: string;
+  classificacaoGasto?: string;
+  rateioTipo?: "documento" | "por_valor" | "por_produto";
+  rateioLinhas?: { categoriaId: string; centroId: string; contaId: string; safraId: string; percentual: string }[];
+}
 
 /**
  * O CORPO DA PATCH: `{ version, ...só o que mudou }`.
@@ -242,6 +276,7 @@ export interface EstadoDaEdicao { cabecalho: CabecalhoDaEdicao; itens: readonly 
  *     vão "0"); os da compra só na compra; a empresa nunca;
  *   · plano: `plano_parcelas` quando o "Ajustar parcelas" mudou (desligado = `null`, "pela condição") ou o plano
  *     ajustado mudou;
+ *   · EDITAR-02B: tipo de título, CAPEX/OPEX e rateio quando mudam;
  *   · itens: quando algum item salvo mudou, algum entrou, ou a ordem mudou — a lista COMPLETA, cada item salvo com o
  *     `id` e só os campos que mudaram nele, os novos sem `id` (com produto, quantidade e valor unitário).
  * Nada mudou ⇒ só `{ version }` (`mudouAlgo` falso: a tela não envia).
@@ -256,6 +291,32 @@ export function corpoDaEdicao(p: { version: string; ehCompra: boolean; abertura:
   if (a.ajustarParcelas !== b.ajustarParcelas) corpo.plano_parcelas = b.ajustarParcelas ? b.plano : null;
   else if (b.ajustarParcelas && planoCanonico(a.plano) !== planoCanonico(b.plano)) corpo.plano_parcelas = b.plano;
 
+  if (ehCompra) {
+    const titA = (a.tipoTituloId ?? "").trim(); const titB = (b.tipoTituloId ?? "").trim();
+    if (titA.toLowerCase() !== titB.toLowerCase()) corpo.tipo_titulo_id = titB === "" ? null : titB.toLowerCase();
+    const capA = (a.classificacaoGasto ?? "").trim(); const capB = (b.classificacaoGasto ?? "").trim();
+    if (capA !== capB) corpo.classificacao_gasto = capB === "capex" || capB === "opex" ? capB : null;
+    const tipoA = a.rateioTipo ?? "documento"; const tipoB = b.rateioTipo ?? "documento";
+    const linhasA = JSON.stringify(a.rateioLinhas ?? []);
+    const linhasB = JSON.stringify(b.rateioLinhas ?? []);
+    if (tipoA !== tipoB || (tipoB === "por_valor" && linhasA !== linhasB)) {
+      if (tipoB === "documento") corpo.rateio = null;
+      else if (tipoB === "por_produto") corpo.rateio = { tipo: "por_produto" };
+      else {
+        corpo.rateio = {
+          tipo: "por_valor",
+          linhas: (b.rateioLinhas ?? []).map((l) => ({
+            categoria_financeira_id: l.categoriaId.trim().toLowerCase(),
+            centro_custo_id: l.centroId.trim().toLowerCase(),
+            ...(l.contaId.trim() ? { conta_contabil_id: l.contaId.trim().toLowerCase() } : {}),
+            ...(l.safraId.trim() ? { safra_id: l.safraId.trim().toLowerCase() } : {}),
+            percentual: l.percentual.trim() || "0",
+          })),
+        };
+      }
+    }
+  }
+
   const gravados = new Map(a.itens.map((l) => [idDoItem(l), l]));
   const ordemGravada = a.itens.map(idDoItem);
   let itensMudaram = b.itens.length !== a.itens.length;
@@ -265,6 +326,17 @@ export function corpoDaEdicao(p: { version: string; ehCompra: boolean; abertura:
     if (!id || !g) { itensMudaram = true; return itemNovoNoCorpo(l, ehCompra); }
     if (ordemGravada[k] !== id) itensMudaram = true;
     const m = mudancasDoItem(g, l, ehCompra);
+    // Classificação do item (gera estoque / imobilizado / natureza / centro).
+    if (ehCompra) {
+      const geraA = g["compra_gera_estoque"] !== false; const geraB = l["compra_gera_estoque"] !== false;
+      if (geraA !== geraB) { m.gera_estoque = geraB; itensMudaram = true; }
+      const imoA = g["compra_imobilizado"] === true; const imoB = l["compra_imobilizado"] === true;
+      if (imoA !== imoB) { m.imobilizado = imoB; itensMudaram = true; }
+      const natA = texto(g["compra_natureza_id"]); const natB = texto(l["compra_natureza_id"]);
+      if (natA.toLowerCase() !== natB.toLowerCase()) { m.categoria_financeira_id = natB === "" ? null : natB.toLowerCase(); itensMudaram = true; }
+      const cenA = texto(g["compra_centro_id"]); const cenB = texto(l["compra_centro_id"]);
+      if (cenA.toLowerCase() !== cenB.toLowerCase()) { m.centro_custo_id = cenB === "" ? null : cenB.toLowerCase(); itensMudaram = true; }
+    }
     if (Object.keys(m).length) itensMudaram = true;
     return { id, ...m };
   });

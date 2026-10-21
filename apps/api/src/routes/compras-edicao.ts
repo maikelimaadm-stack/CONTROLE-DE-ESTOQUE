@@ -11,7 +11,7 @@ import { MSG_DOCUMENTO_MUDOU } from "./vendas-edicao-patch.js";
 import {
   ESPECIES, CONTRATO_DA_EDICAO, lerDocumentoCompra, nucleoDoLancamento, exigirVersaoQueAceitaSemItens, respostaDasRegrasDaCompra,
   familiaDaEspecie, recusaDaNotaInvisivel,
-  type EspecieCompra, type ParcelaDaNotaGravada, type ResultadoDoNucleo, type RegrasDaOperacaoDaCompra,
+  type EspecieCompra, type ParcelaDaNotaGravada, type ResultadoDoNucleo, type RegrasDaOperacaoDaCompra, type DocumentoCompraEntrada,
 } from "./compras.js";
 import {
   lerPedidoDaEdicaoDeCompra, edicaoDeCompraComoFicara, planoDaEdicaoDeCompra, recusaDosTotaisDaEdicaoDeCompra, eventoDaEdicaoDeCompra,
@@ -181,16 +181,21 @@ async function gravarCabecalho(ctx: ServiceCtx, especie: EspecieCompra, id: stri
   const sets: string[] = [];
   const set = (coluna: string, valor: unknown) => { params.push(valor); sets.push(`${coluna} = $${params.length}`); };
   for (const c of CAMPOS_DO_CABECALHO_DA_EDICAO) {
-    if (!(c in m) || c === "categoria_financeira_id" || c === "centro_custo_id" || c === "condicao_pagamento_id" || c === "data_vencimento") continue;
+    if (!(c in m) || c === "categoria_financeira_id" || c === "centro_custo_id" || c === "condicao_pagamento_id" || c === "data_vencimento"
+      || c === "tipo_titulo_id" || c === "classificacao_gasto") continue;
     set(c, c === "frete" || c === "outras_despesas" || c === "desconto" ? money(String(m[c])) : m[c]);
   }
   // A classificação e a condição: as que o núcleo validou (o POST grava as mesmas), só quando a PATCH as troca.
-  if ("categoria_financeira_id" in m || "centro_custo_id" in m) {
+  // Com rateio novo, o cabeçalho perde natureza/centro (CHECK da 0047) — grava pelo núcleo mesmo sem cat/cc no corpo.
+  if ("categoria_financeira_id" in m || "centro_custo_id" in m || "rateio" in m) {
     set("categoria_financeira_id", n.classificacao?.categoriaFinanceiraId ?? null);
     set("centro_custo_id", n.classificacao?.centroCustoId ?? null);
   }
   if ("condicao_pagamento_id" in m) set("condicao_pagamento_id", n.condicao?.id ?? null);
   if ("data_vencimento" in m) set("data_vencimento", n.dataVencimento);
+  if ("tipo_titulo_id" in m) set("tipo_titulo_id", m["tipo_titulo_id"] ?? null);
+  if ("classificacao_gasto" in m) set("classificacao_gasto", m["classificacao_gasto"] ?? null);
+  if ("rateio" in m) set("rateio_tipo", m["rateio_tipo"] ?? null);
   set("valor_itens", n.totais.valorItens);
   set("valor_total", n.totais.total);
   set("plano_parcelas", n.plano ? JSON.stringify(n.plano) : null);
@@ -200,6 +205,35 @@ async function gravarCabecalho(ctx: ServiceCtx, especie: EspecieCompra, id: stri
     `update erp.documentos_compra set ${sets.join(", ")} where id = $1 and organization_id = $2 and especie = $3 and situacao = 'aberto'`, params)
     .catch(recusaDaNotaInvisivel);
   if (u.rowCount !== 1) throw notFound("Documento");
+}
+
+/**
+ * EDITAR-02B — substitui as linhas do rateio por valor na compra ABERTA (DELETE + INSERT; a 0065 libera o DELETE).
+ * Ordem: se sai de por_valor, apaga linhas ANTES do UPDATE do cabeçalho (a guarda exige rateio_tipo atual);
+ * se entra/permanece em por_valor, o cabeçalho já tem rateio_tipo = por_valor e então INSERT.
+ */
+async function gravarRateioDaEdicao(ctx: ServiceCtx, id: string, cur: DocumentoGravadoDeCompra, m: Record<string, unknown>,
+  fase: "antesDoCabecalho" | "depoisDoCabecalho"): Promise<void> {
+  if (!("rateio" in m)) return;
+  const novo = m["rateio"] as DocumentoCompraEntrada["rateio"] | null;
+  const tinhaPorValor = cur.rateio_tipo === "por_valor";
+  const teraPorValor = novo?.tipo === "por_valor";
+  if (fase === "antesDoCabecalho") {
+    if (tinhaPorValor) {
+      const del = await ctx.tx.query(
+        `delete from erp.documentos_compra_rateio where organization_id = $1 and documento_id = $2`, [ctx.orgId, id]);
+      if (del.rowCount === null) throw notFound("Documento");
+    }
+    return;
+  }
+  if (!teraPorValor || novo?.tipo !== "por_valor") return;
+  for (const [posicao, l] of novo.linhas.entries()) {
+    const ins = await ctx.tx.query(
+      `insert into erp.documentos_compra_rateio (organization_id, documento_id, posicao, categoria_financeira_id, centro_custo_id, conta_contabil_id, safra_id, percentual)
+       values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [ctx.orgId, id, posicao, l.categoria_financeira_id, l.centro_custo_id, l.conta_contabil_id ?? null, l.safra_id ?? null, D(l.percentual).toFixed(4)]);
+    if (ins.rowCount !== 1) throw notFound("Documento");
+  }
 }
 
 /**
@@ -307,19 +341,25 @@ async function editarDocumentoDeCompra(app: FastifyInstance, ctx: ServiceCtx, es
       documentoId: id,
       parceiros: { fornecedor: "fornecedor_id" in m, transportadora: "transportadora_id" in m, formaPagamento: "forma_pagamento_id" in m },
       // D7: `null` na natureza/centro segue a régua do POST (o par como ficará; o núcleo decide título, par da TOP, provisão).
-      classificacao: "categoria_financeira_id" in m || "centro_custo_id" in m ? { trocou: true }
+      // Com rateio trocado, o cabeçalho cat/cc também muda (CHECK) — reconferir.
+      classificacao: "categoria_financeira_id" in m || "centro_custo_id" in m || edicao.rateioTrocou ? { trocou: true }
         : { trocou: false, gravada: cur.categoria_financeira_id && cur.centro_custo_id ? { categoriaFinanceiraId: cur.categoria_financeira_id, centroCustoId: cur.centro_custo_id } : null },
       condicao: "condicao_pagamento_id" in m ? { trocou: true }
         : { trocou: false, gravada: cur.condicao_pagamento_id ? await condicaoGravada(ctx, cur.condicao_pagamento_id) : null },
       itensAConferir: edicao.itensAConferir,
       classificacaoDosItens: edicao.classificacaoDosItens,
+      rateioTrocou: edicao.rateioTrocou,
+      tipoTituloTrocou: "tipo_titulo_id" in m,
       notaDuplicada: "fornecedor_id" in m || "numero_nota" in m || "serie_nota" in m,
       conferirTotais: (totais, itensTotais) => recusaDosTotaisDaEdicaoDeCompra(itensTotais, totais),
       planoMantido: (total) => planoDaEdicaoDeCompra(cur, m, total),
     },
   });
 
+  // Rateio por valor: apagar linhas antigas ANTES de mudar rateio_tipo no cabeçalho (guarda da 0065).
+  await gravarRateioDaEdicao(ctx, id, cur, m, "antesDoCabecalho");
   await gravarCabecalho(ctx, especie, id, m, n);
+  await gravarRateioDaEdicao(ctx, id, cur, m, "depoisDoCabecalho");
   await gravarItens(ctx, id, edicao, n);
   // D12 (decisão 286): o pedido gravado recalcula o que promete (o pedido aberto nunca foi finalizado: uma leitura,
   // nenhum efeito); a compra gerada de pedido muda o alvo do pedido convertido/encerrado (a soma das partes vivas).

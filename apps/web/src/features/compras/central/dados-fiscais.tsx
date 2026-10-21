@@ -3,7 +3,7 @@ import * as React from "react";
 import Link from "next/link";
 import { enumLabel, enumOptions } from "@/lib/copy";
 import { D } from "@agro/shared";
-import { brl } from "@/lib/utils";
+import { brl, num } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
 import { Button, Input } from "@/components/ui";
@@ -95,7 +95,7 @@ export function DadosFiscaisDaCriacao({ e, noPainel = false }: { e: EstadoDaCria
 
 /** Tipo de título na aba Financeiro (único local de edição quando o fiscal está no painel). */
 export function TipoDeTituloDaCriacao({ e }: { e: EstadoDaCriacao }) {
-  if (!e.editarFiscal) return null;
+  if (!e.editarFiscal && !e.editarRateio) return null;
   const f = e.fiscal;
   const campo = <CampoDaCentral rotulo="Tipo de título" erro={e.erro("tipo_titulo_id")} icone="pesquisa" preenchido={f.tipo_titulo_id !== ""} testId="compras-tipo-titulo"
     abaixo={e.padraoInvalido("tipo_titulo_id") ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : undefined}
@@ -116,25 +116,48 @@ const TIPOS_DE_RATEIO: readonly TipoDoRateioDaCompra[] = ["documento", "por_valo
 const AJUDA_CONTA_CONTABIL =
   "Opcional — informe somente se sua operação utiliza apropriação contábil detalhada. Natureza = tipo de gasto; Centro = destino/atividade; Conta = classificação no Plano de Contas.";
 
-/** Linha do rateio por valor: natureza/centro/percentual à vista; conta e safra sob “Detalhes contábeis”. */
+/** Valor em R$ derivado do % sobre o total do documento (exibição; o contrato persiste percentual). */
+function valorDoPercentual(base: string, percentual: string): string {
+  try {
+    if (!percentual.trim()) return "";
+    return D(base || "0").times(D(percentual.trim())).div(100).toFixed(2);
+  } catch { return ""; }
+}
+
+/** Linha do rateio por valor: natureza/centro/%/valor à vista; conta e safra sob “Detalhes contábeis”. */
 function LinhaDoRateioPorValor({ e, k, l }: { e: EstadoDaCriacao; k: number; l: { categoriaId: string; centroId: string; contaId: string; safraId: string; percentual: string } }) {
   const erroEm = (campo: string) => e.erro(`rateio.linhas[${k}].${campo}`) ?? e.erro(`rateio.linhas.${k}.${campo}`);
   const [avancado, setAvancado] = React.useState(Boolean(l.contaId) || Boolean(l.safraId));
+  const valorExibido = valorDoPercentual(String(e.totalExibido ?? "0"), l.percentual);
+  const aoMudarValor = (raw: string) => {
+    try {
+      const base = D(String(e.totalExibido ?? "0"));
+      if (base.lte(0) || !raw.trim()) { e.mudarLinhaDoRateio(k, { percentual: "" }); return; }
+      e.mudarLinhaDoRateio(k, { percentual: D(raw.trim()).times(100).div(base).toFixed(4) });
+    } catch { /* o servidor recusa percentual inválido */ }
+  };
   return <div data-testid={`compras-rateio-linha-${k}`} className="space-y-2 rounded-md border border-slate-100 px-2 py-2">
     <div className="grid grid-cols-12 gap-2">
-      <div className="col-span-12 md:col-span-4">
+      <div className="col-span-12 md:col-span-3">
         <CampoDaCentral rotulo="Natureza financeira" obrigatorio erro={erroEm("categoria_financeira_id")} icone="pesquisa" preenchido={Boolean(l.categoriaId)}>
           <RefSelect resource="financial_categories" value={l.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa} onChange={(v) => e.mudarLinhaDoRateio(k, { categoriaId: v ?? "" })} />
         </CampoDaCentral>
       </div>
-      <div className="col-span-12 md:col-span-4">
+      <div className="col-span-12 md:col-span-3">
         <CampoDaCentral rotulo="Centro de resultado" obrigatorio erro={erroEm("centro_custo_id")} icone="pesquisa" preenchido={Boolean(l.centroId)}>
           <RefSelect resource="cost_centers" value={l.centroId} filter={{ kind: "analytic" }} onChange={(v) => e.mudarLinhaDoRateio(k, { centroId: v ?? "" })} />
         </CampoDaCentral>
       </div>
-      <div className="col-span-8 md:col-span-2">
+      <div className="col-span-6 md:col-span-2">
         <CampoDaCentral rotulo="Percentual (%)" obrigatorio erro={erroEm("percentual")} preenchido={l.percentual !== ""}>
           <Input data-testid={`compras-rateio-linha-${k}-percentual`} inputMode="decimal" value={l.percentual} onChange={(ev) => e.mudarLinhaDoRateio(k, { percentual: ev.target.value })} />
+        </CampoDaCentral>
+      </div>
+      <div className="col-span-6 md:col-span-2">
+        <CampoDaCentral rotulo="Valor (R$)" preenchido={valorExibido !== ""}
+          abaixo={<p className="text-[11px] text-slate-500">Derivado do % sobre o total do documento.</p>}>
+          <Input data-testid={`compras-rateio-linha-${k}-valor`} inputMode="decimal" value={valorExibido}
+            onChange={(ev) => aoMudarValor(ev.target.value)} />
         </CampoDaCentral>
       </div>
       <div className="col-span-4 md:col-span-2 flex items-end pb-0.5">
@@ -199,6 +222,17 @@ export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
     </p>}
     {r.tipo !== "documento" && <p className="text-[12px] text-slate-600">Com distribuição avançada, a natureza e o centro do documento ficam em branco: quem classifica as contas a pagar é o rateio.</p>}
     {r.tipo === "por_valor" && <div className="space-y-3">
+      <p className="text-[12px] text-slate-600" data-testid="compras-rateio-base">
+        Base de cálculo: {num(e.totalExibido, 2)} · saldo a distribuir: {(() => {
+          try {
+            const base = D(String(e.totalExibido ?? "0"));
+            const usado = r.linhas.reduce((a, l) => {
+              try { return a.plus(base.times(D(l.percentual || "0")).div(100)); } catch { return a; }
+            }, D(0));
+            return num(base.minus(usado).toFixed(2), 2);
+          } catch { return "—"; }
+        })()}
+      </p>
       {r.linhas.map((l, k) => <LinhaDoRateioPorValor key={k} e={e} k={k} l={l} />)}
       <div className="flex items-center gap-3 text-[12.5px]">
         <Button size="sm" variant="outline" data-testid="compras-rateio-adicionar" onClick={e.adicionarLinhaDoRateio} disabled={r.linhas.length >= 50}>Adicionar linha</Button>
@@ -267,8 +301,6 @@ export function DadosFiscaisDaConsulta({ d }: { d: Row }) {
   if (!temDadosFiscais(d)) return null;
   const dfe = ehObj(d["dfe"]) ? d["dfe"] : null;
   const importacaoId = ehTexto(d["importacao_id"]) ? d["importacao_id"] : "";
-  const tipoTitulo = texto(d["tipo_titulo_nome"]) || (temValor(d["tipo_titulo_id"]) ? "Informado" : "");
-  const classificacao = ehTexto(d["classificacao_gasto"]) ? enumLabel("classificacao_gasto", d["classificacao_gasto"]) : enumLabel("classification", "unclassified");
   const dinheiro = (c: string) => (temValor(d[c]) ? brl(String(d[c])) : "");
   return <div data-testid="compras-consulta-dados-fiscais" className="space-y-1">
     <p className="text-[11px] font-semibold uppercase text-slate-500">Dados fiscais</p>
@@ -278,9 +310,6 @@ export function DadosFiscaisDaConsulta({ d }: { d: Row }) {
       <CampoLeitura rotulo="Tipo de documento" adorno="travado" testId="compras-consulta-tipo-documento" valor={ehTexto(d["tipo_documento_fiscal"]) ? enumLabel("document_type", d["tipo_documento_fiscal"]) : ""} />
       <CampoLeitura rotulo="IPI" testId="compras-consulta-ipi" valor={dinheiro("valor_ipi")} />
       <CampoLeitura rotulo="ICMS-ST" testId="compras-consulta-icms-st" valor={dinheiro("valor_icms_st")} />
-      <CampoLeitura rotulo="Seguro" testId="compras-consulta-seguro" valor={dinheiro("seguro")} />
-      <CampoLeitura rotulo="Tipo de título" adorno="pesquisa" testId="compras-consulta-tipo-titulo" valor={tipoTitulo} />
-      <CampoLeitura rotulo="Classificação" adorno="travado" testId="compras-consulta-classificacao" valor={classificacao} />
       {importacaoId && <CampoLeitura rotulo="Importação do XML" adorno="travado" testId="compras-consulta-importacao"
         valor={<Link className="text-brand-700 underline" href={`/compras/importacoes/${importacaoId}`}>Abrir a conferência da nota</Link>} />}
       {dfe && <CampoLeitura rotulo="DF-e" adorno="travado" testId="compras-consulta-dfe"

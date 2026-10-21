@@ -86,8 +86,11 @@ export const MSG_EDICAO_FORNECEDOR_DO_PEDIDO_COM_COMPRA = "O fornecedor do pedid
 export const MSG_EDICAO_ITEM_ORCADO = "O item do pedido de compra já orçado não troca de produto nem de quantidade.";
 /** P3 — a compra com as duplicatas da nota: o que forma o total e as parcelas é o da nota. */
 export const MSG_EDICAO_COMPRA_DA_NOTA = "Esta compra veio da nota com as duplicatas: o que forma o total e as parcelas é o da nota e não muda. Para corrigir, cancele a compra e lance de novo.";
-/** P3 — o item que carrega a linha da nota (`n_item_nota`): produto, quantidade, valores, descontos e impostos da nota. */
-export const MSG_EDICAO_ITEM_DA_NOTA = "Este item veio da nota fiscal: produto, quantidade, valores, descontos e impostos são os da nota e não mudam.";
+/**
+ * P3 / EDITAR-02B — o item com linha da nota: quantidade, valores, descontos e impostos da nota ficam; o produto
+ * INTERNO pode ser remapeado na compra ABERTA (rastro fiscal `n_item_nota` intacto).
+ */
+export const MSG_EDICAO_ITEM_DA_NOTA = "Este item veio da nota fiscal: quantidade, valores, descontos e impostos são os da nota e não mudam.";
 /**
  * P6 (decisão do dono) — a compra com CHAVE DE ACESSO (digitada ou do XML): a chave (imutável, 0047) codifica o emitente,
  * o número e a série da nota. Trocar fornecedor, número ou série desmentiria a chave — e o título nasceria para outro
@@ -105,9 +108,9 @@ export const MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DA_NOTA = "Esta compra veio da nota 
 
 /** O que forma o total da compra no cabeçalho, e as parcelas (P3; `data_vencimento` = a 1ª duplicata — decisão do A2). */
 const CABECALHO_DA_NOTA: readonly CampoDoCabecalhoDeCompra[] = ["frete", "outras_despesas", "desconto", "condicao_pagamento_id", "data_vencimento"];
-/** O que forma o total de cada item (P3). */
-const ITEM_DO_TOTAL: readonly CampoDoItemDeCompra[] = ["produto_id", "quantidade", "valor_unitario", "desconto", "desconto_percentual"];
-/** A linha da nota no item (P3): o que forma o total e os impostos que vieram da linha. */
+/** O que forma o total de cada item (P3) — sem `produto_id`: o vínculo interno pode mudar na ABERTA (decisão 324). */
+const ITEM_DO_TOTAL: readonly CampoDoItemDeCompra[] = ["quantidade", "valor_unitario", "desconto", "desconto_percentual"];
+/** A linha da nota no item (P3): totais e impostos da linha; produto interno liberado na edição ABERTA. */
 const ITEM_DA_LINHA_DA_NOTA: readonly CampoDoItemDeCompra[] = [...ITEM_DO_TOTAL, "valor_ipi", "valor_icms_st"];
 /** P6 — o que a chave de acesso codifica (o emitente, o número e a série). */
 const IDENTIDADE_DA_NOTA: readonly CampoDoCabecalhoDeCompra[] = ["fornecedor_id", "numero_nota", "serie_nota"];
