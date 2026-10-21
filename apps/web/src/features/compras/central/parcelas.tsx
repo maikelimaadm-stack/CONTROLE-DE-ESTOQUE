@@ -22,6 +22,9 @@ import type { EstadoDaCriacao } from "./estado";
  *
  * "Possui entrada?" liga a entrada: ela é a PRIMEIRA linha da lista (o cronograma inteiro, entrada incluída, é o que
  * vai no `parcelas` do plano) — por isso os campos de entrada moram na própria linha, como os das demais parcelas.
+ *
+ * `installments` no plano = parcelas ALÉM da entrada (contrato de `buildInstallments`). A lista `parcelas[]`, quando
+ * presente, é a fonte do cronograma no servidor — a contagem não pode incluir a entrada duas vezes.
  */
 /** A grade da tabela: vencimento, valor e observação na MESMA linha (decisão do usuário, 10/2026). */
 const GRADE = "grid grid-cols-[124px_104px_minmax(0,1fr)_auto] items-center gap-2";
@@ -43,7 +46,7 @@ function linhasDoPlano(plano: Plan, total: number): LinhaDaParcela[] {
 }
 
 /** Quantas PARCELAS a lista tem — a entrada não conta como parcela. */
-const contarParcelas = (linhas: readonly LinhaDaParcela[]) => linhas.filter((l) => !l.entrada).length;
+export const contarParcelas = (linhas: readonly { entrada?: boolean }[]) => linhas.filter((l) => !l.entrada).length;
 
 export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const p = e.plano;
@@ -77,17 +80,21 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
 
   /* A lista PELA CONDIÇÃO: o cronograma do servidor; sem condição escolhida, à vista (uma parcela no vencimento). */
   const previstas: LinhaDaParcela[] = React.useMemo(() => {
+    if (condicao.isLoading || condicao.isFetching) return [];
+    if (condicao.isError) return [];
     if (planoDaCondicaoEscolhida) return linhasDoPlano(planoDaCondicaoEscolhida, e.totalExibido);
+    if (condicaoId && !condicao.data) return [];
     const vencimento = e.cabecalho.data_vencimento || e.cabecalho.data_documento;
     return e.totalExibido > 0 && vencimento ? [{ vencimento, valor: e.totalExibido.toFixed(2), entrada: false }] : [];
-  }, [planoDaCondicaoEscolhida, e.totalExibido, e.cabecalho.data_vencimento, e.cabecalho.data_documento]);
+  }, [planoDaCondicaoEscolhida, e.totalExibido, e.cabecalho.data_vencimento, e.cabecalho.data_documento, condicao.isLoading, condicao.isFetching, condicao.isError, condicaoId, condicao.data]);
 
-  /** A lista passa a ser a do plano: o número de parcelas e o 1º vencimento acompanham, e a entrada com ela. */
+  /** A lista passa a ser a do plano: `installments` = parcelas além da entrada (contrato do domínio). */
   const definir = (novas: LinhaDaParcela[], temEntrada = comEntrada) => {
     const primeira = novas[0]?.vencimento || p.first_due_date;
+    const nParcelas = Math.max(1, contarParcelas(novas));
     mudar({
       parcelas: novas.length ? novas.map(({ vencimento, valor, observacao }) => ({ vencimento, valor, observacao })) : undefined,
-      installments: Math.max(1, novas.length), first_due_date: primeira,
+      installments: nParcelas, first_due_date: temEntrada ? (novas[1]?.vencimento || primeira) : primeira,
       has_down_payment: temEntrada && novas.length > 0,
       down_payment_value: temEntrada ? novas[0]?.valor || undefined : undefined,
       down_payment_date: temEntrada ? novas[0]?.vencimento || undefined : undefined
@@ -96,28 +103,51 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const mudarLinha = (k: number, campo: keyof ParcelaDoPlano, valor: string) =>
     definir(linhas.map((l, j) => (j === k ? { ...l, [campo]: valor } : l)));
 
-  /** Ligar a entrada exige o plano no corpo (é nele que a entrada vive) e a põe como PRIMEIRA linha da lista. */
+  /** Semeia a lista editável a partir do que a tela já mostra (condição ou linhas atuais). */
+  const sementeDaTela = (): LinhaDaParcela[] => {
+    if (e.ajustarParcelas && linhas.length) return linhas;
+    if (previstas.length) return previstas;
+    return doPlano;
+  };
+
+  /** Ligar a entrada exige o plano no corpo e a põe como PRIMEIRA linha — sem descartar o cronograma da condição. */
   const mudarEntrada = (ligada: boolean) => {
-    if (!ligada) { definir(linhas.slice(comEntrada ? 1 : 0), false); return; }
+    const origem = sementeDaTela();
+    const semEntrada = origem.filter((l) => !l.entrada);
     e.setAjustarParcelas(true);
-    definir([{ vencimento: p.first_due_date || e.cabecalho.data_documento, valor: "", observacao: "Entrada", entrada: true }, ...linhas], true);
+    if (!ligada) { definir(semEntrada, false); return; }
+    if (origem[0]?.entrada) { definir(origem, true); return; }
+    definir([{
+      vencimento: p.first_due_date || e.cabecalho.data_documento, valor: "", observacao: "Entrada", entrada: true
+    }, ...semEntrada], true);
   };
   const remover = (k: number) => {
     if (k === 0 && comEntrada) { definir(linhas.slice(1), false); return; }
     definir(linhas.filter((_, j) => j !== k));
   };
 
+  const escolherModo = (v: string) => {
+    const ajustar = v === "ajustar";
+    if (ajustar && !p.parcelas?.length) {
+      const semente = sementeDaTela();
+      if (semente.length) definir(semente, semente.some((l) => l.entrada));
+    }
+    e.setAjustarParcelas(ajustar);
+  };
+
   const somaLinhas = e.ajustarParcelas ? linhas : previstas;
   const soma = somaLinhas.reduce((a, l) => a + Number(l.valor || 0), 0);
   const foraDoTotal = Math.abs(soma - e.totalExibido) > 0.005;
   const quantidade = contarParcelas(somaLinhas);
+  const carregandoCondicao = !e.ajustarParcelas && Boolean(condicaoId) && (condicao.isLoading || condicao.isFetching);
+  const erroCondicao = !e.ajustarParcelas && Boolean(condicaoId) && condicao.isError;
 
   return <>
     <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
       <div className="w-[260px]"><ChaveSimNao rotulo="Possui entrada?" valor={comEntrada} onChange={mudarEntrada} testId="compras-possui-entrada" /></div>
       <div className="w-[300px]"><CampoDaCentral rotulo="Parcelas" icone="selecao" preenchido testId="compras-parcelas-campo">
         <MgSelect data-testid="compras-parcelas" value={e.ajustarParcelas ? "ajustar" : "padrao"}
-          onChange={(v) => e.setAjustarParcelas(v === "ajustar")}
+          onChange={escolherModo}
           options={[{ value: "padrao", label: "Pela condição (ou à vista)" }, { value: "ajustar", label: "Ajustar parcelas" }]} />
       </CampoDaCentral></div>
     </div>
@@ -128,8 +158,10 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
       </div>
 
       {!e.ajustarParcelas && <>
-        {previstas.length === 0 && <p className="px-2 py-2 text-[12px] text-slate-500">Escolha a condição de pagamento para ver as parcelas.</p>}
-        {previstas.map((l, k) => <div key={k} data-testid="compras-parcela" data-entrada={l.entrada ? "true" : undefined} className={GRADE + " px-2 py-1.5 text-[12px]"}>
+        {carregandoCondicao && <p className="px-2 py-2 text-[12px] text-slate-500" data-testid="compras-parcelas-carregando">Carregando a condição de pagamento…</p>}
+        {erroCondicao && <p className="px-2 py-2 text-[12px] text-red-700" role="alert" data-testid="compras-parcelas-erro-condicao">Não foi possível ler a condição de pagamento.</p>}
+        {!carregandoCondicao && !erroCondicao && previstas.length === 0 && <p className="px-2 py-2 text-[12px] text-slate-500">Escolha a condição de pagamento para ver as parcelas.</p>}
+        {!carregandoCondicao && !erroCondicao && previstas.map((l, k) => <div key={k} data-testid="compras-parcela" data-entrada={l.entrada ? "true" : undefined} className={GRADE + " px-2 py-1.5 text-[12px]"}>
           <span className="text-slate-700">{dateBR(l.vencimento)}</span>
           <span className="tabular-nums text-slate-900">{num(l.valor, 2)}</span>
           <span className="text-slate-500">{l.entrada ? "entrada" : "—"}</span>

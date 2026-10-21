@@ -74,12 +74,21 @@ export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | 
     return input.parcelas.map((p, i) => ({ number: i + 1, dueDate: p.dueDate, amount: money(p.amount), isDownPayment: false }));
   }
   // As parcelas escritas à mão no plano (Central de Compras) são o cronograma; a observação de cada uma vira a nota do título.
+  // Com `has_down_payment`, a PRIMEIRA linha é a entrada (número 0 / sufixo -E), como em `buildInstallments` —
+  // a lista manda nas datas e valores; a flag só identifica a entrada, sem recalcular.
   const manuais = input.plan?.parcelas;
   if (manuais?.length) {
     const soma = manuais.reduce((a, p) => a.plus(D(String(p.valor))), D(0));
     if (!soma.eq(D(total))) throw validation("As parcelas não fecham o valor do título", [{ path: "parcelas", message: "As parcelas não fecham o valor do título" }]);
-    return manuais.map((p, i) => ({ number: i + 1, dueDate: p.vencimento, amount: money(String(p.valor)), isDownPayment: false,
-      ...(p.observacao?.trim() ? { note: p.observacao.trim() } : {}) }));
+    const comEntrada = input.plan?.has_down_payment === true;
+    return manuais.map((p, i) => {
+      const isDownPayment = comEntrada && i === 0;
+      return {
+        number: isDownPayment ? 0 : (comEntrada ? i : i + 1),
+        dueDate: p.vencimento, amount: money(String(p.valor)), isDownPayment,
+        ...(p.observacao?.trim() ? { note: p.observacao.trim() } : {})
+      };
+    });
   }
   return input.plan && (input.plan.installments > 1 || input.plan.has_down_payment)
     ? buildInstallments({ totalAmount: total, installments: input.plan.installments, firstDueDate: input.plan.first_due_date, mode: input.plan.mode, intervalDays: input.plan.interval_days, dueDay: input.plan.due_day, hasDownPayment: input.plan.has_down_payment, downPaymentValue: input.plan.down_payment_value !== undefined ? String(input.plan.down_payment_value) : undefined, downPaymentDate: input.plan.down_payment_date })

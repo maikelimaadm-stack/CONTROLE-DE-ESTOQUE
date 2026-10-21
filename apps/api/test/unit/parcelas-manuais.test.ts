@@ -21,6 +21,23 @@ describe("parcelas do plano escritas à mão", () => {
     ]);
   });
 
+  it("com has_down_payment a primeira linha é a entrada (número 0)", () => {
+    const plan = installmentPlanSchema.parse({
+      installments: 2, first_due_date: "2026-03-15", mode: "interval", interval_days: 30, has_down_payment: true,
+      down_payment_value: "50.00", down_payment_date: "2026-02-01",
+      parcelas: [
+        { vencimento: "2026-02-01", valor: "50.00", observacao: "Entrada" },
+        { vencimento: "2026-03-15", valor: "125.00" },
+        { vencimento: "2026-04-15", valor: "125.00", observacao: "Última" }
+      ]
+    });
+    expect(parcelasDoTitulo({ amount: "300.00", dueDate: "2026-02-01", plan })).toEqual([
+      { number: 0, dueDate: "2026-02-01", amount: "50.00", isDownPayment: true, note: "Entrada" },
+      { number: 1, dueDate: "2026-03-15", amount: "125.00", isDownPayment: false },
+      { number: 2, dueDate: "2026-04-15", amount: "125.00", isDownPayment: false, note: "Última" }
+    ]);
+  });
+
   it("soma diferente do total do documento recusa", () => {
     const plan = planoDe([{ vencimento: "2026-02-10", valor: "90.00" }]);
     expect(() => parcelasDoTitulo({ amount: "300.00", dueDate: "2026-02-10", plan })).toThrow(/não fecham/);
