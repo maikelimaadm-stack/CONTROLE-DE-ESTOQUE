@@ -3,9 +3,8 @@ import * as React from "react";
 import { num } from "@/lib/utils";
 import { Input } from "@/components/ui";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
-import { PainelColuna, PainelLargo, TitulosDoDocumento } from "@/features/central/painel";
+import { PainelColuna, PainelLargo } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
-import { linkDoTituloDeCompra } from "./adaptador";
 import type { EstadoDaCriacao } from "./estado";
 import { DadosFiscaisDaCriacao, RateioEItensDaCriacao, TipoDeTituloDaCriacao } from "./dados-fiscais";
 import {
@@ -74,7 +73,9 @@ function CampoSeguro({ e }: { e: EstadoDaCriacao }) {
 function VinculosDoDocumento() {
   return <div className="space-y-2" data-testid="compras-vinculos">
     <h3 className="text-[11.5px] font-semibold text-slate-600">Vínculos</h3>
-    <TitulosDoDocumento legenda="Contas a pagar do documento" titulos={[]} linkDoTitulo={linkDoTituloDeCompra} />
+    <p className="text-[12px] text-slate-500" data-testid="compras-vinculos-vazio">
+      Os títulos serão gerados após a confirmação, conforme a TOP e o pagamento.
+    </p>
   </div>;
 }
 

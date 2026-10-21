@@ -115,7 +115,7 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await expect(corpo).toHaveAttribute("data-situacao", "confirmado");
   await expect(page.getByRole("tab", { name: /^Estoque/ }), "sem aba Estoque no portal de compras").toHaveCount(0);
   await expect(page.getByTestId("compras-consulta-itens")).toContainText(c.nomeProduto);
-  await page.getByRole("tab", { name: /^Financeiro/ }).click();
+  await page.getByRole("tab", { name: /^Vínculos/ }).click();
   await expect(page.getByTestId("compras-consulta-titulos")).toContainText("110,00");
   const saldo = await api<Saldo>(page, "GET", `/api/stock/balances/${c.armazem}/${c.produto}`);
   expect(saldo.quantity, "a entrada vale no servidor").toBe("5.0000");

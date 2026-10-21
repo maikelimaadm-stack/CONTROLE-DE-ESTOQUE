@@ -123,6 +123,9 @@ export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
       <CampoDaCentral rotulo="Classificação CAPEX/OPEX" erro={e.erro("classificacao_gasto")} icone="selecao" preenchido testId="compras-classificacao-gasto-campo">
         <MgSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto} onChange={(v) => e.mudarFiscal({ classificacao_gasto: v })} options={CLASSIFICACOES} />
       </CampoDaCentral>
+      <p className="text-[12px] text-slate-600" data-testid="compras-classificacao-limite">
+        A classificação CAPEX/OPEX vale para o documento inteiro. Compra mista (investimento e despesa na mesma nota) exige decisão explícita — não invente classificação automática por item.
+      </p>
       <CampoDaCentral rotulo="Distribuição" erro={e.erro("rateio")} icone="selecao" preenchido testId="compras-rateio">
         <MgSelect data-testid="compras-rateio-tipo" value={r.tipo}
           onChange={(v) => e.mudarTipoDoRateio(TIPOS_DE_RATEIO.find((t) => t === v) ?? "documento")}

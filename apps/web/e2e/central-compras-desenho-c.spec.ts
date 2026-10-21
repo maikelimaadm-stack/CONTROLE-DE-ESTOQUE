@@ -162,7 +162,9 @@ test("CC-11 — consulta: Totais com o total do servidor, Financeiro com as cont
   const cabecalhoDoSistema = LAYOUT_DO_SISTEMA("compras.compra").cabecalho.map((x) => x.campo);
   const fiscalNaAba = ["numero_nota", "serie_nota", "data_entrada"].some((campo) => !cabecalhoDoSistema.includes(campo));
   expect(fiscalNaAba, "premissa: o layout do sistema da compra põe nota, série e entrada nos Dados").toBe(false);
-  expect(nomes, "as abas da consulta da compra (sem Estoque: produtos já na relação de itens)").toEqual(["Totais", "Financeiro", "Frete e transporte", "Observações"]);
+  expect(nomes, "as abas da consulta da compra (sem Estoque: produtos já na relação de itens)").toEqual([
+    "Totais", "Financeiro", "Vínculos", "Rateio e classificação", "Entrega e transporte", "Observações"
+  ]);
   await expect(painel.getByRole("tab", { name: /Estoque/ }), "sem aba Estoque no portal de compras").toHaveCount(0);
   await expect(page.getByTestId("compras-consulta-movimentos"), "sem a relação de entradas no painel").toHaveCount(0);
   await expect(dados.getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão Dados adicionais").toHaveCount(0);
@@ -172,11 +174,13 @@ test("CC-11 — consulta: Totais com o total do servidor, Financeiro com as cont
   await expect(page.getByTestId(`${P}-total`)).toContainText(reais(lida.valor_total));
   await expect(page.getByTestId("compras-consulta-total"), "o testid de antes no elemento equivalente").toBeVisible();
 
-  // FINANCEIRO: contador = títulos do servidor; link para a conta a pagar
-  await expect(painel.getByRole("tab", { name: /Financeiro/ }), "o contador de contas a pagar").toContainText(String(lida.titulos.length));
+  // VÍNCULOS: contador = títulos do servidor; link para a conta a pagar (saiu do Financeiro)
+  await expect(painel.getByRole("tab", { name: /Vínculos/ }), "o contador de contas a pagar").toContainText(String(lida.titulos.length));
+  await abrirAba(page, P, /Vínculos/);
+  const vinculos = painel.getByRole("tabpanel");
+  await expect(vinculos.locator(`a[href="/financeiro/contas-a-pagar/${lida.titulos[0]!.id}"]`)).toBeVisible();
   await abrirAba(page, P, /Financeiro/);
   const fin = painel.getByRole("tabpanel");
-  await expect(fin.locator(`a[href="/financeiro/contas-a-pagar/${lida.titulos[0]!.id}"]`)).toBeVisible();
   await expect(fin.locator("input:not([type=hidden]):enabled, select:enabled, textarea:enabled"), "nada editável no plano da consulta").toHaveCount(0);
 
   // ITENS: a relação já traz os produtos (entradas no estoque ficam só na API)
@@ -203,7 +207,9 @@ test("CC-11 — consulta: Totais com o total do servidor, Financeiro com as cont
   expect((doPedido.compras_geradas ?? []).map((g) => g.id), "premissa: o servidor declara a compra gerada").toEqual([gerada.id]);
   await abrirConsulta(page, pedido, "pedidos");
   const nomesDoPedido = (await painel.getByRole("tab").allInnerTexts()).map((n) => n.replace(/\d+/g, "").trim());
-  expect(nomesDoPedido, "as abas da consulta do pedido").toEqual(["Totais", "Financeiro", "Frete e transporte", "Compras geradas", "Observações"]);
+  expect(nomesDoPedido, "as abas da consulta do pedido").toEqual([
+    "Totais", "Financeiro", "Vínculos", "Entrega e transporte", "Compras geradas", "Observações"
+  ]);
   await expect(page.getByTestId(`${P}-total`)).toContainText(reais(doPedido.valor_total));
   await expect(painel.getByRole("tab", { name: /Compras geradas/ })).toContainText("1");
   await abrirAba(page, P, /Compras geradas/);
@@ -324,7 +330,8 @@ async function ladoDaCompra(page: Page, c: Cenario): Promise<Lado> {
   return {
     lado: "compra", prefixo: P, aberto: compra, confirmado: compraConfirmada,
     rotaCriacao: `/compras/compras/new?tipo_operacao_id=${c.topCompra.id}`, rotaConsulta: (id) => `/compras/compras/${id}`, rotaLeitura: (id) => `**/api/compras/compras/${id}`,
-    observacao: () => page.getByTestId("compras-observacao"), confirmar: "Confirmar compra", abas: ["Totais", "Financeiro", "Frete e transporte"]
+    observacao: () => page.getByTestId("compras-observacao"), confirmar: "Confirmar compra",
+    abas: ["Totais", "Financeiro", "Vínculos", "Entrega e transporte"]
   };
 }
 
@@ -354,7 +361,12 @@ async function percorrerEstados(page: Page, l: Lado, cena: (nome: string) => Pro
   // consulta
   await consulta(l.aberto);
   await cena("view-documento");
-  for (const aba of l.abas) { await abrirAba(page, l.prefixo, aba); await cena(aba === "Frete e transporte" ? "frete" : aba.toLowerCase()); }
+  for (const aba of l.abas) {
+    await abrirAba(page, l.prefixo, aba);
+    const cenaAba = aba === "Entrega e transporte" || aba === "Frete e transporte" ? "frete"
+      : aba === "Vínculos" ? "vinculos" : aba.toLowerCase();
+    await cena(cenaAba);
+  }
   await abrirAba(page, l.prefixo, "Financeiro");
   await page.getByTestId(`${l.prefixo}-ampliar-painel`).click();
   await cena("financeiro-ampliado");

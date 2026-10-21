@@ -9,7 +9,7 @@ import { statusTone } from "@/components/ui";
 import type { Row } from "@/features/docs/shared";
 import { CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { ItensSalvos } from "@/features/central/itens-salvos";
-import { PainelColuna, PainelLargo, PainelRepartido, PlanoEmLeitura, Relacao, Selo, TitulosDoDocumento, type ColunaDaRelacao } from "@/features/central/painel";
+import { PainelColuna, PainelLargo, PlanoEmLeitura, Relacao, Selo, TitulosDoDocumento, type ColunaDaRelacao } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
 import { AprovacaoDoDocumento } from "@/features/aprovacoes/aprovacao-do-documento";
 import { zonasDaCentral, type ZonasDaCentral } from "../layout-da-central";
@@ -25,17 +25,17 @@ import { BensDaConsulta, DadosFiscaisDaConsulta, RateioDaConsulta, temDadosFisca
  * grava: totais, subtotal, títulos, movimentos e compras geradas vêm prontos do detalhe
  * (`/api/compras/<segmento>/<id>`). Os testids `compras-*` de antes continuam no elemento equivalente.
  *
+ * Organização alinhada à criação (PR #139): Dados = identificação; painel = Totais · Financeiro · Vínculos ·
+ * Rateio e classificação · Fiscal · Entrega e transporte. Pagamento e rateio NÃO ficam nos Dados. Frete editável/
+ * valor mora em Totais; a aba de entrega só traz a transportadora. Observação nos Dados (como na criação); bens do
+ * imobilizado na aba Observações.
+ *
  * Fiscal (nota, série, data de entrada) só aparece como aba quando o layout NÃO os põe nos Dados — a zona vem de
  * quem chama; sem ela, a do LAYOUT_DO_SISTEMA (a consulta não carrega layout).
  *
- * OPERACOES-01 F7 (decisão 284): a compra com dados fiscais (chave de acesso, UF, tipo de documento, IPI, ICMS-ST,
- * seguro, tipo de título, classificação, vínculo com a importação do XML ou com a DF-e) ganha a seção "Dados fiscais"
- * (`compras-consulta-dados-fiscais`) na aba Fiscal — que passa a existir também por ela; IPI, ICMS-ST e seguro entram nos
- * Totais; o rateio vai ao Financeiro (`compras-consulta-rateio`) e os bens do imobilizado às Observações
- * (`compras-consulta-bem-<posicao>`). Compra sem nenhum deles (a de hoje, ou a API anterior): a consulta de hoje.
- *
- * Sem aba "Estoque": os produtos já estão na relação de itens; a relação de entradas no estoque (quebrada no layout
- * derivados) saiu do painel — o detalhe da API continua devolvendo `movimentos` para quem precisar.
+ * OPERACOES-01 F7 (decisão 284): a compra com dados fiscais ganha a seção "Dados fiscais"
+ * (`compras-consulta-dados-fiscais`) na aba Fiscal; IPI, ICMS-ST e seguro entram nos Totais; o rateio na aba Rateio
+ * (`compras-consulta-rateio`); títulos na aba Vínculos (`compras-consulta-titulos`).
  */
 
 const t = (v: unknown) => (v === null || v === undefined || v === "" ? "" : String(v));
@@ -107,15 +107,11 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
       <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="compras-consulta-empresa" valor={t(d["empresa_nome"])} />
       <CampoLeitura rotulo={tr("termos.tipo_operacao")} adorno="travado" testId="compras-consulta-top" valor={top ? `${t(top.codigo)} — ${t(top.nome)}` : ""} />
       <CampoLeitura rotulo="Data" adorno="data" valor={dataOuVazio(d["data_documento"])} />
-      <CampoLeitura rotulo="Vencimento" adorno="data" valor={dataOuVazio(d["data_vencimento"])} />
       {e.ehCompra && nosDados.has("data_entrada") && <CampoLeitura rotulo="Data de entrada" adorno="data" valor={dataOuVazio(d["data_entrada"])} />}
       {e.ehCompra && nosDados.has("numero_nota") && <CampoLeitura rotulo="Nota" adorno="travado" valor={t(d["numero_nota"])} />}
       {e.ehCompra && nosDados.has("serie_nota") && <CampoLeitura rotulo="Série" adorno="travado" valor={t(d["serie_nota"])} />}
-      <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" valor={codigoNome(d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"])} />
-      <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" valor={t(d["forma_pagamento_nome"])} />
-      <CampoLeitura rotulo="Natureza de despesa" adorno="pesquisa" valor={codigoNome(d["categoria_financeira_codigo"], d["categoria_financeira_nome"])} />
-      <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa" valor={codigoNome(d["centro_custo_codigo"], d["centro_custo_nome"])} />
       <div data-testid="compras-consulta-codigo-campo"><CampoLeitura rotulo="Número" adorno="travado" testId="compras-consulta-codigo" valor={t(d["codigo"])} /></div>
+      <CampoLeitura rotulo="Observação" multilinha valor={t(d["observacao"])} />
     </ColunaDeCampos>
     <CamposExtrasDaCompra>
       <CampoLeitura rotulo="Movimento" adorno="travado" valor={tr(e.variante.chaveI18n)} />
@@ -152,11 +148,27 @@ const COLUNAS_DAS_COMPRAS_GERADAS: readonly ColunaDaRelacao[] = [
   { chave: "situacao", rotulo: "Situação", celula: (r) => <Selo tom={statusTone(r["situacao"], "situacao_documento_compra")} valor={r["situacao"]}>{enumLabel("situacao_documento_compra", r["situacao"])}</Selo> }
 ];
 
+/** Lista manual do plano em leitura — a mesma tabela da criação, sem inputs. */
+function ParcelasEmLeitura({ plano }: { plano: unknown }) {
+  const lista = (plano !== null && typeof plano === "object" && !Array.isArray(plano) && Array.isArray((plano as { parcelas?: unknown }).parcelas))
+    ? (plano as { parcelas: { vencimento?: unknown; valor?: unknown; observacao?: unknown }[] }).parcelas
+    : null;
+  if (!lista?.length) return <PlanoEmLeitura plano={plano} />;
+  return <div data-testid="compras-consulta-parcelas" className="mt-1 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
+    <div aria-hidden className="grid grid-cols-[124px_104px_minmax(0,1fr)] gap-2 border-b border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500">
+      <span>vencimento</span><span>valor</span><span>observação</span>
+    </div>
+    {lista.map((l, k) => <div key={k} data-testid="compras-consulta-parcela" className="grid grid-cols-[124px_104px_minmax(0,1fr)] gap-2 px-2 py-1.5 text-[12px]">
+      <span className="text-slate-700">{dataOuVazio(l.vencimento)}</span>
+      <span className="tabular-nums text-slate-900">{temValor(l.valor) ? brl(String(l.valor)) : ""}</span>
+      <span className="text-slate-500">{t(l.observacao) || "—"}</span>
+    </div>)}
+  </div>;
+}
+
 /**
- * As abas do painel da consulta. Compra: Totais, Financeiro, Frete e transporte, Fiscal (se o layout não pôs nota,
- * série e entrada nos Dados), Observações (com bens do imobilizado). Pedido: Totais, Financeiro, Frete e transporte,
- * Compras geradas, Observações. Sem aba Estoque — produtos já na relação de itens. Sem documento: as abas sem
- * conteúdo (estrutura da tela, não dado).
+ * As abas do painel da consulta — mesma finalidade da criação: Totais, Financeiro, Vínculos, Rateio e classificação,
+ * Fiscal, Entrega e transporte, Observações (bens). Pedido: + Compras geradas. Sem aba Estoque.
  */
 export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): AbaDoPainel[] {
   const d = e.documento;
@@ -169,7 +181,9 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
     return [
       { value: "totais", label: "Totais", content: null },
       { value: "financeiro", label: "Financeiro", content: null },
-      { value: "frete", label: "Frete e transporte", content: null },
+      { value: "vinculos", label: "Vínculos", content: null },
+      ...(e.ehCompra ? [{ value: "rateio", label: "Rateio e classificação", content: null }] : []),
+      { value: "entrega", label: "Entrega e transporte", content: null },
       ...(fiscalNaAba ? [{ value: "fiscal", label: "Fiscal", content: null }] : []),
       ...(e.ehPedido ? [{ value: "compras-geradas", label: "Compras geradas", content: null }] : []),
       { value: "observacoes", label: "Observações", content: null }
@@ -178,29 +192,47 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
   const codigo = t(d["codigo"]);
   const titulos = d.titulos ?? [];
   const abas: AbaDoPainel[] = [
-    { value: "totais", label: "Totais", content: <PainelRepartido lado={<PainelColuna>
-      <CampoLeitura rotulo="Subtotal dos itens" valor={brl(String(d["valor_itens"] ?? "0"))} />
-      <div data-testid="compras-consulta-total"><CampoLeitura rotulo="Total do documento" adorno="travado" testId="central-compras-total" valor={brl(String(d["valor_total"] ?? "0"))} /></div>
-    </PainelColuna>}>
-      <CampoLeitura rotulo="Frete" valor={brl(String(d["frete"] ?? "0"))} />
+    { value: "totais", label: "Totais", content: <PainelColuna>
+      <CampoLeitura rotulo="Total dos produtos" valor={brl(String(d["valor_itens"] ?? "0"))} />
       <CampoLeitura rotulo="Outras despesas" valor={brl(String(d["outras_despesas"] ?? "0"))} />
+      <CampoLeitura rotulo="Frete" valor={brl(String(d["frete"] ?? "0"))} />
+      {temValor(d["seguro"]) && <CampoLeitura rotulo="Seguro" testId="compras-consulta-total-seguro" valor={brl(String(d["seguro"]))} />}
       <CampoLeitura rotulo="Desconto" valor={brl(String(d["desconto"] ?? "0"))} />
-      {/* F7: só os que a compra tem (a coluna nula é a compra de hoje — o total do servidor já os soma) */}
       {temValor(d["valor_ipi"]) && <CampoLeitura rotulo="IPI" testId="compras-consulta-total-ipi" valor={brl(String(d["valor_ipi"]))} />}
       {temValor(d["valor_icms_st"]) && <CampoLeitura rotulo="ICMS-ST" testId="compras-consulta-total-icms-st" valor={brl(String(d["valor_icms_st"]))} />}
-      {temValor(d["seguro"]) && <CampoLeitura rotulo="Seguro" testId="compras-consulta-total-seguro" valor={brl(String(d["seguro"]))} />}
-    </PainelRepartido> },
-    { value: "financeiro", label: "Financeiro", contador: titulos.length, content: <PainelRepartido lado={<div data-testid="compras-consulta-titulos">
-      <TitulosDoDocumento legenda={`Contas a pagar geradas pelo documento ${codigo}`} titulos={titulos} linkDoTitulo={linkDoTituloDeCompra} />
-    </div>}>
-      <PlanoEmLeitura plano={d["plano_parcelas"]} />
-      {e.ehCompra && <RateioDaConsulta d={d} />}
-    </PainelRepartido> },
-    { value: "frete", label: "Frete e transporte", content: <PainelColuna>
-      <CampoLeitura rotulo="Transportadora" adorno="pesquisa" valor={t(d["transportadora_nome"])} />
-      <CampoLeitura rotulo="Frete" valor={brl(String(d["frete"] ?? "0"))} />
-    </PainelColuna> }
+      <div data-testid="compras-consulta-total"><CampoLeitura rotulo="Total da compra" adorno="travado" testId="central-compras-total" valor={brl(String(d["valor_total"] ?? "0"))} /></div>
+    </PainelColuna> },
+    { value: "financeiro", label: "Financeiro", content: <div className="space-y-3">
+      <PainelColuna>
+        <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" valor={codigoNome(d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"])} />
+        <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" valor={t(d["forma_pagamento_nome"])} />
+        <CampoLeitura rotulo="Vencimento" adorno="data" valor={dataOuVazio(d["data_vencimento"])} />
+      </PainelColuna>
+      <ParcelasEmLeitura plano={d["plano_parcelas"]} />
+    </div> },
+    { value: "vinculos", label: "Vínculos", contador: titulos.length, content: <PainelLargo><div data-testid="compras-consulta-titulos">
+      {titulos.length
+        ? <TitulosDoDocumento legenda={`Contas a pagar geradas pelo documento ${codigo}`} titulos={titulos} linkDoTitulo={linkDoTituloDeCompra} />
+        : <p className="text-[12px] text-slate-500" data-testid="compras-vinculos-vazio">
+            {e.situacao === "aberto"
+              ? "Os títulos serão gerados após a confirmação, conforme a TOP e o pagamento."
+              : "Nenhum título vinculado a este documento."}
+          </p>}
+    </div></PainelLargo> }
   ];
+  if (e.ehCompra) abas.push({
+    value: "rateio", label: "Rateio e classificação",
+    content: <PainelLargo>
+      <PainelColuna>
+        <CampoLeitura rotulo="Natureza de despesa" adorno="pesquisa" valor={codigoNome(d["categoria_financeira_codigo"], d["categoria_financeira_nome"])} />
+        <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa" valor={codigoNome(d["centro_custo_codigo"], d["centro_custo_nome"])} />
+      </PainelColuna>
+      <RateioDaConsulta d={d} />
+    </PainelLargo>
+  });
+  abas.push({ value: "entrega", label: "Entrega e transporte", content: <PainelColuna>
+    <CampoLeitura rotulo="Transportadora" adorno="pesquisa" valor={t(d["transportadora_nome"])} />
+  </PainelColuna> });
   if (fiscalNaAba) abas.push({ value: "fiscal", label: "Fiscal", content: <PainelColuna>
     {!nosDados.has("numero_nota") && <CampoLeitura rotulo="Nota" adorno="travado" valor={t(d["numero_nota"])} />}
     {!nosDados.has("serie_nota") && <CampoLeitura rotulo="Série" adorno="travado" valor={t(d["serie_nota"])} />}
@@ -213,8 +245,9 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
       : <p className="text-[12.5px] text-slate-500">As compras geradas não estão disponíveis nesta versão do servidor.</p>}
   </div></PainelLargo> });
   abas.push({ value: "observacoes", label: "Observações", content: <PainelLargo>
-    <CampoLeitura rotulo="Observação" multilinha valor={t(d["observacao"])} />
-    {e.ehCompra && <BensDaConsulta itens={e.itens} />}
+    {e.ehCompra
+      ? <BensDaConsulta itens={e.itens} />
+      : <p className="text-[12px] text-slate-500">A observação do documento está nos Dados principais.</p>}
   </PainelLargo> });
   return abas;
 }
