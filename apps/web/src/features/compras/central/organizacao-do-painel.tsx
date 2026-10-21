@@ -119,14 +119,19 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
     abas.push({
       value: valorUnico("financeiro"), label: "Financeiro",
       erro: comErro(financeiro) || Boolean(e.erro("tipo_titulo_id")),
-      content: <PainelRepartido lado={<VinculosDoDocumento />}>
-        {financeiro.includes("condicao_pagamento_id") && <React.Fragment>{desenharCampo("condicao_pagamento_id")}</React.Fragment>}
-        {tipoTitulo && <div className="max-w-[300px]"><TipoDeTituloDaCriacao e={e} /></div>}
-        {financeiro.includes("forma_pagamento_id") && <React.Fragment>{desenharCampo("forma_pagamento_id")}</React.Fragment>}
-        {(vencimentoSolto || financeiro.includes("plano_parcelas")) && <Divisor />}
-        {vencimentoSolto && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
-        {financeiro.includes("plano_parcelas") && <React.Fragment>{desenharCampo("plano_parcelas")}</React.Fragment>}
-      </PainelRepartido>
+      /* O pagamento fica na coluna de 330px; a tabela de parcelas ocupa a largura do painel, abaixo dele, para
+         vencimento, valor e observação caberem na mesma linha. */
+      content: <div className="space-y-3">
+        <PainelRepartido lado={<VinculosDoDocumento />}>
+          {financeiro.includes("condicao_pagamento_id") && <React.Fragment>{desenharCampo("condicao_pagamento_id")}</React.Fragment>}
+          {tipoTitulo && <div className="max-w-[300px]"><TipoDeTituloDaCriacao e={e} /></div>}
+          {financeiro.includes("forma_pagamento_id") && <React.Fragment>{desenharCampo("forma_pagamento_id")}</React.Fragment>}
+          {vencimentoSolto && <Divisor />}
+          {vencimentoSolto && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
+        </PainelRepartido>
+        {financeiro.includes("plano_parcelas") &&
+          <div className="max-w-[960px]" data-testid="compras-financeiro-parcelas">{desenharCampo("plano_parcelas")}</div>}
+      </div>
     });
   }
 
