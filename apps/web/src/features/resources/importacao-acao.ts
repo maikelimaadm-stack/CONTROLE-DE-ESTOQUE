@@ -10,8 +10,11 @@ import type { ResourceDef } from "@agro/domain";
 export type AcaoImportacao = "criar" | "atualizar";
 export type ModoImportacao = "tudo" | "parcial";
 
-/** Linhas de dados por pedido — cabe no teto de ~60 s da ponte Vercel; a API aceita até 500. */
-export const LOTE_DA_IMPORTACAO = 100;
+/**
+ * Linhas de dados por pedido. 100 ainda estourava ~60 s na prévia (create+rollback); 25 cabe com folga
+ * depois do cache/getOne. A API aceita até 500.
+ */
+export const LOTE_DA_IMPORTACAO = 25;
 
 /**
  * O cadastro tem a ação ATUALIZAR? Importável E com o campo `code` no registry (a chave do casamento) — a mesma regra
@@ -128,10 +131,48 @@ export function juntarFatias(fatias: FatiaImportacao[]): FatiaImportacao {
   return base;
 }
 
-/** Texto de progresso: "Conferindo linhas 1–100 de 1000…" / "Importando…". */
-export function textoDoProgresso(fase: "conferir" | "gravar", processadas: number, total: number): string {
-  const verbo = fase === "conferir" ? "Conferindo" : "Importando";
-  if (total <= 0) return `${verbo} o arquivo…`;
-  const ate = Math.min(processadas, total);
-  return `${verbo} linhas 1–${ate} de ${total}…`;
+/** Estado puro do progresso da conferência/gravação em lotes (a tela pinta isto a cada lote). */
+export interface ProgressoDaImportacao {
+  fase: "conferir" | "gravar";
+  /** linhas já concluídas (fim do último lote respondido) */
+  feitas: number;
+  /** total do arquivo; 0 até a 1ª resposta trazer `linhas_arquivo` */
+  total: number;
+  /** número do lote em andamento (1-based) */
+  lote: number;
+  /** quantos lotes no total quando `total` é conhecido */
+  lotes: number;
+  /** true enquanto o pedido HTTP do lote atual não voltou */
+  aguardando: boolean;
+}
+
+export function progressoInicial(fase: "conferir" | "gravar"): ProgressoDaImportacao {
+  return { fase, feitas: 0, total: 0, lote: 1, lotes: 0, aguardando: true };
+}
+
+export function progressoDoLote(fase: "conferir" | "gravar", offset: number, limit: number, total: number, aguardando: boolean): ProgressoDaImportacao {
+  const lote = Math.floor(offset / limit) + 1;
+  const lotes = total > 0 ? Math.max(1, Math.ceil(total / limit)) : 0;
+  return { fase, feitas: offset, total, lote, lotes, aguardando };
+}
+
+/** Texto legível do progresso — sempre menciona conferência/importação e o lote. */
+export function textoDoProgresso(p: ProgressoDaImportacao): string {
+  const verbo = p.fase === "conferir" ? "Conferência" : "Importação";
+  if (p.total <= 0) {
+    return p.aguardando
+      ? `${verbo}: lendo o arquivo e conferindo o lote ${p.lote}…`
+      : `${verbo}: lote ${p.lote} concluído…`;
+  }
+  const pct = Math.min(100, Math.round((p.feitas / p.total) * 100));
+  const lotes = p.lotes > 0 ? ` · lote ${p.lote} de ${p.lotes}` : ` · lote ${p.lote}`;
+  if (p.aguardando) return `${verbo}: ${p.feitas} de ${p.total} linhas (${pct}%)${lotes} — conferindo agora…`;
+  return `${verbo}: ${p.feitas} de ${p.total} linhas (${pct}%)${lotes}`;
+}
+
+/** Percentual da barra (0–100). Sem total: barra indeterminada na UI (null). */
+export function percentualDoProgresso(p: ProgressoDaImportacao): number | null {
+  if (p.total <= 0) return null;
+  // enquanto aguarda o lote N, mostra o já feito; ao terminar o lote, `feitas` sobe
+  return Math.min(100, Math.round((p.feitas / p.total) * 100));
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RESOURCES, getResource } from "@agro/domain";
-import { botoesDoAtualizar, cadastroAceitaAtualizar, ehRecusaDeParametro, juntarFatias, nomeDoModelo, resumoDaAtualizacao, textoDoProgresso, urlDaImportacao, urlDoModelo } from "./importacao-acao";
+import { botoesDoAtualizar, cadastroAceitaAtualizar, ehRecusaDeParametro, juntarFatias, LOTE_DA_IMPORTACAO, nomeDoModelo, percentualDoProgresso, progressoDoLote, resumoDaAtualizacao, textoDoProgresso, urlDaImportacao, urlDoModelo } from "./importacao-acao";
 
 /** IMPORTAR-01 (decisão 317) — as contas puras da escolha da ação no diálogo de importação. */
 describe("IMPORTAR-01 · a ação no diálogo", () => {
@@ -15,16 +15,22 @@ describe("IMPORTAR-01 · a ação no diálogo", () => {
     expect([urlDoModelo("products", "atualizar"), nomeDoModelo("products", "atualizar")]).toEqual(["/api/imports/products/modelo?acao=atualizar", "modelo-products-atualizar.xlsx"]);
   });
 
-  it("W6: juntar fatias soma contagens e preserva erros; progresso mostra o intervalo", () => {
+  it("W6: juntar fatias soma contagens; progresso da conferência mostra lote e %", () => {
+    expect(LOTE_DA_IMPORTACAO).toBe(25);
     const j = juntarFatias([
-      { linhas: 100, gravadas: 0, certas: 100, com_erro: 0, erros: [], linhas_arquivo: 250 },
-      { linhas: 100, gravadas: 0, certas: 98, com_erro: 2, erros: [{ linha: 150, coluna: "Nome", mensagem: "x" }, { linha: 151, coluna: null, mensagem: "y" }], linhas_arquivo: 250 },
-      { linhas: 50, gravadas: 0, certas: 50, com_erro: 0, erros: [], linhas_arquivo: 250 },
+      { linhas: 25, gravadas: 0, certas: 25, com_erro: 0, erros: [], linhas_arquivo: 60 },
+      { linhas: 25, gravadas: 0, certas: 23, com_erro: 2, erros: [{ linha: 40, coluna: "Nome", mensagem: "x" }, { linha: 41, coluna: null, mensagem: "y" }], linhas_arquivo: 60 },
+      { linhas: 10, gravadas: 0, certas: 10, com_erro: 0, erros: [], linhas_arquivo: 60 },
     ]);
-    expect(j).toMatchObject({ linhas: 250, certas: 248, com_erro: 2, gravadas: 0 });
+    expect(j).toMatchObject({ linhas: 60, certas: 58, com_erro: 2, gravadas: 0 });
     expect(j.erros).toHaveLength(2);
-    expect(textoDoProgresso("conferir", 100, 250)).toBe("Conferindo linhas 1–100 de 250…");
-    expect(textoDoProgresso("gravar", 250, 250)).toBe("Importando linhas 1–250 de 250…");
+    const andamento = progressoDoLote("conferir", 25, 25, 60, true);
+    expect(andamento).toMatchObject({ fase: "conferir", feitas: 25, total: 60, lote: 2, lotes: 3, aguardando: true });
+    expect(textoDoProgresso(andamento)).toContain("Conferência:");
+    expect(textoDoProgresso(andamento)).toContain("25 de 60");
+    expect(textoDoProgresso(andamento)).toContain("lote 2 de 3");
+    expect(percentualDoProgresso(andamento)).toBe(42);
+    expect(percentualDoProgresso(progressoDoLote("conferir", 0, 25, 0, true))).toBeNull();
   });
 
   it("W2: o ATUALIZAR aparece nos 6 cadastros importáveis com código (products entre eles), nunca nos 4 sem código nem fora da importação", () => {
