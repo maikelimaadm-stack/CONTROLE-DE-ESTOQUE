@@ -209,7 +209,7 @@ export interface PropsDaData { id?: string; className?: string; value: string; o
 /* ─────────────── M3 — barra.tsx (+ barra.module.css) ─────────────── */
 
 export interface Pendencia { caminho: string; rotulo: string; mensagem: string }
-export interface PropsDaPosicaoDoRotulo { valor: Densidade; onChange: (v: Densidade) => void }
+export interface PropsDaPosicaoDoRotulo { valor: Densidade; onChange: (v: Densidade) => void; semRotuloAcima?: boolean }
 export interface PropsDasPendencias {
   prefixoTestid: string;
   pendencias: readonly Pendencia[]; aberta: boolean; onAbertaChange: (a: boolean) => void; onIr: (p: Pendencia) => void;

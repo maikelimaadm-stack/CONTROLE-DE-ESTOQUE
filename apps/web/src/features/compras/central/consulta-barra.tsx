@@ -232,7 +232,7 @@ export function useBarraDaConsulta({ e, rotulo, densidade, onDensidade, salvoVis
 
   const direita = <ConjuntoDireito>
     {e.confirmarOcupado ? <IndicadorConfirmando prefixoTestid={PREFIXO} /> : salvoVisivel ? <IndicadorSalvo prefixoTestid={PREFIXO} /> : null}
-    <PosicaoDoRotulo prefixoTestid={PREFIXO} valor={densidade} onChange={onDensidade} />
+    <PosicaoDoRotulo prefixoTestid={PREFIXO} valor={densidade} onChange={onDensidade} semRotuloAcima />
     <AcoesRapidas prefixoTestid={PREFIXO} documentosAbertos={fonteDosDocumentosDeCompras} antes={antes} depois={depois} />
   </ConjuntoDireito>;
 

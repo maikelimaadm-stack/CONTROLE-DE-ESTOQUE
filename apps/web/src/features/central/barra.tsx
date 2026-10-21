@@ -72,12 +72,12 @@ export type PosicaoDoRotuloValor = Densidade;
  * POSIÇÃO DO RÓTULO — estado SÓ da tela: a página o guarda em `useState` e ele morre com ela. Nada vai para
  * localStorage, sessionStorage ou perfil; remontar devolve o padrão ("Rótulo antes do campo").
  */
-export function PosicaoDoRotulo({ prefixoTestid, valor, onChange }: PropsDaPosicaoDoRotulo & { prefixoTestid: string }) {
+export function PosicaoDoRotulo({ prefixoTestid, valor, onChange, semRotuloAcima }: PropsDaPosicaoDoRotulo & { prefixoTestid: string }) {
   const opcao = (v: PosicaoDoRotuloValor, rotulo: string, icone: React.ReactNode) =>
     <button type="button" aria-pressed={valor === v} aria-label={rotulo} data-dica={rotulo} className={estilosCentral.dicaFim} onClick={() => onChange(v)}>{icone}</button>;
   return <div role="group" aria-label="Posição do rótulo dos campos" data-testid={`${prefixoTestid}-posicao-rotulo`} className={estilos.segmentado}>
     {opcao("rotulo-a-frente", "Rótulo antes do campo", <IconeRotuloAntes />)}
-    {opcao("rotulo-acima", "Rótulo acima do campo", <IconeRotuloAcima />)}
+    {!semRotuloAcima && opcao("rotulo-acima", "Rótulo acima do campo", <IconeRotuloAcima />)}
     {opcao("compacto", "Rótulo dentro do campo", <IconeRotuloDentro />)}
   </div>;
 }
