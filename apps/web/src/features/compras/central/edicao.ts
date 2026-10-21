@@ -140,7 +140,10 @@ export function linhaDoItemSalvo(it: Row): ItemRow {
     discount: texto(it["desconto"]),
     discount_percent: texto(it["desconto_percentual"]),
     provider_lot: texto(it["lote"]),
-    expiration_date: data(it["validade"])
+    expiration_date: data(it["validade"]),
+    /* Nomes para a aba Classificação na edição (rótulo humano; não vão na PATCH). */
+    product_code: texto(it["produto_codigo"]),
+    product_name: texto(it["produto_nome"])
   };
 }
 

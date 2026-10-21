@@ -18,6 +18,7 @@ import { CamposExtrasDaCompra } from "../campos-extras";
 import { PREFIXO_CENTRAL_COMPRAS, colunasDosItensDeCompras, linkDoTituloDeCompra } from "./adaptador";
 import type { EstadoDaConsulta } from "./estado";
 import { BensDaConsulta, DadosFiscaisDaConsulta, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
+import { modeloDeParcelasParaTela } from "./modelo-de-parcelas";
 
 /**
  * O CORPO DA CONSULTA DA COMPRA NO MOTOR (VISUAL-UX-04, decisão 276): Dados principais e extras em LEITURA (sem
@@ -97,7 +98,18 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
   const origem = !e.origemId
     ? (recebidoPorItem ? "Recebido de pedido" : "Lançamento direto")
     : <Link data-testid="compras-origem" className="text-brand-700 underline" href={e.rotaDaOrigem}>{e.rotuloDoPedido}{d["origem_codigo"] ? ` ${String(d["origem_codigo"])}` : ""}</Link>;
+  const importacaoId = typeof d["importacao_id"] === "string" && d["importacao_id"] ? d["importacao_id"] : "";
+  const pendenteDeConfirmacao = e.ehCompra && e.situacao === "aberto" && Boolean(importacaoId);
   return <>
+    {pendenteDeConfirmacao && <div data-testid="compras-pendente-confirmacao" className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-950">
+      <p className="font-semibold">Pendente de confirmação</p>
+      <p className="mt-0.5">Compra gerada pela importação do XML — ainda aberta. Confira classificação, locais e pagamento; a confirmação (estoque e financeiro) é explícita e não ocorre ao gerar a compra.</p>
+      <p className="mt-1">
+        <Link className="font-medium text-brand-700 underline" data-testid="compras-revisar-importacao" href={`/compras/importacoes/${importacaoId}`}>
+          Ver conferência da nota
+        </Link>
+      </p>
+    </div>}
     {e.ehCompra && <AprovacaoDoDocumento area="compras" documentoId={String(d["id"])} documentoAberto={e.situacao === "aberto"}
       versao={versaoDoDocumento(d)} prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
     {e.ehPedido && e.capacidade === "sim" && <AprovacaoDoDocumento area="compras" especie="pedido" documentoId={String(d["id"])}
@@ -148,21 +160,51 @@ const COLUNAS_DAS_COMPRAS_GERADAS: readonly ColunaDaRelacao[] = [
   { chave: "situacao", rotulo: "Situação", celula: (r) => <Selo tom={statusTone(r["situacao"], "situacao_documento_compra")} valor={r["situacao"]}>{enumLabel("situacao_documento_compra", r["situacao"])}</Selo> }
 ];
 
-/** Lista manual do plano em leitura — a mesma tabela da criação, sem inputs. */
-function ParcelasEmLeitura({ plano }: { plano: unknown }) {
-  const lista = (plano !== null && typeof plano === "object" && !Array.isArray(plano) && Array.isArray((plano as { parcelas?: unknown }).parcelas))
-    ? (plano as { parcelas: { vencimento?: unknown; valor?: unknown; observacao?: unknown }[] }).parcelas
-    : null;
-  if (!lista?.length) return <PlanoEmLeitura plano={plano} />;
+/**
+ * Cronograma em leitura — SSOT `modeloDeParcelasParaTela` (plano / parcelas_nota / títulos).
+ * Confirmado: títulos reais com situação; aberto: plano ou duplicatas da nota; legado sem lista → resumo honesto.
+ */
+function ParcelasEmLeitura({ d, situacao }: { d: Row; situacao: string | null | undefined }) {
+  const confirmado = situacao === "confirmado";
+  const modelo = modeloDeParcelasParaTela({
+    plano: d["plano_parcelas"],
+    parcelasNota: d["parcelas_nota"],
+    titulos: Array.isArray(d.titulos) ? d.titulos as { due_date?: unknown; amount?: unknown; note?: unknown; installment_number?: unknown; status?: unknown; situacao?: unknown }[] : null,
+    preferirTitulos: confirmado
+  });
+  if (modelo.especie === "vazio") {
+    return <p className="text-[12px] text-slate-500" data-testid="compras-consulta-parcelas-vazio">Nenhum cronograma de pagamento gravado.</p>;
+  }
+  if (modelo.especie === "resumo") {
+    return <div data-testid="compras-consulta-parcelas-resumo" className="space-y-1 text-[12px] text-slate-600">
+      <p>{modelo.texto}</p>
+      {modelo.comEntrada && <p>Com entrada.</p>}
+      {modelo.primeiroVencimento && <p>Primeiro vencimento: {dataOuVazio(modelo.primeiroVencimento)}</p>}
+      <PlanoEmLeitura plano={d["plano_parcelas"]} />
+    </div>;
+  }
+  const cols = confirmado
+    ? "grid-cols-[124px_104px_minmax(0,1fr)_minmax(72px,auto)]"
+    : modelo.comEntrada
+      ? "grid-cols-[72px_124px_104px_minmax(0,1fr)]"
+      : "grid-cols-[124px_104px_minmax(0,1fr)]";
   return <div data-testid="compras-consulta-parcelas" className="mt-1 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
-    <div aria-hidden className="grid grid-cols-[124px_104px_minmax(0,1fr)] gap-2 border-b border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500">
+    <div aria-hidden className={`grid ${cols} gap-2 border-b border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500`}>
+      {modelo.comEntrada && !confirmado && <span>tipo</span>}
       <span>vencimento</span><span>valor</span><span>observação</span>
+      {confirmado && <span>situação</span>}
     </div>
-    {lista.map((l, k) => <div key={k} data-testid="compras-consulta-parcela" className="grid grid-cols-[124px_104px_minmax(0,1fr)] gap-2 px-2 py-1.5 text-[12px]">
+    {modelo.linhas.map((l, k) => <div key={k} data-testid="compras-consulta-parcela" data-entrada={l.entrada ? "sim" : "nao"} data-origem={l.origem}
+      className={`grid ${cols} gap-2 px-2 py-1.5 text-[12px]`}>
+      {modelo.comEntrada && !confirmado && <span className="text-slate-500">{l.entrada ? "Entrada" : "Parcela"}</span>}
       <span className="text-slate-700">{dataOuVazio(l.vencimento)}</span>
       <span className="tabular-nums text-slate-900">{temValor(l.valor) ? brl(String(l.valor)) : ""}</span>
-      <span className="text-slate-500">{t(l.observacao) || "—"}</span>
+      <span className="text-slate-500">{l.observacao || "—"}</span>
+      {confirmado && <span className="text-slate-600">{l.situacaoTitulo || "—"}</span>}
     </div>)}
+    {confirmado && <p className="px-2 py-1.5 text-[11px] text-slate-500" data-testid="compras-consulta-parcelas-titulos-aviso">
+      Cronograma a partir dos títulos gerados. Detalhes de baixa na aba Vínculos.
+    </p>}
   </div>;
 }
 
@@ -208,7 +250,7 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
         <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" valor={t(d["forma_pagamento_nome"])} />
         <CampoLeitura rotulo="Vencimento" adorno="data" valor={dataOuVazio(d["data_vencimento"])} />
       </PainelColuna>
-      <ParcelasEmLeitura plano={d["plano_parcelas"]} />
+      <ParcelasEmLeitura d={d} situacao={e.situacao} />
     </div> },
     { value: "vinculos", label: "Vínculos", contador: titulos.length, content: <PainelLargo><div data-testid="compras-consulta-titulos">
       {titulos.length
