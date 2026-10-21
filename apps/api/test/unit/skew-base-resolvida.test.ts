@@ -169,6 +169,22 @@ describe("R16 · a árvore de trabalho", () => {
   }, 120_000);
 });
 
+describe("preparo da worktree da BASE (web precisa de @agro/api)", () => {
+  it("compila @agro/api na BASE e exige apps/api/dist/server.js antes do web anterior", () => {
+    // Defeito pré-existente na main: garantirDependencias só construía shared/plataforma/domain/db;
+    // o web da BASE importa `@agro/api/server` → dist/server.js ausente quebrava o sentido 2 do skew.
+    const corpo = fs.readFileSync(ARQUIVO, "utf8");
+    expect(corpo, "a lista de pacotes da BASE inclui @agro/api").toMatch(/@agro\/api/);
+    expect(corpo, "a marca de API compilada é conferida no cache").toMatch(/apps\/api\/dist\/server\.js/);
+    expect(corpo, "o atalho --dir também exige a API compilada").toMatch(/arvoreComDependenciasProntas/);
+    // Ordem: na lista do for, @agro/api vem depois de @agro/db (dependências da API).
+    const bloco = corpo.match(/for \(const p of \[([^\]]+)\]/)?.[1] ?? "";
+    expect(bloco).toContain("@agro/db");
+    expect(bloco).toContain("@agro/api");
+    expect(bloco.indexOf("@agro/db"), "@agro/db antes de @agro/api").toBeLessThan(bloco.indexOf("@agro/api"));
+  });
+});
+
 describe("base do version skew", () => {
   it("o script não carrega nenhum SHA de commit embutido — nem como reserva", () => {
     // Só o CORPO conta: um SHA citado em comentário é história, não comportamento. O que não pode existir é

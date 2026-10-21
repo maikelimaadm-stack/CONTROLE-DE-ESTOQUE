@@ -44,7 +44,8 @@ import { AbaDivergencias } from "./aba-divergencias";
 const NOME_DA_ABA: Record<AbaDaConferencia, string> = {
   cabecalho: "Cabeçalho", itens: "Itens", pedido: "Pedido", financeiro: "Financeiro", divergencias: "Divergências"
 };
-const DICA_DO_GERAR = "Gera uma compra ABERTA. A confirmação (estoque e financeiro) é feita depois, na consulta da compra, com a prévia.";
+const DICA_DO_GERAR = "Gera uma compra ABERTA para revisão. A confirmação (estoque e financeiro) NÃO ocorre aqui — só depois, na consulta da compra, com ação explícita.";
+const ROTULO_GERAR = "Gerar compra para revisão";
 
 export function ConferenciaDaImportacao({ id, solicitacaoId }: { id: string; solicitacaoId: string | null }) {
   const capacidade = useImportacaoXml();
@@ -131,7 +132,8 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
     try {
       const compra = await gerarCompraDaImportacao(conf.id, corpo, chaveGerar.doEnvio(corpo));
       e.setRecusas([]);
-      toast.success(`Compra ${compra.codigo} gerada (aberta). Confira e confirme na consulta da compra.`);
+      /* Nunca confirmar aqui — compra ABERTA; o operador revisa na consulta e confirma com prévia. */
+      toast.success(`Compra ${compra.codigo} gerada — pendente de confirmação. Revise antes de confirmar.`);
       void invalidarLeiturasDeCompras(qc);
       void reler();
       const rota = `/compras/${varianteDaCompra?.segmento ?? "compras"}/${compra.id}`;
@@ -198,17 +200,35 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
       actions={e.pendente ? <>
         <Button variant="outline" size="sm" data-testid="importacao-descartar" disabled={gerando || descartando} onClick={() => setConfirmandoDescarte(true)}>Descartar importação</Button>
         <span title={DICA_DO_GERAR}>
-          <Button size="sm" data-testid="importacao-gerar-compra" loading={gerando} disabled={bloqueado || relendo || descartando || e.lendoATop} aria-describedby="importacao-dica-gerar" onClick={() => void gerar()}>Gerar compra</Button>
+          <Button size="sm" data-testid="importacao-gerar-compra" loading={gerando} disabled={bloqueado || relendo || descartando || e.lendoATop} aria-describedby="importacao-dica-gerar" onClick={() => void gerar()}>{ROTULO_GERAR}</Button>
         </span>
       </> : undefined}
     >
       {e.pendente && <p id="importacao-dica-gerar" className="text-[12px] text-slate-500">{DICA_DO_GERAR}{e.bloqueios.length > 0 ? ` Antes, resolva ${e.bloqueios.length === 1 ? "1 pendência" : `${e.bloqueios.length} pendências`} (aba Divergências).` : ""}</p>}
       {erroDaReleitura && <p data-testid="importacao-erro-releitura" role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-800">A conferência não pôde ser lida de novo: {erroDaReleitura}</p>}
-      {conf.situacao === "gerada" && <p data-testid="importacao-compra-gerada" className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12.5px] text-emerald-900">
-        Compra gerada: {conf.documentoCompra
-          ? <Link className="font-medium text-brand-700 underline" href={`/compras/${varianteDaCompra?.segmento ?? "compras"}/${conf.documentoCompra.id}`}>{conf.documentoCompra.codigo}</Link>
-          : "—"}{conf.documentoCompra ? ` (${enumLabel("situacao_documento_compra", conf.documentoCompra.situacao)})` : ""}
-      </p>}
+      {conf.situacao === "gerada" && <div data-testid="importacao-compra-gerada" className="space-y-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-950">
+        <p className="font-semibold" data-testid="importacao-pendente-confirmacao">Pendente de confirmação</p>
+        <p>
+          Compra gerada (aberta): {conf.documentoCompra
+            ? <Link className="font-medium text-brand-700 underline" href={`/compras/${varianteDaCompra?.segmento ?? "compras"}/${conf.documentoCompra.id}`}>{conf.documentoCompra.codigo}</Link>
+            : "—"}
+          {conf.documentoCompra ? ` · ${enumLabel("situacao_documento_compra", conf.documentoCompra.situacao)}` : ""}.
+          Estoque e títulos só nascem após confirmar na consulta da compra — nunca ao gerar.
+        </p>
+        <p className="text-[12px] text-amber-900/90" data-testid="importacao-revisar-limites">
+          Na revisão você pode ajustar o que a edição aberta aceita (ex.: classificação interna, observação, campos liberados pela PATCH).
+          Dados da NF-e (chave, emitente, número/série, totais e tributos da nota) e itens travados pela origem da nota permanecem fiéis ao XML.
+        </p>
+        {conf.documentoCompra && conf.documentoCompra.situacao === "aberto" && <p>
+          <Link className="inline-flex font-semibold text-brand-700 underline" data-testid="importacao-revisar-compra"
+            href={`/compras/${varianteDaCompra?.segmento ?? "compras"}/${conf.documentoCompra.id}`}>
+            Revisar compra
+          </Link>
+        </p>}
+        {conf.documentoCompra && conf.documentoCompra.situacao !== "aberto" && <p className="text-[12px]" data-testid="importacao-revisar-indisponivel">
+          A compra já não está aberta ({enumLabel("situacao_documento_compra", conf.documentoCompra.situacao)}) — abra pela consulta do documento.
+        </p>}
+      </div>}
       {conf.situacao === "descartada" && <p data-testid="importacao-descartada" className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12.5px] text-slate-700">Importação descartada.</p>}
 
       {e.pendente ? <TabsP.Root value={aba} onValueChange={(v) => setAba(ABAS_DA_CONFERENCIA.find((x) => x === v) ?? "cabecalho")}>

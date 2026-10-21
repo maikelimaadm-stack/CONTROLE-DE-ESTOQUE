@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
-import { buildInstallments, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CondicaoPagamento } from "@agro/domain";
+import { normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CondicaoPagamento } from "@agro/domain";
 import { api } from "@/lib/api";
 import { cn, dateBR, num } from "@/lib/utils";
 import { Button, Input, MgSelect } from "@/components/ui";
@@ -10,6 +10,7 @@ import { CampoDaCentral, ChaveSimNao, DataDaCentral } from "@/features/central/c
 import grade from "@/features/central/grade.module.css";
 import type { ParcelaDoPlano, Plan } from "@/features/docs/shared";
 import type { EstadoDaCriacao } from "./estado";
+import { linhasDerivadasDoPlano } from "./modelo-de-parcelas";
 import estilos from "./parcelas.module.css";
 
 /** Classe visual do input de data (evita literal `mg-*` novo na catraca de nomenclatura). */
@@ -35,17 +36,11 @@ const GRADE = "grid grid-cols-[124px_104px_minmax(0,1fr)_auto] items-center gap-
 /** Uma linha da lista: a parcela e se ela é a entrada (a primeira, com "Possui entrada?" ligado). */
 type LinhaDaParcela = ParcelaDoPlano & { entrada: boolean };
 
-/** As linhas de um plano — o MESMO `buildInstallments` do servidor (entrada incluída como primeira linha). */
+/** As linhas de um plano — mesma projeção `linhasDerivadasDoPlano` / `buildInstallments` da consulta. */
 function linhasDoPlano(plano: Plan, total: number): LinhaDaParcela[] {
-  if (!Number.isInteger(plano.installments) || plano.installments < 1 || total <= 0) return [];
-  try {
-    return buildInstallments({
-      totalAmount: total.toFixed(2), installments: plano.installments, firstDueDate: plano.first_due_date,
-      mode: plano.mode, intervalDays: plano.interval_days || 30, dueDay: plano.due_day,
-      hasDownPayment: plano.has_down_payment, downPaymentValue: plano.down_payment_value || undefined,
-      downPaymentDate: plano.down_payment_date || undefined
-    }).map((x) => ({ vencimento: x.dueDate, valor: x.amount, entrada: x.isDownPayment }));
-  } catch { return []; }
+  if (total <= 0) return [];
+  const derivadas = linhasDerivadasDoPlano(plano, total.toFixed(2));
+  return (derivadas ?? []).map((l) => ({ vencimento: l.vencimento, valor: l.valor, observacao: l.observacao || undefined, entrada: l.entrada }));
 }
 
 /** Quantas PARCELAS a lista tem — a entrada não conta como parcela. */

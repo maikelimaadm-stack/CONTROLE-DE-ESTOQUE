@@ -55,7 +55,7 @@ describe("F7 — contrato e capacidade", () => {
     expect(enumOptions("vinculo_item_nfe").map((o) => o.value)).toEqual(["lembrado", "sugerido", "ambiguo", "nenhum"]);
     expect(enumOptions("classificacao_gasto")).toEqual([{ value: "capex", label: "CAPEX" }, { value: "opex", label: "OPEX" }]);
     expect(enumLabel("origem_importacao_nfe", "dfe")).toBe("DF-e recebida");
-    expect(enumLabel("rateio_compra", "documento")).toBe("Natureza e centro do documento");
+    expect(enumLabel("rateio_compra", "documento")).toBe("Classificação única (documento)");
     expect(enumLabel("tipo_fator_conversao", "divide")).toBe("Divide");
     // os de antes continuam iguais
     expect(enumLabel("classification", "unclassified")).toBe("Não classificado");

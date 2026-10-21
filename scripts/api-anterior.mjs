@@ -222,11 +222,28 @@ export function garantirWorktree(sha, dir = DIR_ANTERIOR, raiz = RAIZ) {
 }
 
 /**
+ * Marca de "dependências da BASE prontas" — não basta o `dist` do db.
+ *
+ * O web da BASE importa `@agro/api/server` (ponte `erp-api-bridge`), e esse export aponta para
+ * `apps/api/dist/server.js`. Cache que só conferia `packages/db/dist/index.js` deixava o `next build`
+ * da worktree antiga falhar com `Module not found: Can't resolve '@agro/api/server'`. Exigir o
+ * artefato da API da própria BASE fecha o buraco sem tocar no produto.
+ */
+export const MARCA_API_COMPILADA = "apps/api/dist/server.js";
+export function arvoreComDependenciasProntas(dir = DIR_ANTERIOR) {
+  return existsSync(join(dir, "packages/db/dist/index.js")) && existsSync(join(dir, MARCA_API_COMPILADA));
+}
+
+/**
  * Constrói o WEB da base (sentido 2). Separado da API porque custa um `next build` inteiro e só o sentido 2
  * precisa dele — o sentido 1 usa o web do HEAD, que o Playwright já constrói.
  */
 export function prepararWebAnterior() {
   prepararApiAnterior();
+  // A API da BASE tem de existir ANTES do web da BASE: o bundle importa `@agro/api/server`.
+  if (!existsSync(join(DIR_ANTERIOR, MARCA_API_COMPILADA))) {
+    abortar(`web da BASE exige ${MARCA_API_COMPILADA} na worktree anterior (compile @agro/api na BASE)`);
+  }
   if (!existsSync(join(DIR_ANTERIOR, "apps/web/.next/BUILD_ID"))) {
     rodar("pnpm", ["--filter", "@agro/web", "build"], DIR_ANTERIOR);
   }
@@ -236,10 +253,14 @@ export function prepararWebAnterior() {
 function garantirDependencias(novo) {
   // A API anterior importa `@agro/shared`, `@erp/plataforma`, `@agro/domain` e `@agro/db` pelos `dist/`
   // DAQUELE commit. Reaproveitar os `dist/` do HEAD novo destruiria o teste: a API deixaria de ser a anterior.
-  if (!novo && existsSync(join(DIR_ANTERIOR, "packages/db/dist/index.js"))) return;
+  // `@agro/api` também: o web da BASE resolve `@agro/api/server` → `apps/api/dist/server.js` DAQUELA árvore.
+  if (!novo && arvoreComDependenciasProntas()) return;
   rodar("pnpm", ["install", "--frozen-lockfile"], DIR_ANTERIOR);
-  for (const p of ["@agro/shared", "@erp/plataforma", "@agro/domain", "@agro/db"]) {
+  for (const p of ["@agro/shared", "@erp/plataforma", "@agro/domain", "@agro/db", "@agro/api"]) {
     rodar("pnpm", ["--filter", p, "build"], DIR_ANTERIOR);
+  }
+  if (!existsSync(join(DIR_ANTERIOR, MARCA_API_COMPILADA))) {
+    abortar(`após o build da BASE falta ${MARCA_API_COMPILADA}`);
   }
 }
 
@@ -275,7 +296,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // O atalho de `--dir` só vale se a árvore existente for a da base ATUAL: imprimir um diretório obsoleto
   // faria o Playwright subir o binário errado sem que nada reclamasse.
   const base = commitAnterior();
-  if (soDiretorio && !comWeb && existsSync(join(DIR_ANTERIOR, "packages/db/dist/index.js")) && !garantirWorktree(base.sha)) { console.log(DIR_ANTERIOR); process.exit(0); }
+  if (soDiretorio && !comWeb && arvoreComDependenciasProntas() && !garantirWorktree(base.sha)) { console.log(DIR_ANTERIOR); process.exit(0); }
   const dir = comWeb ? prepararWebAnterior() : prepararApiAnterior();
   console.log(soDiretorio ? dir : `API do commit ${base.sha.slice(0, 8)} pronta em ${dir}`);
 }

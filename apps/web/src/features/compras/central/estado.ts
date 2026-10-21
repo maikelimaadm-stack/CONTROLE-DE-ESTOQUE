@@ -435,7 +435,17 @@ export interface EstadoDaCriacao {
   lote: ControleDeLote;
 
   /* os dados fiscais da compra manual (OPERACOES-01 F7, decisão 284) */
-  /** O bloco "Dados fiscais" existe: criação (não o receber) da espécie compra com a capacidade `importacaoXml` "sim". */
+  /**
+   * COMPRAS-UX-CONSISTENCIA-01: separar MOSTRAR × EDITAR.
+   *   · `mostrarFiscal` / `mostrarRateio` — abas Fiscal e Classificação no painel (criação e edição).
+   *   · `editarFiscal` / `editarRateio` — controles editáveis e chaves no corpo do POST (só criação com capacidade).
+   *   · `dadosFiscaisAtivos` — alias de `editarFiscal` (compatível com o corpo/semeadura de antes).
+   */
+  mostrarFiscal: boolean;
+  editarFiscal: boolean;
+  mostrarRateio: boolean;
+  editarRateio: boolean;
+  /** @deprecated Preferir `editarFiscal`; mantido = corpo/semeadura da criação. */
   dadosFiscaisAtivos: boolean;
   fiscal: DadosFiscais;
   mudarFiscal: (p: Partial<DadosFiscais>) => void;
@@ -607,11 +617,23 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     : limites ? itensNaEdicao(antes, novos, limites) : novos));
   const [ajustarParcelas, setAjustarParcelas] = React.useState(aberturaDaEdicao?.ajustarParcelas ?? false);
   const [plano, setPlano] = React.useState<Plan>(() => (aberturaDaEdicao ? { ...aberturaDaEdicao.plano } : defaultPlan()));
-  /* DADOS FISCAIS (F7): só na criação da compra e com a capacidade "sim" — sem ela, nenhuma chave nova no corpo. A
-     pergunta é a das TOPs da compra (já respondida para o formulário existir): nenhum pedido a mais. Na EDIÇÃO, nunca: os
-     dados fiscais do cabeçalho não mudam depois do lançamento (a PATCH os recusa) — aparecem em leitura. */
-  const capacidadeFiscal = useImportacaoXml(ehCompra && !modoReceber && !modoEdicao);
-  const dadosFiscaisAtivos = ehCompra && !modoReceber && !modoEdicao && capacidadeFiscal === "sim";
+  /* DADOS FISCAIS (F7): EDITAR só na criação com capacidade "sim" (corpo do POST). MOSTRAR também na edição aberta —
+     as abas Fiscal e Classificação não somem; a PATCH não aceita alterar fiscais/rateio, então a tela os lê. */
+  const capacidadeFiscal = useImportacaoXml(ehCompra && !modoReceber);
+  const editarFiscal = ehCompra && !modoReceber && !modoEdicao && capacidadeFiscal === "sim";
+  /* Edição: aba Fiscal só se há capacidade F7 OU dados fiscais/importação gravados — evita aba vazia em legado. */
+  const docEdicaoTemFiscal = Boolean(documentoEmEdicao && (
+    ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id", "classificacao_gasto", "rateio_tipo", "importacao_id"]
+      .some((c) => documentoEmEdicao[c] !== null && documentoEmEdicao[c] !== undefined && documentoEmEdicao[c] !== "")
+    || (typeof documentoEmEdicao["dfe"] === "object" && documentoEmEdicao["dfe"] !== null)
+  ));
+  const mostrarFiscal = ehCompra && !modoReceber && (
+    editarFiscal || (modoEdicao && (capacidadeFiscal === "sim" || docEdicaoTemFiscal))
+  );
+  const editarRateio = editarFiscal;
+  /* Classificação: mesma porta da Fiscal; layout ainda pode trazer natureza/centro sem F7 via rateioCampos. */
+  const mostrarRateio = mostrarFiscal || (modoEdicao && ehCompra && !modoReceber);
+  const dadosFiscaisAtivos = editarFiscal;
   const [fiscal, setFiscal] = React.useState<DadosFiscais>(dadosFiscaisVazios);
   /* LANCAMENTO-01 (decisão 311): o INICIAL dos dados fiscais — vazio, ou com o tipo de título que a TOP semeou (não conta
      como alteração, e o Descartar volta a ele). Sem semeadura, vazio: o "alterado" de hoje, byte a byte. */
@@ -1063,7 +1085,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     pedidoId, recebimento, recebendo, emPartes: recebendo?.passo.emPartes === true, rotuloDoPedido, codigoDoPedido, rotaDoPedido,
     mostrarFormulario: !modoReceber || Boolean(recebendo),
     cabecalho: h, mudar, itens, setItens, ajustarParcelas, setAjustarParcelas, plano, setPlano, totalItens, totalExibido, lote,
-    dadosFiscaisAtivos, fiscal, mudarFiscal,
+    mostrarFiscal, editarFiscal, mostrarRateio, editarRateio, dadosFiscaisAtivos, fiscal, mudarFiscal,
     rateio, mudarTipoDoRateio, mudarLinhaDoRateio, adicionarLinhaDoRateio, removerLinhaDoRateio, mudarClassificacaoDoItem,
     layoutAtivo, layout, layoutQ, layoutPendente, layoutNaoCarregado, layoutVale, padroes, regras, regrasPendente, exigidosPelaRegra, condicoesPermitidas,
     zonas, forcados: desenho?.forcados ?? new Set<string>(), cfg,

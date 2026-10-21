@@ -6,7 +6,9 @@ import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central
 import { PainelColuna, PainelLargo } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
 import type { EstadoDaCriacao } from "./estado";
-import { DadosFiscaisDaCriacao, RateioEItensDaCriacao, TipoDeTituloDaCriacao } from "./dados-fiscais";
+import {
+  DadosFiscaisDaConsulta, DadosFiscaisDaCriacao, RateioDaConsulta, RateioEItensDaCriacao, TipoDeTituloDaCriacao, temDadosFiscais
+} from "./dados-fiscais";
 import {
   ABA_DO_RATEIO, ROTULO_DA_ABA_DO_RATEIO, abaDoRateio, caminhoDoRateioComErro, fiscalNoPainel, rateioNoPainel
 } from "./rateio-no-rodape";
@@ -57,12 +59,35 @@ export function camposDoPainelNoCabecalho(e: EstadoDaCriacao): Set<string> {
 /** A régua entre os grupos do Financeiro (subtotal × ajustes × pagamento). */
 const Divisor = () => <div className="h-px bg-slate-200" aria-hidden />;
 
-/** O seguro do documento (dado fiscal) — no Financeiro, junto do que compõe o valor. */
+/** O seguro do documento (dado fiscal) — na aba Totais, junto do que compõe o valor. */
 function CampoSeguro({ e }: { e: EstadoDaCriacao }) {
+  if (!e.editarFiscal && e.documentoEmEdicao) {
+    const v = e.documentoEmEdicao["seguro"];
+    const texto = v === null || v === undefined || v === "" ? "" : String(v);
+    return <>
+      <CampoLeitura rotulo="Seguro" testId="compras-seguro-campo" valor={texto} />
+      <p className="text-[11px] text-slate-500">Gravado na compra — a edição aberta não altera dados fiscais.</p>
+    </>;
+  }
   return <CampoDaCentral rotulo="Seguro" erro={e.erro("seguro")} preenchido={e.fiscal.seguro !== ""} testId="compras-seguro-campo" data-campo-fiscal="seguro">
     <Input data-testid="compras-seguro" type="number" step="0.01" min="0" inputMode="decimal" value={e.fiscal.seguro}
       onChange={(ev) => e.mudarFiscal({ seguro: ev.target.value })} />
   </CampoDaCentral>;
+}
+
+/** Tipo de título: editável na criação; na edição, leitura do documento (PATCH não troca). */
+function TipoDeTituloNoPainel({ e }: { e: EstadoDaCriacao }) {
+  if (e.editarFiscal) return <TipoDeTituloDaCriacao e={e} />;
+  if (e.documentoEmEdicao) {
+    const nome = String(e.documentoEmEdicao["tipo_titulo_nome"] ?? "");
+    const id = e.documentoEmEdicao["tipo_titulo_id"];
+    const valor = nome || (id ? "Informado" : "");
+    return <>
+      <CampoLeitura rotulo="Tipo de título" adorno="pesquisa" testId="compras-tipo-titulo" valor={valor} />
+      <p className="text-[11px] text-slate-500">Gravado na compra — a edição aberta não altera o tipo de título.</p>
+    </>;
+  }
+  return null;
 }
 
 /**
@@ -127,7 +152,7 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
       content: <div className="space-y-3">
         <PainelColuna>
           {financeiro.includes("condicao_pagamento_id") && <React.Fragment>{desenharCampo("condicao_pagamento_id")}</React.Fragment>}
-          {tipoTitulo && <div className="max-w-[300px]"><TipoDeTituloDaCriacao e={e} /></div>}
+          {tipoTitulo && <div className="max-w-[300px]"><TipoDeTituloNoPainel e={e} /></div>}
           {financeiro.includes("forma_pagamento_id") && <React.Fragment>{desenharCampo("forma_pagamento_id")}</React.Fragment>}
           {vencimentoSolto && <Divisor />}
           {vencimentoSolto && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
@@ -153,14 +178,42 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
       {rateioCampos.length > 0 && <ColunaDeCampos>
         {rateioCampos.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}
       </ColunaDeCampos>}
-      {rateioNoPainel(e) && <RateioEItensDaCriacao e={e} />}
+      {/* Edição: classificação/rateio gravados em leitura no MESMO lugar da criação (PATCH não os altera). */}
+      {rateioNoPainel(e) && (e.editarRateio
+        ? <RateioEItensDaCriacao e={e} />
+        : e.documentoEmEdicao
+          ? <div data-testid="compras-edicao-rateio-leitura" className="space-y-2">
+              <p className="text-[12px] text-slate-600" data-testid="compras-rateio-leitura-motivo">
+                Classificação e rateio gravados na compra. A edição aberta não altera estes campos — só o que a PATCH aceita.
+              </p>
+              {/* Paridade com a consulta: natureza/centro do documento sempre; RateioDaConsulta só por_valor/por_produto. */}
+              <PainelColuna>
+                <CampoLeitura rotulo="Natureza financeira" adorno="pesquisa"
+                  valor={[e.documentoEmEdicao["categoria_financeira_codigo"], e.documentoEmEdicao["categoria_financeira_nome"]].filter(Boolean).join(" — ")} />
+                <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa"
+                  valor={[e.documentoEmEdicao["centro_custo_codigo"], e.documentoEmEdicao["centro_custo_nome"]].filter(Boolean).join(" — ")} />
+              </PainelColuna>
+              <RateioDaConsulta d={e.documentoEmEdicao} />
+            </div>
+          : null)}
     </PainelLargo>
   });
 
   if (fiscalNoPainel(e)) abas.push({
     value: valorUnico("fiscal"), label: "Fiscal",
     erro: ["chave_acesso", "uf_nota", "valor_ipi", "valor_icms_st"].some((c) => Boolean(e.erro(c))),
-    content: <PainelColuna><DadosFiscaisDaCriacao e={e} noPainel /></PainelColuna>
+    content: <PainelColuna>
+      {e.editarFiscal
+        ? <DadosFiscaisDaCriacao e={e} noPainel />
+        : e.documentoEmEdicao && temDadosFiscais(e.documentoEmEdicao)
+          ? <div data-testid="compras-edicao-fiscal-leitura">
+              <p className="mb-2 text-[12px] text-slate-600" data-testid="compras-fiscal-leitura-motivo">
+                Dados fiscais da nota — imutáveis na edição aberta (a PATCH os recusa).
+              </p>
+              <DadosFiscaisDaConsulta d={e.documentoEmEdicao} />
+            </div>
+          : <p className="text-[12px] text-slate-500" data-testid="compras-fiscal-vazio">Nenhum dado fiscal gravado nesta compra.</p>}
+    </PainelColuna>
   });
 
   const entrega = presentes(ENTREGA);

@@ -81,7 +81,11 @@ export const ENUM_LABELS = {
   // XML-02 (decisão 314): de onde veio o produto SUGERIDO — vai entre parênteses depois de "Sugerido", por isso em minúscula.
   origem_vinculo_item_nfe: { codigo_fornecedor: "código do fornecedor", codigo_barras: "código de barras", reference: "referência do produto", descricao: "descrição semelhante" },
   classificacao_gasto: { capex: "CAPEX", opex: "OPEX" },
-  rateio_compra: { documento: "Natureza e centro do documento", por_valor: "Por valor", por_produto: "Por produto" },
+  rateio_compra: {
+    documento: "Classificação única (documento)",
+    por_valor: "Dividir por percentual (por valor)",
+    por_produto: "Classificar por produto"
+  },
   tipo_fator_conversao: { multiply: "Multiplica", divide: "Divide" },
   // OPERACOES-01 F5a (decisão 282): o atendimento CALCULADO da requisição de material (não é situação do banco).
   atendimento_requisicao_estoque: { pendente: "Pendente", parcial: "Atendida em parte", atendido: "Atendida", encerrado: "Saldo encerrado" },

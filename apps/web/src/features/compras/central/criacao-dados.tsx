@@ -14,7 +14,6 @@ import type { IdentidadeDoDocumento } from "@/features/central/contrato";
 import estilosCv from "@/features/central/moldura.module.css";
 import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
 import { opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
-import { DadosFiscaisDaConsulta, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
 import { dicaDaIdentidadeNaEdicao } from "./edicao";
 import { CAMPOS_DOS_DADOS_PRINCIPAIS } from "./organizacao-do-painel";
 import { fiscalNoPainel } from "./rateio-no-rodape";
@@ -154,14 +153,11 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
     return <ColunaDeCampos>{principais.map((c) => render(c))}</ColunaDeCampos>;
   }
 
-  const tipoDoc = fiscalNoPainel(e) && <CampoDaCentral key="tipo-documento-fiscal" rotulo="Tipo de documento" icone="selecao" preenchido={e.fiscal.tipo_documento_fiscal !== ""} testId="compras-tipo-documento-fiscal-campo" data-campo-fiscal="tipo_documento_fiscal">
+  /* Tipo de documento só na criação editável; na edição mora na aba Fiscal (leitura), nunca nos Dados. */
+  const tipoDoc = fiscalNoPainel(e) && e.editarFiscal && <CampoDaCentral key="tipo-documento-fiscal" rotulo="Tipo de documento" icone="selecao" preenchido={e.fiscal.tipo_documento_fiscal !== ""} testId="compras-tipo-documento-fiscal-campo" data-campo-fiscal="tipo_documento_fiscal">
     <MgSelect data-testid="compras-tipo-documento-fiscal" value={e.fiscal.tipo_documento_fiscal} onChange={(v) => e.mudarFiscal({ tipo_documento_fiscal: v })}
       allowEmpty placeholder="—" options={tiposDoc} />
   </CampoDaCentral>;
-
-  /* EDITAR-02: fiscais em leitura ficam na aba Fiscal do painel quando a criação os teria; na edição sem painel fiscal, mantém nos Dados. */
-  const fiscaisEmLeitura = e.modo === "edicao" && e.ehCompra && e.top !== null && e.documentoEmEdicao !== null && temDadosFiscais(e.documentoEmEdicao)
-    ? e.documentoEmEdicao : null;
 
   /* Tipo de documento entra depois da série (ou da nota); observação no fim, como campo normal da coluna. */
   const corpo = principais.flatMap((c) => {
@@ -179,9 +175,5 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
         {corpo}
       </ColunaDeCampos>
     </div>
-    {fiscaisEmLeitura && !fiscalNoPainel(e) && <div data-testid="compras-edicao-dados-fiscais" className="mt-2 space-y-2">
-      <DadosFiscaisDaConsulta d={fiscaisEmLeitura} />
-      <RateioDaConsulta d={fiscaisEmLeitura} />
-    </div>}
   </>;
 }

@@ -13,8 +13,13 @@ const OITO_FISCAIS = 8;
 const FISCAIS = ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id", "classificacao_gasto"] as const;
 const TOP = { id: "t", codigo: "7001", nome: "Compra", movimento: "Compra" };
 
-const estado = (o: { capacidade: boolean; top?: boolean; formulario?: boolean }) =>
-  ({ dadosFiscaisAtivos: o.capacidade, top: o.top === false ? null : TOP, mostrarFormulario: o.formulario ?? true });
+const estado = (o: { capacidade: boolean; top?: boolean; formulario?: boolean; rateio?: boolean }) =>
+  ({
+    mostrarFiscal: o.capacidade,
+    mostrarRateio: o.rateio ?? o.capacidade,
+    top: o.top === false ? null : TOP,
+    mostrarFormulario: o.formulario ?? true
+  });
 
 describe("RATEIO-01 · os caminhos de recusa que são do rateio", () => {
   it("o rateio (tipo, linhas nos dois formatos) e a classificação de cada item (nos dois formatos) são do rateio", () => {
@@ -55,7 +60,7 @@ describe("RATEIO-01 · onde o rateio e o fiscal moram — nunca nos Dados princi
     expect(rateioNoPainel(umCampo)).toBe(false);
   });
 
-  it("SEM a capacidade `importacaoXml`: nenhuma aba de rateio/fiscal", () => {
+  it("SEM mostrarFiscal: nenhuma aba de rateio/fiscal", () => {
     for (const formulario of [true, false]) {
       const e = estado({ capacidade: false, formulario });
       expect(blocoFiscalNosDados(e)).toBe(false);
@@ -63,6 +68,13 @@ describe("RATEIO-01 · onde o rateio e o fiscal moram — nunca nos Dados princi
       expect(fiscalNoPainel(e)).toBe(false);
       expect(abaDoRateio(e, "rateio")).toBeNull();
     }
+  });
+
+  it("EDIÇÃO aberta com mostrarFiscal: abas no painel (nunca nos Dados)", () => {
+    const e = estado({ capacidade: true });
+    expect(blocoFiscalNosDados(e)).toBe(false);
+    expect(fiscalNoPainel(e)).toBe(true);
+    expect(rateioNoPainel(e)).toBe(true);
   });
 
   it("receber sem o pedido pronto (sem formulário): nenhuma aba", () => {

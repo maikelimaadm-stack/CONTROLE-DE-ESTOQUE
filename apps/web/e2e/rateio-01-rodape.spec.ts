@@ -135,7 +135,7 @@ test("R01-1 — com importacaoXml, rateio na aba Rateio e classificação; fisca
   const rateio = await abaDoRateio(page);
   for (const t of DO_RATEIO.slice(1)) await expect(rateio.getByTestId(t), `${t} na aba Rateio e classificação`).toHaveCount(1);
   for (const t of DO_RATEIO) await expect(page.getByTestId(t), `${t}: uma vez só na tela`).toHaveCount(1);
-  await expect(rateio.getByTestId("compras-rateio-tipo"), "o rateio nasce o do documento").toContainText("Natureza e centro do documento");
+  await expect(rateio.getByTestId("compras-rateio-tipo"), "o rateio nasce o do documento").toContainText("Classificação única (documento)");
   await expect(rateio.getByTestId("compras-item-0-gera-estoque"), "o item nasce gerando estoque").toBeChecked();
 
   await abrirAba(page, "Fiscal");
