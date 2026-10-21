@@ -29,7 +29,8 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages
-        run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
+        # @agro/api entra porque a ponte Vercel do web importa `@agro/api/server` (types em dist/).
+        run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build && pnpm --filter @agro/api build
       - run: pnpm lint
       - run: pnpm typecheck
       - name: Unit tests (shared, domain, api)

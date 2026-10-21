@@ -11,13 +11,13 @@ import { corpoParaFetch } from "./erp-api-bridge-corpo";
 let appPronto: Promise<FastifyInstance> | null = null;
 
 function appDaApi(): Promise<FastifyInstance> {
-  if (!appPronto) {
-    appPronto = buildApp().catch((erro) => {
-      appPronto = null;
-      throw erro;
-    });
-  }
-  return appPronto;
+  if (appPronto) return appPronto;
+  const criado = buildApp().catch((erro: unknown) => {
+    appPronto = null;
+    throw erro;
+  });
+  appPronto = criado;
+  return criado;
 }
 
 function cabecalhosDaResposta(headers: InjectResponse["headers"]): Headers {
