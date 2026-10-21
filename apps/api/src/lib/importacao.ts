@@ -420,8 +420,8 @@ export interface ResultadoImportacao {
   linhas_arquivo?: number;
 }
 
-/** Teto sugerido de linhas por pedido HTTP (a tela usa 25; a API aceita até 500 no `limit`). */
-export const LOTE_DA_IMPORTACAO = 25;
+/** Teto sugerido de linhas por pedido na gravação (a tela usa 40; a API aceita até 500 no `limit`). */
+export const LOTE_DA_IMPORTACAO = 40;
 
 /**
  * Recorta as linhas de dados já lidas (`offset`/`limit` 0-based sobre o array, não o número da planilha).
@@ -664,7 +664,7 @@ async function errosDaGravacao(ctx: ServiceCtx, e: unknown, def: ResourceDef, ro
  * contador da ORGANIZAÇÃO até o commit; dentro do laço, uma importação longa pararia todo cadastro com ID
  * Global da organização (e esgotaria o pool). A prévia, que desfaz tudo, não reserva nada.
  */
-export type Criar = (ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal: boolean; importacao?: boolean }) => Promise<Record<string, unknown>>;
+export type Criar = (ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal: boolean; importacao?: boolean; /** prévia: confere regras sem INSERT */ simular?: boolean }) => Promise<Record<string, unknown>>;
 
 /** O que fazer quando o código está fora da máscara do cadastro: a regra diz a máscara, a importação diz o formato. */
 const comoCorrigir = (mensagem: string) => {
@@ -776,6 +776,19 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
       if (atual === cond.igual && vazio && !errosDaLinha.some((e) => e.coluna === c.chave)) errosDaLinha.push({ linha: n, coluna: c.chave, mensagem: `Obrigatório quando ${cond.texto}.` });
     }
     if (errosDaLinha.length) { erros.push(...errosDaLinha); registrarFalha(n, celulas, corpo); continue; }
+    // PRÉVIA (simulação): só confere regras — sem savepoint, sem INSERT. A gravação real é que materializa.
+    // Antes a prévia inseria e desfazia cada linha e estourava o tempo (~segundos por dezena de produtos).
+    if (simulacao) {
+      try {
+        const criado = await criar(ctx, def, corpo, { adiarIdGlobal: true, importacao: true, simular: true });
+        criados.push({ linha: n, id: String(criado["id"]) });
+        if (propria) adicionarCriado(propria, def, criado);
+      } catch (e) {
+        for (const x of await errosDaGravacao(ctx, e, def, rotulo)) erros.push({ linha: n, ...x, mensagem: comoCorrigir(x.mensagem) });
+        registrarFalha(n, celulas, corpo);
+      }
+      continue;
+    }
     await ctx.tx.query("savepoint importacao_linha");
     try {
       const criado = await criar(ctx, def, corpo, { adiarIdGlobal: true, importacao: true });

@@ -345,7 +345,7 @@ function coerceValue(f: FieldDef, v: unknown): unknown {
  * `adiarIdGlobal` é interno da importação em lote, que reserva o ID Global de todas as linhas no fim do lote
  * (mesma transação): reservar linha a linha prenderia o contador da organização a importação inteira.
  */
-export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal?: boolean; importacao?: boolean } = {}) {
+export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal?: boolean; importacao?: boolean; /** prévia da planilha: mesmas regras, sem INSERT nem numeração */ simular?: boolean } = {}) {
   // cadastro que nasce por OUTRA porta (ex.: funcionário pelo CPF) não nasce pela genérica
   if (def.criacao) throw validation(def.criacao.mensagem);
   conferirSigiloNaCriacao(ctx, def);
@@ -364,10 +364,26 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   if (def.table === "empresas") exigirEscopoTotalDaOrganizacao(ctx, def.label);
   // CÓDIGO GERADO NO SERVIDOR (decisão 257 D-1/D-2), sob a trava da numeração, ANTES das regras da árvore:
   // elas conferem o código gerado como confeririam um digitado (máscara, prefixo do superior)
-  await gerarCodigoNaCriacao(ctx, def, data, Boolean(opcoes.importacao));
-  const sequencial = await gerarCodigoSequencial(ctx, def, data);
+  // PRÉVIA: não trava numeração nem consome sequência — o código automático só nasce na gravação real.
+  if (!(opcoes.importacao && opcoes.simular)) {
+    await gerarCodigoNaCriacao(ctx, def, data, Boolean(opcoes.importacao));
+  } else if (def.codigoAutomatico === "hierarquico" && opcoes.importacao) {
+    // importação hierárquica ainda exige o código na planilha (mesma regra); só pula a trava
+    const pedido = typeof data["code"] === "string" && data["code"] !== "" ? data["code"] : null;
+    if (pedido === null) throw validation("Obrigatório.", [{ path: ["code"], message: "Obrigatório." }]);
+  }
+  const sequencial = (opcoes.importacao && opcoes.simular) ? null : await gerarCodigoSequencial(ctx, def, data);
   await conferirRegrasDaArvore(ctx, def, null, data, null);
   await conferirRegrasDoCadastro(ctx, def, null, data, null);
+  // PRÉVIA DA IMPORTAÇÃO: regras ok ⇒ conta como certa; id sintético só para encadear árvore no arquivo.
+  // Unicidade que só o INSERT do banco pega (código gerado, etc.) aparece na gravação real.
+  if (opcoes.importacao && opcoes.simular) {
+    return {
+      id: `sim:${crypto.randomUUID()}`,
+      ...data,
+      ...(typeof data["code"] === "string" && data["code"] !== "" ? { code: data["code"] } : def.codeEntity ? { code: "(automático)" } : {}),
+    };
+  }
   const existing = await checkColumns(ctx, def);
   const cols: string[] = []; const vals: unknown[] = [];
   if (existing.has("organization_id")) { cols.push("organization_id"); vals.push(ctx.orgId); }

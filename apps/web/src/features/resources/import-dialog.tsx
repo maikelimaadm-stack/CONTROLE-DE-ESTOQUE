@@ -29,7 +29,7 @@ const ehRecusaDeModo = (c: Resposta) => ehRecusaDeParametro(c);
 const MENSAGEM_SEM_PARCIAL = "O servidor ainda não aceita importação parcial; use Importar tudo.";
 /** IMPORTAR-01 (decisão 317): a API anterior não tem o ATUALIZAR — recusa `acao` na prévia, antes de abrir o arquivo. */
 const MENSAGEM_SEM_ATUALIZAR = "O servidor ainda não aceita atualizar por planilha. Nada foi gravado; para criar registros, escolha \"Criar registros novos\".";
-const MENSAGEM_SEM_LOTE = "O servidor ainda não aceita conferência em lotes. Atualize a API ou divida a planilha em arquivos menores (até 25 linhas).";
+const MENSAGEM_SEM_LOTE = "O servidor ainda não aceita gravação em lotes. Atualize a API ou divida a planilha em arquivos menores (até 40 linhas).";
 /** Linhas com erro: da API nova vem pronto; da anterior, conta as linhas distintas da lista. */
 const linhasComErro = (r: Resultado) => r.com_erro ?? new Set(r.erros.map((e) => e.linha)).size;
 const linhasCertas = (r: Resultado) => r.certas ?? Math.max(0, r.linhas - linhasComErro(r));
@@ -77,7 +77,7 @@ export function ImportDialog({ resourceKey, labelPlural, open, onOpenChange, avi
   React.useEffect(() => { if (!open) { setArquivo(null); setPrevia(null); setFeito(null); setSemParcial(false); setAcao("criar"); setSemAtualizar(false); setProgresso(null); setAvisoLote(null); } }, [open]);
   const descartar = () => { setPrevia(null); setArquivo(null); setFeito(null); };
 
-  const umPedido = async (simular: boolean, a: { nome: string; base64: string }, modo: Modo, acaoPedida: AcaoImportacao, lote: LoteDaImportacao): Promise<Resposta | "sessao" | "rede"> => {
+  const umPedido = async (simular: boolean, a: { nome: string; base64: string }, modo: Modo, acaoPedida: AcaoImportacao, lote?: LoteDaImportacao): Promise<Resposta | "sessao" | "rede"> => {
     try {
       const tokenDaChamada = getSession()?.token;
       const res = await api<Response>(urlDaImportacao(resourceKey, simular, modo, acaoPedida, lote), { method: "POST", body: { arquivo_base64: a.base64 }, raw: true });
@@ -92,40 +92,48 @@ export function ImportDialog({ resourceKey, labelPlural, open, onOpenChange, avi
     } catch { return "rede"; }
   };
 
-  const enviarEmLotes = async (simular: boolean, a: { nome: string; base64: string }, modo: Modo, acaoPedida: AcaoImportacao): Promise<Resposta | "sessao" | "rede" | "sem-lote"> => {
-    const fase = simular ? "conferir" as const : "gravar" as const;
+  /** Conferência: UM pedido (no servidor a prévia só valida, sem INSERT) — rápido o bastante para 1000 linhas. */
+  const enviarConferencia = async (a: { nome: string; base64: string }, modo: Modo, acaoPedida: AcaoImportacao): Promise<Resposta | "sessao" | "rede"> => {
+    await pintar(setProgresso, progressoInicial("conferir"));
+    const corpo = await umPedido(true, a, modo, acaoPedida);
+    if (corpo === "sessao" || corpo === "rede") return corpo;
+    if (corpo.error || !ehResultado(corpo)) return corpo;
+    const total = typeof corpo.linhas_arquivo === "number" ? corpo.linhas_arquivo : corpo.linhas;
+    await pintar(setProgresso, progressoDoLote("conferir", total, Math.max(total, 1), total, false));
+    return corpo;
+  };
+
+  /** Gravação: em lotes (cada lote ainda faz INSERT real). */
+  const enviarEmLotes = async (a: { nome: string; base64: string }, modo: Modo, acaoPedida: AcaoImportacao): Promise<Resposta | "sessao" | "rede" | "sem-lote"> => {
     const fatias: FatiaImportacao[] = [];
     let total = 0;
     let offset = 0;
-    await pintar(setProgresso, progressoInicial(fase));
+    await pintar(setProgresso, progressoInicial("gravar"));
     for (;;) {
-      await pintar(setProgresso, progressoDoLote(fase, offset, LOTE_DA_IMPORTACAO, total, true));
-      const corpo = await umPedido(simular, a, modo, acaoPedida, { offset, limit: LOTE_DA_IMPORTACAO });
+      await pintar(setProgresso, progressoDoLote("gravar", offset, LOTE_DA_IMPORTACAO, total, true));
+      const corpo = await umPedido(false, a, modo, acaoPedida, { offset, limit: LOTE_DA_IMPORTACAO });
       if (corpo === "sessao" || corpo === "rede") return corpo;
-      // servidor sem lote: NÃO cai no pedido único (estoura 60 s) — a tela avisa
       if (offset === 0 && ehRecusaDeParametro(corpo)) return "sem-lote";
       if (corpo.error) return corpo;
       if (!ehResultado(corpo)) return "rede";
       if (typeof corpo.linhas_arquivo === "number") total = corpo.linhas_arquivo;
       fatias.push(corpo);
       const feitas = offset + corpo.linhas;
-      await pintar(setProgresso, progressoDoLote(fase, feitas, LOTE_DA_IMPORTACAO, total || feitas, false));
-      // na gravação "tudo", um lote com erro para o restante (lotes anteriores já commitados ficam)
-      if (!simular && modo === "tudo" && corpo.erros.length > 0) break;
+      await pintar(setProgresso, progressoDoLote("gravar", feitas, LOTE_DA_IMPORTACAO, total || feitas, false));
+      if (modo === "tudo" && corpo.erros.length > 0) break;
       if (corpo.linhas < LOTE_DA_IMPORTACAO) break;
       offset += LOTE_DA_IMPORTACAO;
       if (total > 0 && offset >= total) break;
     }
     const junto = juntarFatias(fatias);
-    return { ...junto, simulacao: simular, modo } as Resposta & Resultado;
+    return { ...junto, simulacao: false, modo } as Resposta & Resultado;
   };
 
   const enviar = async (simular: boolean, a = arquivo, modo: Modo = "tudo", acaoPedida: AcaoImportacao = acao) => {
     if (!a) return;
     const falhouRede = () => {
-      // mantém o progresso na tela para o usuário ver em qual lote parou
       if (simular) {
-        toast.error("A conferência falhou no lote atual (tempo esgotado ou rede). O progresso acima mostra até onde chegou — tente de novo.");
+        toast.error("Não foi possível conferir o arquivo (tempo esgotado ou rede). Tente de novo.");
         return;
       }
       toast.error("Não foi possível confirmar a importação. Confira a listagem antes de tentar de novo.");
@@ -136,7 +144,7 @@ export function ImportDialog({ resourceKey, labelPlural, open, onOpenChange, avi
     setPrevia(null);
     setFeito(null);
     try {
-      const corpo = await enviarEmLotes(simular, a, modo, acaoPedida);
+      const corpo = simular ? await enviarConferencia(a, modo, acaoPedida) : await enviarEmLotes(a, modo, acaoPedida);
       if (corpo === "sessao") { descartar(); setProgresso(null); return; }
       if (corpo === "sem-lote") {
         setAvisoLote(MENSAGEM_SEM_LOTE);
@@ -184,7 +192,7 @@ export function ImportDialog({ resourceKey, labelPlural, open, onOpenChange, avi
   const tabelaDeErros = (erros: ErroImportacao[]) => <div className="mt-2 max-h-80 overflow-auto rounded border"><table className="w-full text-sm"><thead className="bg-slate-50 text-left"><tr><th className="px-2 py-1">Linha</th><th className="px-2 py-1">Coluna</th><th className="px-2 py-1">Problema</th></tr></thead>
     <tbody>{erros.map((e, i) => <tr key={i} className="border-t"><td className="px-2 py-1">{e.linha || "—"}</td><td className="px-2 py-1">{e.coluna ?? "—"}</td><td className="px-2 py-1">{e.mensagem}</td></tr>)}</tbody></table></div>;
   const pct = progresso ? percentualDoProgresso(progresso) : null;
-  return <Dialog open={open} onOpenChange={onOpenChange} size="lg" title={`Importar ${labelPlural.toLowerCase()}`} description="Use o modelo baixado nesta tela. A conferência roda em lotes e mostra o progresso linha a linha antes de gravar." testId="importar-dialogo"
+  return <Dialog open={open} onOpenChange={onOpenChange} size="lg" title={`Importar ${labelPlural.toLowerCase()}`} description="Use o modelo baixado nesta tela. A conferência valida as regras sem gravar (rápida); a gravação mostra progresso em lotes." testId="importar-dialogo"
     footer={<><Button variant="outline" onClick={() => onOpenChange(false)}>Fechar</Button>
       {botoes.parcial && <Button variant="outline" loading={ocupado} data-testid="importar-parcial" onClick={() => void enviar(false, arquivo, "parcial")}>{verbo} só as {certas} linhas certas</Button>}
       {botoes.tudo && <Button loading={ocupado} data-testid="importar-confirmar" onClick={() => void enviar(false)}>{atualizando ? `Atualizar ${resumo?.mudam ?? 0} registro(s)` : "Importar tudo"}</Button>}</>}>
@@ -211,7 +219,8 @@ export function ImportDialog({ resourceKey, labelPlural, open, onOpenChange, avi
             ? <div className="h-full bg-slate-800 transition-[width] duration-300 ease-out" style={{ width: `${pct}%` }} />
             : <div className="h-full w-1/3 animate-pulse bg-slate-500" />}
         </div>
-        {progresso.total > 0 && <p className="text-[12px] text-slate-500">Cada lote confere até {LOTE_DA_IMPORTACAO} linhas. A prévia só termina quando todos os lotes responderem.</p>}
+        {progresso.fase === "conferir" && progresso.aguardando && <p className="text-[12px] text-slate-500">Conferência rápida: o servidor só valida as regras (não grava). Em planilhas grandes isso leva poucos segundos.</p>}
+        {progresso.fase === "gravar" && progresso.total > 0 && <p className="text-[12px] text-slate-500">Gravação em lotes de até {LOTE_DA_IMPORTACAO} linhas.</p>}
       </div>}
       {avisoLote && <p data-testid="importar-sem-lote" role="alert" className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">{avisoLote}</p>}
       {semParcial && <p data-testid="importar-sem-parcial" role="alert" className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">{MENSAGEM_SEM_PARCIAL}</p>}
