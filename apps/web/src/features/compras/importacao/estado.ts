@@ -135,18 +135,20 @@ const MSG_DA_LINHA: Record<MotivoDaRecusaDaLinha | "validade_obrigatoria", strin
 export function contaDoItem(item: ItemDaNota, d: DecisaoDoItemNaTela, produto: ProdutoNaTela | null | undefined): ContaDoItem {
   if (!d.produtoId) return { situacao: "sem_produto" };
   if (!produto) return { situacao: "carregando" };
-  if (!fatorValido(d.fator)) return { situacao: "fator_invalido" };
+  // Fator saiu da tela: inválido/vazio ⇒ "1" (mesmo padrão do corpo ao gerar a compra).
+  const fator = fatorValido(d.fator) ? d.fator : "1";
+  const tipoFator = d.tipoFator === "divide" ? "divide" : "multiply";
   const semEntrada = !d.geraEstoque || !produto.controlaEstoque;
   const controle: ControleDeLoteDoProduto = semEntrada && item.rastro.length === 0 ? "nenhum" : produto.controleLote;
   let q: string; let u: string;
   try {
-    q = quantidadeInterna(item.quantidade, d.fator, d.tipoFator);
+    q = quantidadeInterna(item.quantidade, fator, tipoFator);
     if (!D(q).gt(0)) return { situacao: "recusa", motivo: "quantidade_invalida" };
     u = unitarioInterno(item.valorProdutos, q);
   } catch {
     return { situacao: "recusa", motivo: "quantidade_invalida" };
   }
-  const r = linhasDoItemDaNota(item, { produtoId: produto.id, fator: d.fator, tipoFator: d.tipoFator, controlaLote: controle,
+  const r = linhasDoItemDaNota(item, { produtoId: produto.id, fator, tipoFator, controlaLote: controle,
     lote: controle === "nenhum" ? null : d.lote.trim() || null, validade: controle === "nenhum" ? null : d.validade || null });
   if (!r.ok) return { situacao: "recusa", motivo: r.motivo };
   if (controle === "lote_validade" && item.rastro.length === 0 && !d.validade) return { situacao: "recusa", motivo: "validade_obrigatoria" };
@@ -398,13 +400,11 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
       const n = item.nItem;
       if (c.situacao === "sem_produto") divergencias.push({ codigo: "item_sem_produto", mensagem: `Item ${n}: associe um produto (ou crie o produto).`, nItem: n, bloqueia: true, aba: "itens", origem: "tela" });
       else if (c.situacao === "carregando") divergencias.push({ codigo: "item_produto_carregando", mensagem: `Item ${n}: lendo o cadastro do produto escolhido.`, nItem: n, bloqueia: true, aba: "itens", origem: "tela" });
-      else if (c.situacao === "fator_invalido") divergencias.push({ codigo: "item_fator_invalido", mensagem: `Item ${n}: informe o fator (maior que zero, até 6 casas).`, nItem: n, bloqueia: true, aba: "itens", origem: "tela" });
       else if (c.situacao === "recusa") divergencias.push({ codigo: `item_${c.motivo}`, mensagem: `Item ${n}: ${MSG_DA_LINHA[c.motivo]}`, nItem: n, bloqueia: true, aba: "itens", origem: "tela" });
       const d = itens.find((x) => x.nItem === n)!;
-      const avisoDoFator = avisoDoFatorNaTela(conf, d);
-      if (avisoDoFator) divergencias.push(avisoDoFator);
+      // Fator/conversão saíram da tela: o corpo usa o padrão "1" × multiply; avisos de fator não bloqueiam.
       if (cab.pedidoId && !d.itemOrigemId) divergencias.push({ codigo: "item_sem_item_do_pedido", mensagem: `Item ${n}: ligue o item da nota a um item do pedido.`, nItem: n, bloqueia: true, aba: "pedido", origem: "tela" });
-      if (fin.rateioTipo === "por_produto" && (!d.categoriaId || !d.centroId)) divergencias.push({ codigo: "item_sem_natureza", mensagem: `Item ${n}: com o rateio por produto, informe a natureza e o centro do item.`, nItem: n, bloqueia: true, aba: "itens", origem: "tela" });
+      // Natureza/centro do item: opcionais (a TOP pode ainda exigir centro no servidor).
     }
     if (total && !total.confere) {
       divergencias.push({ codigo: "total_diferente", mensagem: `O total calculado (${total.total}) não bate com o total da nota (${money(totais.nota)}).`, nItem: null, bloqueia: true, aba: "divergencias", origem: "tela" });
@@ -447,9 +447,13 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
       },
       itens: itensDaNota.map((item) => {
         const d = itens.find((x) => x.nItem === item.nItem)!;
+        // Tela sem fator/imobilizado/lembrar/gera estoque: padrões estáveis — vínculo futuro automático (lembrar),
+        // estoque pela TOP (gera_estoque true; o servidor respeita a operação), fator 1 se a nota não trouxe.
+        const fator = fatorValido(d.fator) ? d.fator : "1";
         return {
-          n_item: item.nItem, produto_id: d.produtoId, fator: d.fator, tipo_fator: d.tipoFator, lembrar_vinculo: d.lembrar,
-          armazem_id: d.geraEstoque ? d.armazemId || null : null, gera_estoque: d.geraEstoque, imobilizado: d.imobilizado,
+          n_item: item.nItem, produto_id: d.produtoId, fator, tipo_fator: d.tipoFator === "divide" ? "divide" : "multiply",
+          lembrar_vinculo: true,
+          armazem_id: d.armazemId || null, gera_estoque: true, imobilizado: false,
           item_origem_id: cab.pedidoId ? d.itemOrigemId || null : null,
           categoria_financeira_id: fin.rateioTipo === "por_produto" ? d.categoriaId || null : null,
           centro_custo_id: fin.rateioTipo === "por_produto" ? d.centroId || null : null,

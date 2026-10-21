@@ -4,7 +4,7 @@ import Link from "next/link";
 import { formatarChaveDeAcesso, type PreenchimentoDoFornecedor } from "@agro/domain";
 import { useAuth } from "@/lib/auth";
 import { brl, dateBR } from "@/lib/utils";
-import { Button, Dialog, Field, Input, NativeSelect, Textarea } from "@/components/ui";
+import { Button, Dialog, Field, Input, NativeSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import type { EstadoTop } from "@/features/sales/tipo-operacao-select";
 import type { EstadoDaConferencia } from "./estado";
@@ -126,11 +126,5 @@ export function AbaCabecalho({ e, tops, onEscolherFornecedor, solicitacaoId, onD
         <div><span className="text-slate-500">IPI / ICMS-ST</span><div>{brl(nota.totais.ipi)} / {brl(nota.totais.icmsSt)}</div></div>
       </div>}
     </section>
-
-    <div className="grid grid-cols-12 gap-3">
-      <Field label="Observação" span={12} error={e.erroEm("observacao")}>
-        <Textarea data-testid="importacao-observacao" rows={2} maxLength={2000} value={cab.observacao} disabled={leitura} onChange={(ev) => e.mudarCab({ observacao: ev.target.value })} />
-      </Field>
-    </div>
   </div>;
 }

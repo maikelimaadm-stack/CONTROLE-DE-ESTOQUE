@@ -77,8 +77,8 @@ describe("XML-04 T1 a origem do fator → o texto perto do campo (o fator do ser
   });
 });
 
-describe("XML-04 T2 a PERGUNTA: o campo nasce VAZIO (nunca o '1' do servidor) e o item é PENDÊNCIA até o fator válido", () => {
-  it("o servidor manda fator '1' por compatibilidade; a tela nasce vazia, com a pergunta de cada motivo", () => {
+describe("XML-04 T2 a PERGUNTA: o campo nasce VAZIO (nunca o '1' do servidor); a conta usa fator 1 (tela sem campo de fator)", () => {
+  it("o servidor manda fator '1' por compatibilidade; a decisão nasce vazia, com a pergunta de cada motivo", () => {
     for (const [v, pergunta] of [
       [foraDoCadastro, "A unidade BD da nota não está no cadastro do produto: informe o fator."],
       [homonima, PERGUNTA_HOMONIMA_KG]
@@ -89,13 +89,13 @@ describe("XML-04 T2 a PERGUNTA: o campo nasce VAZIO (nunca o '1' do servidor) e 
       expect(fatorNaTela(v, d)).toEqual({ origem: "pergunta", texto: null, aviso: null, pergunta });
     }
   });
-  it("a pendência é a do fator inválido de sempre (`contaDoItem` → fator_invalido) até a pessoa digitar um fator válido", () => {
+  it("fator vazio ou inválido na decisão: a conta assume 1 (sem pendência de fator_invalido); digitado válido continua valendo", () => {
     const d = decisao(foraDoCadastro);
-    expect(contaDoItem(item, d, produtoNaTela)).toEqual({ situacao: "fator_invalido" });
+    expect(contaDoItem(item, d, produtoNaTela)).toMatchObject({ situacao: "pronta", quantidadeInterna: "6.0000" });
     for (const invalido of ["0", "abc", "1.1234567"]) {
       const dd = { ...d, fator: invalido };
-      expect(contaDoItem(item, dd, produtoNaTela).situacao, invalido).toBe("fator_invalido");
-      expect(fatorNaTela(foraDoCadastro, dd)?.origem, `${invalido}: a pergunta continua`).toBe("pergunta");
+      expect(contaDoItem(item, dd, produtoNaTela), invalido).toMatchObject({ situacao: "pronta", quantidadeInterna: "6.0000" });
+      expect(fatorNaTela(foraDoCadastro, dd)?.origem, `${invalido}: a pergunta continua no helper`).toBe("pergunta");
     }
     const informado = { ...d, fator: "20" };
     expect(contaDoItem(item, informado, produtoNaTela)).toMatchObject({ situacao: "pronta", quantidadeInterna: "120.0000" });
@@ -204,7 +204,7 @@ describe("XML-04 T6 a unidade HOMÔNIMA da organização: a pergunta diz o porqu
       .toBe("A unidade KG da nota não está no cadastro do produto: informe o fator.");
     const d = decisao(homonima);
     expect(d.fator, "o '1' de compatibilidade do servidor não entra no campo").toBe("");
-    expect(contaDoItem(item, d, produtoNaTela)).toEqual({ situacao: "fator_invalido" });
+    expect(contaDoItem(item, d, produtoNaTela), "tela sem fator: a conta assume 1").toMatchObject({ situacao: "pronta", quantidadeInterna: "6.0000" });
     expect(fatorNaTela(homonima, { ...d, fator: "50" })).toEqual({ origem: "informado", texto: "Fator informado na tela.", aviso: null, pergunta: null });
     const lista = divergenciasDoServidorNaTela({ divergencias: [{ codigo: "fator_a_informar", mensagem: "do servidor", nItem: 1, bloqueia: false }], itens: conf(homonima).itens });
     expect(lista, "a tela lê o `fatorPelaNota` do item e refaz a pergunta: o aviso do servidor sai").toEqual([]);
@@ -281,7 +281,7 @@ describe("XML-04 T7 a TROCA DE PRODUTO: o fator derivado é do produto do víncu
   const doServidor = (v: VinculoDoItemDaNota) => (v.situacao === "lembrado" || v.situacao === "sugerido" ? [D(v.fator).toFixed(), v.tipoFator] : null);
   const queDivide: VinculoDoItemDaNota = { situacao: "lembrado", produto, fator: "4.000000", tipoFator: "divide", fatorPelaNota: { origem: "vinculo", unidadeDaNota: "FD", cadastro: null } };
 
-  it("o fator derivado (o cadastro: principal e do produto; o vínculo lembrado, com e sem o cadastro contra; o que divide) → outro produto: VAZIO, a pergunta e a pendência; de volta: o fator, a conversão e a origem", () => {
+  it("o fator derivado → outro produto: VAZIO + pergunta no helper; a conta assume 1 (sem pendência); de volta: o fator, a conversão e a origem", () => {
     const derivados: [string, VinculoDoItemDaNota, string][] = [
       ["unidade principal", principal, "unidade_principal"], ["unidade do produto", doProduto, "unidade_do_produto"], ["vínculo lembrado", doVinculo, "vinculo"],
       ["vínculo contra o cadastro", vinculoContraCadastro, "vinculo"], ["vínculo que divide", queDivide, "vinculo"]
@@ -295,7 +295,7 @@ describe("XML-04 T7 a TROCA DE PRODUTO: o fator derivado é do produto do víncu
       const d1 = trocar(c, d0, P2);
       expect([d1.produtoId, d1.fator, d1.tipoFator], `${nome}: outro produto ⇒ o campo VAZIO, multiplica`).toEqual([P2, "", "multiply"]);
       expect(fatorNaTela(v, d1), `${nome}: a pergunta do produto trocado`).toEqual(PERGUNTA);
-      expect(contaDoItem(item, d1, produtoP2), `${nome}: a pendência do fator inválido de sempre`).toEqual({ situacao: "fator_invalido" });
+      expect(contaDoItem(item, d1, produtoP2), `${nome}: tela sem fator ⇒ conta com 1`).toMatchObject({ situacao: "pronta", quantidadeInterna: "6.0000" });
       expect(avisoDoFatorNaTela(c, d1), `${nome}: o aviso do vínculo é do produto do vínculo`).toBeNull();
       const d2 = trocar(c, d1, P1);
       expect([d2.produtoId, d2.fator, d2.tipoFator], `${nome}: de volta ⇒ o fator e a conversão do servidor`).toEqual([P1, d0.fator, d0.tipoFator]);
