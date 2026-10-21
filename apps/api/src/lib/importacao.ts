@@ -420,8 +420,8 @@ export interface ResultadoImportacao {
   linhas_arquivo?: number;
 }
 
-/** Teto de linhas por pedido HTTP na importação em lotes (abaixo do teto de ~60 s da ponte Vercel Hobby). */
-export const LOTE_DA_IMPORTACAO = 100;
+/** Teto sugerido de linhas por pedido HTTP (a tela usa 25; a API aceita até 500 no `limit`). */
+export const LOTE_DA_IMPORTACAO = 25;
 
 /**
  * Recorta as linhas de dados já lidas (`offset`/`limit` 0-based sobre o array, não o número da planilha).
