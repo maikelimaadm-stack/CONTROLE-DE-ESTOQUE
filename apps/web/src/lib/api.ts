@@ -1,13 +1,16 @@
 "use client";
 import { lerSessaoArmazenada } from "@erp/plataforma";
 /**
- * Base da API. Na Vercel a Fastify mora no mesmo host (Hobby = um projeto);
- * string vazia = mesma origem. Fora da Vercel, sem override, local :3333.
+ * Base da API. Na Vercel a Fastify mora no mesmo host (Hobby = um projeto).
+ * `NEXT_PUBLIC_API_URL` vazia OU ausente no build da Vercel = mesma origem (`""`).
+ * `process.env.VERCEL` NÃO entra no bundle do browser — por isso vazio explícito
+ * na variável pública é o sinal canônico; sem isso o client caía em localhost:3333
+ * e o login virava "Failed to fetch".
  */
 export const API_URL = (() => {
   const explicita = process.env.NEXT_PUBLIC_API_URL;
-  if (explicita !== undefined && explicita !== "") return explicita.replace(/\/$/, "");
-  if (process.env.VERCEL) return "";
+  if (explicita !== undefined) return explicita.replace(/\/$/, "");
+  if (process.env.NEXT_PUBLIC_VERCEL_ENV) return "";
   return "http://localhost:3333";
 })();
 
