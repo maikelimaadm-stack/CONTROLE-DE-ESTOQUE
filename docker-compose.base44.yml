@@ -113,7 +113,9 @@ services:
       PORT: "3333"
       API_LOG_LEVEL: info
       AUTH_MODE: local
-      DATABASE_URL: "postgresql://erp_app:erp_app@db:5432/agro_erp"
+      # Âncora: o serviço `web` roda a MESMA API em processo (ponte `/api/*`), então precisa da
+      # mesma conexão — reusar o valor impede que as duas configurações divirjam.
+      DATABASE_URL: &database-url-app "postgresql://erp_app:erp_app@db:5432/agro_erp"
       # Origens permitidas do navegador: o host público do preview desta sandbox é a origem
       # REAL da página (o proxy entrega outro Host ao processo). `WEB_ORIGIN_PREVIEW_SUFFIX`
       # não serve aqui: ele só aceita sufixo de preview da Vercel, por contrato de segurança.
@@ -144,16 +146,22 @@ services:
     image: node:22
     restart: on-failure
     working_dir: /workspace
+    # Mapa (e não lista): o gate de CI do repositório (`.github/workflows/ci.yml`, job `quality`)
+    # recusa `DATABASE_URL=<literal>` no Git; em forma de mapa o valor é campo, não atribuição.
     environment:
-      - NODE_ENV=development
-      - NEXT_TELEMETRY_DISABLED=1
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: "1"
       # A URL da API é lida pelo NAVEGADOR: o host público do sandbox, nunca `localhost`.
-      - NEXT_PUBLIC_API_URL=https://3333-${BASE44_PUBLIC_HOST_SUFFIX}
+      NEXT_PUBLIC_API_URL: "https://3333-${BASE44_PUBLIC_HOST_SUFFIX}"
       # Só o preview: mostra as credenciais demo na tela de login (seed cria admin@demo.local).
-      - NEXT_PUBLIC_DEMO_MODE=true
+      NEXT_PUBLIC_DEMO_MODE: "true"
       # Gate do modo preview (o `next.config.ts` só libera a origem do preview com isto em "1").
-      - BASE44_PREVIEW_MODE
-      - BASE44_PUBLIC_HOST_SUFFIX
+      BASE44_PREVIEW_MODE:
+      BASE44_PUBLIC_HOST_SUFFIX:
+      # A ponte `/api/*` e `/health` da web rodam a API NO MESMO processo (é o desenho de produção:
+      # um projeto só na Vercel), então o processo web precisa da conexão que a API exige. Sem isto,
+      # essas duas rotas respondem 500 ("DATABASE_URL: expected string, received undefined").
+      DATABASE_URL: *database-url-app
     volumes:
       - ./:/workspace
     ports:

@@ -46,9 +46,14 @@ organização DEMO).
   mesma ordem do CI (`quality` e `e2e` buildam `@agro/api` antes de typecheck/build da web).
   Editar `packages/*/src` exige rebuild (`pnpm --filter <pacote> build`) para API e web verem a
   mudança; `apps/api/src` e `apps/web/src` recarregam sozinhos (`tsx watch`, `next dev`).
-  No preview a ponte `/api/*` continua **fora de uso**: o navegador fala direto com a API em `3333`
-  (`NEXT_PUBLIC_API_URL`) e a ponte exige `DATABASE_URL`, que o serviço `web` não recebe — um 500 ali
-  é esperado e não significa app quebrado. O que **não** é esperado é `Can't resolve '@agro/api/server'`:
+  O serviço `web` recebe a mesma `DATABASE_URL` da API (âncora YAML `&database-url-app`, reusada em
+  `web`: o valor é UM só, para os dois não divergirem), porque a ponte roda a API **no processo do
+  Next** — é o desenho de produção (um projeto só na Vercel). Sem essa variável, `GET /health` e
+  `/api/*` na porta `3000` respondem 500 (`DATABASE_URL: expected string, received undefined`);
+  com ela, `curl -s http://localhost:3000/health` responde `{"status":"ok","db":"ok",…}`.
+  O navegador, no preview, continua falando direto com a API em `3333` (`NEXT_PUBLIC_API_URL`);
+  a ponte é o caminho de mesma origem, e agora ele também funciona.
+  O que **não** é esperado, em nenhum dos dois caminhos, é `Can't resolve '@agro/api/server'`:
   isso é o `dist/` do `@agro/api` faltando, e o conserto é o `setup` buildá-lo.
 - **Duas origens, e a página é que manda no CORS.** A web fica em `3000` e a API em `3333`; o
   navegador chama `NEXT_PUBLIC_API_URL` (host **público** da sandbox, não `localhost`).
@@ -85,7 +90,8 @@ Nenhum caminho de autenticação, autorização, RLS ou CSRF foi afrouxado: o lo
 ## Como verificar que está de pé
 
 1. `curl -s http://localhost:3333/health` → `{"status":"ok","db":"ok",...}`.
-2. `curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login` → `200`.
+2. `curl -s http://localhost:3000/health` → o mesmo corpo (prova a ponte de mesma origem), e
+   `curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login` → `200`.
 3. No preview: entrar com `admin@demo.local` / `Demo@12345` e conferir que a tela **Início** mostra
    os cartões de resultado (Receitas, Despesas, Resultado operacional) — isso prova web → API → banco
    com RLS no caminho. Sem console limpo e sem requisição falhando, não está de pé.
