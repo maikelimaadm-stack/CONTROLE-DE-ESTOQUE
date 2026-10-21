@@ -7,16 +7,21 @@
  *
  * Fonte preferida (persistida, nesta ordem):
  *   1. `parcelas[]` do plano (lista manual / gravada);
- *   2. derivação inequívoca do plano descritivo via `buildInstallments` (exige total + first_due_date + installments);
+ *   2. derivação inequívoca do plano descritivo via `buildInstallments` (exige mode válido + total + first_due_date + installments);
  *   3. `parcelas_nota` (duplicatas da NF-e — compra importada);
  *   4. títulos gerados (consulta confirmada) — situação real; observação do título NÃO vem no GET atual;
  *   5. plano descritivo sem dados suficientes → resumo honesto, sem inventar datas/valores.
  *
  * `installments` no plano = parcelas ALÉM da entrada (`buildInstallments`). A lista pode incluir a entrada
  * como primeira linha quando `has_down_payment`.
+ *
+ * Defaults do servidor (`installmentPlanSchema` em `financial-core.ts`): `mode` default `"interval"`,
+ * `interval_days` default `30`. Só usamos esses defaults quando o modo está EXPLICITAMENTE `"interval"`
+ * e `interval_days` ausente — nunca quando o modo é inválido/ausente (isso era geração especulativa).
  */
 
 import { buildInstallments } from "@agro/domain";
+import { D, isISODate } from "@agro/shared";
 
 export type LinhaDeParcelaNaTela = {
   vencimento: string;
@@ -95,30 +100,96 @@ type PlanoDescritivo = {
   down_payment_date?: unknown;
 };
 
+/** Inteiro ≥ 0 explicitamente presente — `null`/`""`/`1.5`/`-1` ⇒ desconhecido (NÃO é entrada). */
+export function numeroDeParcelaDoTitulo(v: unknown): number | null {
+  if (typeof v === "number") {
+    if (!Number.isInteger(v) || v < 0 || !Number.isFinite(v)) return null;
+    return v;
+  }
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!/^\d+$/.test(s)) return null;
+    const n = Number(s);
+    if (!Number.isInteger(n) || n < 0) return null;
+    return n;
+  }
+  return null;
+}
+
+function totalPositivo(totalAmount: string | null | undefined): string | null {
+  if (!tem(totalAmount)) return null;
+  const s = String(totalAmount).trim();
+  try {
+    const d = D(s);
+    if (!d.isFinite() || d.lte(0)) return null;
+    return d.toFixed(2);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Deriva o cronograma com a MESMA `buildInstallments` do domínio.
- * Só quando o plano tem installments + first_due_date + total positivo inequívocos.
- * Falha ⇒ null (nunca inventa).
+ * Só quando o plano tem mode válido + installments + first_due_date ISO + total positivo inequívocos.
+ * Mode ausente/inválido ⇒ null (nunca cai em `"interval"` por omissão).
+ * Falha do domínio ⇒ null (nunca inventa).
  */
 export function linhasDerivadasDoPlano(plano: unknown, totalAmount: string | null | undefined): LinhaDeParcelaNaTela[] | null {
   if (plano === null || typeof plano !== "object" || Array.isArray(plano)) return null;
   const p = plano as PlanoDescritivo;
   const n = typeof p.installments === "number" && Number.isInteger(p.installments) ? p.installments : null;
   const first = tem(p.first_due_date) ? texto(p.first_due_date) : "";
-  const total = tem(totalAmount) ? String(totalAmount).trim() : "";
-  if (n === null || n < 1 || !first || !total) return null;
-  const mode = p.mode === "fixed_day" ? "fixed_day" as const : "interval" as const;
+  const total = totalPositivo(totalAmount);
+  if (n === null || n < 1 || !first || !isISODate(first) || !total) return null;
+
+  const mode = p.mode === "interval" || p.mode === "fixed_day" ? p.mode : null;
+  if (!mode) return null;
+
+  let intervalDays: number | undefined;
+  let dueDay: number | undefined;
+  if (mode === "interval") {
+    if (typeof p.interval_days === "number" && Number.isInteger(p.interval_days) && p.interval_days >= 1) {
+      intervalDays = p.interval_days;
+    } else if (p.interval_days === undefined || p.interval_days === null) {
+      // Default do servidor (`installmentPlanSchema.interval_days.default(30)`), só com mode explícito.
+      intervalDays = 30;
+    } else {
+      return null;
+    }
+  } else {
+    if (typeof p.due_day === "number" && Number.isInteger(p.due_day) && p.due_day >= 1 && p.due_day <= 31) {
+      dueDay = p.due_day;
+    } else if (p.due_day === undefined || p.due_day === null) {
+      // `buildInstallments` deriva o dia de `firstDueDate` — contrato do domínio, não inventado aqui.
+      dueDay = undefined;
+    } else {
+      return null;
+    }
+  }
+
+  if (p.has_down_payment === true) {
+    if (!tem(p.down_payment_value) || !tem(p.down_payment_date)) return null;
+    const dpDate = texto(p.down_payment_date);
+    if (!isISODate(dpDate)) return null;
+    try {
+      const dp = D(texto(p.down_payment_value));
+      if (!dp.isFinite() || dp.lte(0) || dp.gte(D(total))) return null;
+    } catch {
+      return null;
+    }
+  }
+
   try {
     return buildInstallments({
       totalAmount: total,
       installments: n,
       firstDueDate: first,
       mode,
-      intervalDays: typeof p.interval_days === "number" ? p.interval_days : 30,
-      dueDay: typeof p.due_day === "number" ? p.due_day : undefined,
+      intervalDays,
+      dueDay,
       hasDownPayment: p.has_down_payment === true,
-      downPaymentValue: tem(p.down_payment_value) ? texto(p.down_payment_value) : undefined,
-      downPaymentDate: tem(p.down_payment_date) ? texto(p.down_payment_date) : undefined
+      downPaymentValue: p.has_down_payment === true ? texto(p.down_payment_value) : undefined,
+      downPaymentDate: p.has_down_payment === true ? texto(p.down_payment_date) : undefined
     }).map((x) => ({
       vencimento: x.dueDate,
       valor: x.amount,
@@ -131,12 +202,13 @@ export function linhasDerivadasDoPlano(plano: unknown, totalAmount: string | nul
   }
 }
 
-/** Observação do plano por `installment_number` (0 = entrada), só se o índice existir e for único no sentido do contrato. */
+/** Observação do plano por `installment_number` (0 = entrada), só se o índice existir no sentido do contrato. */
 function observacaoDoPlanoPorNumero(parcelas: ParcelaCrua[] | null, installmentNumber: number, comEntrada: boolean): string {
   if (!parcelas?.length) return "";
   if (comEntrada) {
     if (installmentNumber === 0) return texto(parcelas[0]?.observacao ?? parcelas[0]?.note);
     const idx = installmentNumber; // 1 → segunda linha (índice 1)
+    if (idx < 0 || idx >= parcelas.length) return "";
     return texto(parcelas[idx]?.observacao ?? parcelas[idx]?.note);
   }
   // Sem entrada: installment_number 1 = primeira linha (índice 0)
@@ -150,13 +222,25 @@ function linhasDosTitulos(
   parcelasPlano: ParcelaCrua[] | null,
   comEntradaPlano: boolean
 ): { linhas: LinhaDeParcelaNaTela[]; aviso?: string } {
+  const contagemPorNumero = new Map<number, number>();
+  const numeros = titulos.map((t) => numeroDeParcelaDoTitulo(t.installment_number));
+  for (const n of numeros) {
+    if (n === null) continue;
+    contagemPorNumero.set(n, (contagemPorNumero.get(n) ?? 0) + 1);
+  }
+
   let houveObsPlano = false;
-  const linhas = titulos.map((t) => {
-    const nRaw = typeof t.installment_number === "number" ? t.installment_number : Number(t.installment_number);
-    const n = Number.isFinite(nRaw) ? nRaw : NaN;
-    const entrada = n === 0;
+  let houveAmbiguo = false;
+  const linhas = titulos.map((t, i) => {
+    const n = numeros[i]!;
+    const entrada = n === 0; // só 0 explícito e válido; null/undefined/"" não viram entrada
     const noteTitulo = texto(t.note);
-    const obsPlano = Number.isFinite(n) ? observacaoDoPlanoPorNumero(parcelasPlano, n, comEntradaPlano) : "";
+    let obsPlano = "";
+    if (n !== null && (contagemPorNumero.get(n) ?? 0) === 1) {
+      obsPlano = observacaoDoPlanoPorNumero(parcelasPlano, n, comEntradaPlano);
+    } else if (n !== null && (contagemPorNumero.get(n) ?? 0) > 1) {
+      houveAmbiguo = true;
+    }
     if (obsPlano && !noteTitulo) houveObsPlano = true;
     return {
       vencimento: texto(t.due_date),
@@ -169,14 +253,18 @@ function linhasDosTitulos(
       ...(obsPlano && !noteTitulo ? { observacaoDoPlano: obsPlano } : {})
     };
   });
-  return {
-    linhas,
-    aviso: houveObsPlano
-      ? "Observações do plano gravado (a API de títulos não devolve a nota do título)."
-      : (!titulos.some((t) => tem(t.note))
-        ? "Situação e valores dos títulos gerados. A observação do título não vem neste GET."
-        : undefined)
-  };
+
+  const avisoBase = !titulos.some((t) => tem(t.note))
+    ? "Situação e valores dos títulos gerados. A observação do título não vem neste GET."
+    : undefined;
+  let aviso = houveObsPlano
+    ? "Observações do plano gravado (a API de títulos não devolve a nota do título)."
+    : avisoBase;
+  if (houveAmbiguo) {
+    aviso = (aviso ? `${aviso} ` : "") + "Não foi possível associar observação do plano: número de parcela ambíguo.";
+  }
+
+  return { linhas, aviso };
 }
 
 /**
@@ -249,7 +337,7 @@ export function modeloDeParcelasParaTela(entrada: {
           : `Parcelado em ${n} parcela(s) além da entrada, sem lista gravada nem total para derivar o cronograma.`,
         comEntrada: p.has_down_payment === true,
         installments: n,
-        primeiroVencimento: tem(p.first_due_date) ? texto(p.first_due_date) : null
+        primeiroVencimento: tem(p.first_due_date) && isISODate(texto(p.first_due_date)) ? texto(p.first_due_date) : null
       };
     }
   }
