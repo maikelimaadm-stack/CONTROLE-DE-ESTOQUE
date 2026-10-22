@@ -213,7 +213,11 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await expect(secao.getByTestId("compras-consulta-uf")).toContainText("SP");
   await expect(secao.getByTestId("compras-consulta-tipo-documento")).toContainText("NF-e");
   await expect(secao.getByTestId("compras-consulta-ipi")).toContainText("10,00");
-  await expect(secao.getByTestId("compras-consulta-classificacao")).toContainText("Não classificado");
+  // CAPEX/OPEX mora na aba Rateio e classificação e só aparece quando informado (decisão 325).
+  await expect(secao.getByTestId("compras-consulta-classificacao"), "CAPEX/OPEX ausente não fica nos Dados fiscais").toHaveCount(0);
+  const abaRateioConsulta = page.getByTestId(`${P}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
+  await abaRateioConsulta.click();
+  await expect(page.getByTestId("compras-consulta-classificacao"), "sem CAPEX/OPEX gravado, nada na consulta").toHaveCount(0);
 });
 
 /* ═════════════════════════════════ FC-2 ═════════════════════════════════ */
