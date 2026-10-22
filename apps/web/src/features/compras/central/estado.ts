@@ -1241,6 +1241,14 @@ export type AberturaDaEdicaoNaConsulta =
   | { situacao: "carregando" }
   | { situacao: "pronta"; chave: string; props: PropsDoEstadoDaCriacao };
 
+/** Lê o `/edicao` do cache do React Query (mesmo key da abertura) — evita tela "Carregando…" ao clicar Editar. */
+function edicaoProntaDoCache(qc: ReturnType<typeof useQueryClient>, segmento: string, id: string, leitura: number): EdicaoDoDocumentoDeCompra | null {
+  const cru = qc.getQueryData([...chaveDaEdicao(segmento, id), leitura]);
+  if (cru === undefined) return null;
+  const lida = lerEdicao(cru);
+  return lida && lida.podeEditar ? lida : null;
+}
+
 export function useAberturaDaEdicao({ variante, id, onFechar, onRecusada }: {
   variante: VarianteDeCompra; id: string; onFechar: (salvou: boolean) => void; onRecusada: (motivo: string) => void;
 }): AberturaDaEdicaoNaConsulta {
@@ -1252,10 +1260,15 @@ export function useAberturaDaEdicao({ variante, id, onFechar, onRecusada }: {
   const q = useQuery<unknown, ApiError>({
     queryKey: [...chaveDaEdicao(variante.segmento, id), leitura],
     queryFn: () => api<unknown>(portaDaEdicao(variante.segmento, id)),
-    retry: false, staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false
+    /* gcTime > 0: o prefetch do "Editar" precisa sobreviver até este hook montar (gcTime 0 apagava o cache). */
+    retry: false, staleTime: Infinity, gcTime: 60_000, refetchOnWindowFocus: false, refetchOnReconnect: false
   });
-  const [aberta, setAberta] = React.useState<{ dados: EdicaoDoDocumentoDeCompra; leitura: number } | null>(null);
-  const tratada = React.useRef<unknown>(null);
+  /* Prefetch do "Editar" deixa o cache quente: a 1ª pintura já abre o formulário, sem moldura vazia. */
+  const [aberta, setAberta] = React.useState<{ dados: EdicaoDoDocumentoDeCompra; leitura: number } | null>(() => {
+    const doCache = edicaoProntaDoCache(qc, variante.segmento, id, 0);
+    return doCache ? { dados: doCache, leitura: 0 } : null;
+  });
+  const tratada = React.useRef<unknown>(aberta ? qc.getQueryData([...chaveDaEdicao(variante.segmento, id), 0]) ?? null : null);
   React.useEffect(() => {
     if (q.isError) {
       if (tratada.current === q.error) return;
@@ -1574,9 +1587,34 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
   const acao = acaoEditar({
     can, perm: variante.perm, carregado: Boolean(d), situacao, ehPedido, comprasGeradas, recusaDoServidor: recusaVigente
   });
+  /** Prefetch do `/edicao` ANTES de trocar a árvore — a consulta fica na tela; sem moldura "Carregando…". */
+  const [abrindoEdicao, setAbrindoEdicao] = React.useState(false);
   const editar: EstadoDaConsulta["editar"] = {
-    ...acao, editando,
-    abrir: () => { if (acao.visivel && acao.dicaDesabilitada === null) { setSalvoNaEdicao(false); setEditando(true); } },
+    ...acao,
+    dicaDesabilitada: abrindoEdicao ? "Abrindo a edição…" : acao.dicaDesabilitada,
+    editando,
+    abrir: () => {
+      if (!(acao.visivel && acao.dicaDesabilitada === null) || abrindoEdicao) return;
+      setSalvoNaEdicao(false);
+      setAbrindoEdicao(true);
+      void qc.fetchQuery({
+        queryKey: [...chaveDaEdicao(variante.segmento, id), 0],
+        queryFn: () => api<unknown>(portaDaEdicao(variante.segmento, id)),
+        staleTime: Infinity, gcTime: 60_000,
+      }).then((data) => {
+        const lida = lerEdicao(data);
+        if (!lida) { toast.error(MSG_EDICAO_INDISPONIVEL); return; }
+        if (!lida.podeEditar) {
+          toast.warning(lida.motivo ?? MSG_EDICAO_INDISPONIVEL);
+          setRecusaDaEdicao({ motivo: lida.motivo ?? MSG_EDICAO_INDISPONIVEL, leitura: q.dataUpdatedAt });
+          return;
+        }
+        setEditando(true);
+      }).catch((err: unknown) => {
+        const e = err as ApiError;
+        toast.error(edicaoIndisponivel(e) ? MSG_EDICAO_INDISPONIVEL : (e?.message || MSG_EDICAO_INDISPONIVEL));
+      }).finally(() => { setAbrindoEdicao(false); });
+    },
     fechar: (salvou) => { setEditando(false); setSalvoNaEdicao(salvou); if (salvou) recarregar(); },
     recusada: (motivo) => { setEditando(false); setRecusaDaEdicao({ motivo, leitura: q.dataUpdatedAt }); }
   };

@@ -293,12 +293,12 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
     content: <PainelLargo>
       <div className="space-y-3">
         <RateioDaConsulta d={d} />
-        <PainelColuna>
-          <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="travado" testId="compras-consulta-classificacao"
+        <ColunaDeCampos>
+          <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="selecao" testId="compras-consulta-classificacao"
             valor={typeof d["classificacao_gasto"] === "string" && (d["classificacao_gasto"] === "capex" || d["classificacao_gasto"] === "opex")
               ? enumLabel("classificacao_gasto", d["classificacao_gasto"])
               : enumLabel("classification", "unclassified")} />
-        </PainelColuna>
+        </ColunaDeCampos>
       </div>
     </PainelLargo>
   });
