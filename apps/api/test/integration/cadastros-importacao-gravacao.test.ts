@@ -339,6 +339,10 @@ describe("ID Global e travas", () => {
         where l.database = ${banco} and n.nspname = 'erp'
           and c.relname in ('sequencias_id_global', 'registros_globais')
           and l.mode <> 'AccessShareLock' and l.granted and l.pid = $1`, [pidPrevia])).rows[0]!.n);
+    /** Backend da prévia ainda ligado (active OU idle in transaction — a conferência não fica `active` o tempo todo). */
+    const previaAindaViva = async (pidPrevia: number) => Boolean((await admin.query<{ n: string }>(
+      `select count(*)::text n from pg_stat_activity
+        where pid = $1 and datname = current_database()`, [pidPrevia])).rows[0]!.n !== "0");
 
     const marca: { previaFim: number | null } = { previaFim: null };
     const previa = enviar(wb, "products", true).then((r) => { marca.previaFim = performance.now(); return r; });
@@ -359,7 +363,7 @@ describe("ID Global e travas", () => {
       amostrador = (async () => {
         while (marca.previaFim === null) {
           amostras.total += 1;
-          if ((await pidDaPrevia()) === pidPrevia) amostras.pidVisto += 1;
+          if (await previaAindaViva(pidPrevia)) amostras.pidVisto += 1;
           amostras.comTravaDoIdGlobal += await travasDeEscritaDaPrevia(pidPrevia);
           await espera(10);
         }

@@ -115,10 +115,10 @@ test("OP01-F7 · K2-1 (sentido 2) — a Central de Compras da base lança a comp
   // Sentido 2 = WEB DA BASE: rótulos da base (`Natureza de despesa`), não os deste HEAD.
   await escolher(page, "Natureza de despesa", ref.natureza.label);
   await escolher(page, "Centro de resultado", ref.centro.label);
-  // Decisão 319: Local de estoque padrão acima da grade (sem célula por linha).
-  await escolher(page, "Local de estoque", nomeLocal);
+  // Local POR LINHA na web da base (decisão 319/280) — não há campo de cabeçalho.
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
+  await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), nomeLocal);
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), nomeProduto);
   await linha.getByLabel("Quantidade do item 1").fill("4");
   await linha.getByLabel("Valor unitário do item 1").fill("25");
