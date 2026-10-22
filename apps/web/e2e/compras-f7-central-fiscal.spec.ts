@@ -153,7 +153,7 @@ const postDaCompra = (page: Page) => page.waitForResponse((r) => r.request().met
 
 /* ═════════════════════════════════ FC-1 ═════════════════════════════════ */
 
-test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imobilizado: o total soma os impostos, o POST leva só o preenchido e a consulta mostra os dados fiscais", async ({ page }) => {
+test("FC-1 — compra manual com chave válida, UF, tipo, IPI e seguro: o total soma os impostos, o POST leva só o preenchido e a consulta mostra os dados fiscais", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
   const chave = chaveSintetica();
@@ -169,10 +169,10 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await page.getByTestId("compras-seguro").fill("5.50");
   await expect(page.getByTestId("compras-total"), "100,00 + IPI 10,00 + seguro 5,50").toContainText("115,50");
   const rateio = await abaDoRateio(page);
-  const classificacao = rateio.getByTestId("compras-item-classificacao-0");
-  await expect(classificacao.getByTestId("compras-item-0-gera-estoque"), "premissa: o item nasce gerando estoque").toBeChecked();
-  await classificacao.getByTestId("compras-item-0-imobilizado").check();
+  await expect(rateio.getByTestId("compras-itens-classificacao"), "sem itens na aba Rateio").toHaveCount(0);
   await expect(rateio.getByTestId("compras-classificacao-unica")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-linha-0-conta"), "Conta Contábil sempre à vista").toBeVisible();
+  await expect(rateio.getByTestId("compras-classificacao-gasto"), "CAPEX/OPEX como seleção à vista").toBeVisible();
   await expect(rateio.getByTestId("compras-rateio-tipo")).toHaveCount(0);
 
   // NO FIO: só as chaves preenchidas, os valores em TEXTO, a chave sem os espaços
@@ -184,8 +184,7 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   expect(corpo).toMatchObject({ chave_acesso: chave.valida, uf_nota: "SP", tipo_documento_fiscal: "nfe", valor_ipi: "10.00", seguro: "5.50" });
   for (const ausente of ["valor_icms_st", "tipo_titulo_id", "classificacao_gasto", "rateio"]) expect(Object.hasOwn(corpo, ausente), `${ausente} não preenchido não vai no corpo`).toBe(false);
   const item = (corpo["itens"] as Record<string, unknown>[])[0]!;
-  expect(item["imobilizado"], "o item marcado vai imobilizado").toBe(true);
-  for (const ausente of ["gera_estoque", "categoria_financeira_id", "centro_custo_id"]) expect(Object.hasOwn(item, ausente), `${ausente} no padrão não vai no item`).toBe(false);
+  for (const ausente of ["imobilizado", "gera_estoque", "categoria_financeira_id", "centro_custo_id"]) expect(Object.hasOwn(item, ausente), `${ausente} no padrão não vai no item`).toBe(false);
 
   // NO SERVIDOR: gravou os dados e somou o total
   await expect(page).toHaveURL(/\/compras\/compras\/[0-9a-f-]{36}$/);
@@ -195,9 +194,8 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
     situacao: "aberto", chave_acesso: chave.valida, uf_nota: "SP", tipo_documento_fiscal: "nfe", valor_ipi: "10.00", seguro: "5.50",
     valor_icms_st: null, valor_itens: "100.00", valor_total: "115.50"
   });
-  expect((gravada["itens"] as Record<string, unknown>[]).map((i) => [i["imobilizado"], i["gera_estoque"]]), "o servidor gravou o item imobilizado").toEqual([[true, null]]);
 
-  // NA CONSULTA: o total do servidor, IPI e seguro nos Totais, e a seção Dados fiscais na aba Fiscal
+  // NA CONSULTA: o total do servidor, IPI e seguro nos Totais, e os campos fiscais na aba Fiscal
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
   await expect(page.getByTestId("compras-consulta-total")).toContainText("115,50");
   await expect(page.getByTestId("compras-consulta-total-ipi")).toContainText("10,00");
@@ -208,16 +206,17 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await expect(aba).toHaveAttribute("aria-selected", "true");
   const secao = page.getByTestId("compras-consulta-dados-fiscais");
   await expect(secao).toBeVisible();
+  await expect(secao.getByText("Dados fiscais"), "sem título DADOS FISCAIS na aba").toHaveCount(0);
   await expect(secao.getByTestId("compras-consulta-chave"), "a chave do servidor, em grupos de 4").toContainText(chave.valida.slice(0, 4) + " " + chave.valida.slice(4, 8));
   await expect(secao.getByTestId("compras-consulta-chave")).toContainText(chave.valida.slice(40));
   await expect(secao.getByTestId("compras-consulta-uf")).toContainText("SP");
   await expect(secao.getByTestId("compras-consulta-tipo-documento")).toContainText("NF-e");
   await expect(secao.getByTestId("compras-consulta-ipi")).toContainText("10,00");
-  // CAPEX/OPEX mora na aba Rateio e classificação e só aparece quando informado (decisão 325).
+  // CAPEX/OPEX mora na aba Rateio e classificação (sempre à vista; sem valor = não classificado).
   await expect(secao.getByTestId("compras-consulta-classificacao"), "CAPEX/OPEX ausente não fica nos Dados fiscais").toHaveCount(0);
   const abaRateioConsulta = page.getByTestId(`${P}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
   await abaRateioConsulta.click();
-  await expect(page.getByTestId("compras-consulta-classificacao"), "sem CAPEX/OPEX gravado, nada na consulta").toHaveCount(0);
+  await expect(page.getByTestId("compras-consulta-classificacao"), "CAPEX/OPEX sempre na consulta (mesmo sem valor)").toBeVisible();
 });
 
 /* ═════════════════════════════════ FC-2 ═════════════════════════════════ */

@@ -23,8 +23,7 @@ const CLASSE_DO_INPUT = ["mg", "input"].join("-");
  * cronograma que o servidor vai gerar (a MESMA conta de `planoDaCondicao`, sobre a data e o total do documento) com a
  * quantidade de parcelas; "Ajustar parcelas" edita a MESMA grade (inputs ativos), com "Adicionar parcela" e o remover.
  *
- * "Possui entrada?" NÃO desmonta campos: Valor e Data da entrada ficam sempre no cabeçalho (desabilitados quando Não).
- * Na lista, a entrada continua sendo a PRIMEIRA linha do plano quando ligada.
+ * "Possui entrada?" só liga/desliga a 1ª linha da grade (valor e data moram ali — sem campos duplicados no cabeçalho).
  *
  * `installments` no plano = parcelas ALÉM da entrada (contrato de `buildInstallments`). A lista `parcelas[]`, quando
  * presente, é a fonte do cronograma no servidor — a contagem não pode incluir a entrada duas vezes.
@@ -140,39 +139,11 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const erroCondicao = !e.ajustarParcelas && Boolean(condicaoId) && condicao.isError;
 
   const linhasNaTela = e.ajustarParcelas ? linhas : previstas;
-  const valorDaEntrada = comEntrada ? (e.ajustarParcelas ? (linhas[0]?.valor ?? "") : (previstas[0]?.entrada ? previstas[0].valor : p.down_payment_value ?? "")) : "";
-  const dataDaEntrada = comEntrada ? (e.ajustarParcelas ? (linhas[0]?.vencimento ?? "") : (previstas[0]?.entrada ? previstas[0].vencimento : p.down_payment_date ?? "")) : "";
-  const mudarValorEntrada = (valor: string) => {
-    if (!comEntrada) return;
-    if (!e.ajustarParcelas) e.setAjustarParcelas(true);
-    const base = sementeDaTela();
-    const com = base[0]?.entrada ? base : [{ vencimento: p.first_due_date || e.cabecalho.data_documento, valor: "", observacao: "Entrada", entrada: true }, ...base.filter((l) => !l.entrada)];
-    definir(com.map((l, k) => (k === 0 ? { ...l, valor, entrada: true } : l)), true);
-  };
-  const mudarDataEntrada = (vencimento: string) => {
-    if (!comEntrada) return;
-    if (!e.ajustarParcelas) e.setAjustarParcelas(true);
-    const base = sementeDaTela();
-    const com = base[0]?.entrada ? base : [{ vencimento: "", valor: "", observacao: "Entrada", entrada: true }, ...base.filter((l) => !l.entrada)];
-    definir(com.map((l, k) => (k === 0 ? { ...l, vencimento, entrada: true } : l)), true);
-  };
 
   return <>
+    {/* Entrada: só o Sim/Não — valor e data moram na 1ª linha da grade (sem campos duplicados). */}
     <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
       <div className="w-[220px]"><ChaveSimNao rotulo="Possui entrada?" valor={comEntrada} onChange={mudarEntrada} testId="compras-possui-entrada" /></div>
-      <div className="w-[140px]"><CampoDaCentral rotulo="Valor da entrada" estado={comEntrada ? "editavel" : "desabilitado"} preenchido={Boolean(valorDaEntrada)} testId="compras-valor-entrada-campo">
-        <Input data-testid="compras-valor-entrada" type="number" step="0.01" min="0" inputMode="decimal" placeholder="0,00"
-          value={valorDaEntrada} disabled={!comEntrada} onChange={(ev) => mudarValorEntrada(ev.target.value)} />
-      </CampoDaCentral></div>
-      <div className="w-[160px]"><CampoDaCentral rotulo="Data da entrada" icone="data" estado={comEntrada ? "editavel" : "desabilitado"} preenchido={Boolean(dataDaEntrada)} testId="compras-data-entrada-campo">
-        <DataDaCentral className={cn(CLASSE_DO_INPUT, estilos.data)} rotulo="Data da entrada" value={dataDaEntrada}
-          onChange={mudarDataEntrada} disabled={!comEntrada} />
-      </CampoDaCentral></div>
-      <div className="w-[300px]"><CampoDaCentral rotulo="Parcelas" icone="selecao" preenchido testId="compras-parcelas-campo">
-        <MgSelect data-testid="compras-parcelas" value={e.ajustarParcelas ? "ajustar" : "padrao"}
-          onChange={escolherModo}
-          options={[{ value: "padrao", label: "Pela condição (ou à vista)" }, { value: "ajustar", label: "Ajustar parcelas" }]} />
-      </CampoDaCentral></div>
     </div>
 
     <div data-testid="compras-parcelas-lista" className="mt-1 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
@@ -215,5 +186,12 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
         </span>
       </div>
     </div>
+
+    {/* Modo das parcelas abaixo da grade, junto dos campos normais do pagamento. */}
+    <div className="mt-2 max-w-[300px]"><CampoDaCentral rotulo="Parcelas" icone="selecao" preenchido testId="compras-parcelas-campo">
+      <MgSelect data-testid="compras-parcelas" value={e.ajustarParcelas ? "ajustar" : "padrao"}
+        onChange={escolherModo}
+        options={[{ value: "padrao", label: "Pela condição (ou à vista)" }, { value: "ajustar", label: "Ajustar parcelas" }]} />
+    </CampoDaCentral></div>
   </>;
 }

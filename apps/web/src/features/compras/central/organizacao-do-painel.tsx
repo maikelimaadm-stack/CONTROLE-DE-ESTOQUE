@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { num } from "@/lib/utils";
+import { enumLabel } from "@/lib/copy";
 import { Input } from "@/components/ui";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { PainelColuna, PainelLargo } from "@/features/central/painel";
@@ -166,32 +167,25 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
   });
 
   const rateioCampos = presentes(RATEIO_CAMPOS);
-  /* RateioEItensDaCriacao é a autoridade visual da classificação quando editável — o layout não redesenha o par. */
-  const rateioEditavel = rateioNoPainel(e) && e.editarRateio;
-  const tipoGravado = e.documentoEmEdicao?.["rateio_tipo"];
-  const classificacaoUnicaGravada = tipoGravado !== "por_valor" && tipoGravado !== "por_produto";
-  const mostraNaturezaCentroDoLayout = rateioCampos.length > 0 && !rateioEditavel
-    && (!e.documentoEmEdicao || classificacaoUnicaGravada);
+  /* RateioEItensDaCriacao / RateioDaConsulta são a autoridade visual — grade com Conta Contábil e Safra à vista. */
   if (rateioNoPainel(e) || rateioCampos.length) abas.push({
     value: valorUnico(ABA_DO_RATEIO), label: ROTULO_DA_ABA_DO_RATEIO,
     erro: caminhoDoRateioComErro(e.errosDaTela) !== null || comErro(rateioCampos) || Boolean(e.erro("classificacao_gasto")),
     content: <PainelLargo>
-      {mostraNaturezaCentroDoLayout && <ColunaDeCampos>
-        {rateioCampos.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}
-      </ColunaDeCampos>}
       {rateioNoPainel(e) && (e.editarRateio
         ? <RateioEItensDaCriacao e={e} />
         : e.documentoEmEdicao
-          ? <div data-testid="compras-edicao-rateio-leitura" className="space-y-2">
-              {classificacaoUnicaGravada && !mostraNaturezaCentroDoLayout && <PainelColuna>
-                <CampoLeitura rotulo="Natureza Financeira" adorno="pesquisa"
-                  valor={[e.documentoEmEdicao["categoria_financeira_codigo"], e.documentoEmEdicao["categoria_financeira_nome"]].filter(Boolean).join(" — ")} />
-                <CampoLeitura rotulo="Centro de Resultado" adorno="pesquisa"
-                  valor={[e.documentoEmEdicao["centro_custo_codigo"], e.documentoEmEdicao["centro_custo_nome"]].filter(Boolean).join(" — ")} />
-              </PainelColuna>}
+          ? <div data-testid="compras-edicao-rateio-leitura" className="space-y-3">
               <RateioDaConsulta d={e.documentoEmEdicao} />
+              <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="travado" testId="compras-classificacao-gasto"
+                valor={typeof e.documentoEmEdicao["classificacao_gasto"] === "string"
+                  && (e.documentoEmEdicao["classificacao_gasto"] === "capex" || e.documentoEmEdicao["classificacao_gasto"] === "opex")
+                  ? enumLabel("classificacao_gasto", String(e.documentoEmEdicao["classificacao_gasto"]))
+                  : "—"} />
             </div>
-          : null)}
+          : rateioCampos.length > 0
+            ? <ColunaDeCampos>{rateioCampos.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}</ColunaDeCampos>
+            : null)}
     </PainelLargo>
   });
 
