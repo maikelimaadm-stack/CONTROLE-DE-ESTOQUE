@@ -1,6 +1,6 @@
 /* Padrão compacto do Portal de Compras; não altera as outras telas. */
 .portal {
-  --portal-botao: 28px;
+  --portal-botao: 22px;
   --portal-espaco: 8px;
   --mg-btn-h: var(--portal-botao);
   --mg-toolbar-h: 42px;
