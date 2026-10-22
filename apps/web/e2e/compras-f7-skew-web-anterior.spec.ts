@@ -122,6 +122,8 @@ test("OP01-F7 · K2-1 (sentido 2) — a Central de Compras da base lança a comp
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), nomeProduto);
   await linha.getByLabel("Quantidade do item 1").fill("4");
   await linha.getByLabel("Valor unitário do item 1").fill("25");
+  // Total do documento mora só na aba Totais (web da base e deste HEAD — sem faixa fora das abas).
+  await abrirAbaDoPainelDeCompras(page, "Totais");
   await expect(page.getByTestId("compras-total")).toContainText("100,00");
 
   const post = page.waitForResponse((r) => r.request().method() === "POST" && caminho(r) === "/api/compras/compras");

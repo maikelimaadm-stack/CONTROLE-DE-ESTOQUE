@@ -157,6 +157,8 @@ test("EDITAR-02 · K-2 (sentido 2) — o web da base sobre a API deste HEAD: cri
   await escolherNaLinha(page, linha.getByTestId(`${P}-produto`), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("3");
   await linha.getByLabel("Valor unitário do item 1").fill("11");
+  // Total do documento mora só na aba Totais (web da base e deste HEAD — sem faixa fora das abas).
+  await abrirAbaDoPainelDeCompras(page, "Totais");
   await expect(page.getByTestId("compras-total")).toContainText("33,00");
   const compra = await salvarCriacao(page, "compras");
   expect([compra.leitura["situacao"], compra.leitura["version"]], "premissa no fio: a consulta da base recebeu a `version` a mais (0, o documento recém-criado)").toEqual(["aberto", "0"]);

@@ -307,17 +307,18 @@ describe("ID Global e travas", () => {
   /**
    * G11 — a trava do contador de ID Global na PRÉVIA (sem INSERT).
    *
-   * Depois da prévia rápida (sem INSERT por linha), a importação simulada NÃO segura RowExclusiveLock em
-   * `erp.products`. A barreira observa a conexão da prévia por `pg_stat_activity` (backend ativo nesta base,
-   * fora do amostrador) e amostra `pg_locks` SÓ desse PID: a prévia nunca deve segurar trava de escrita em
-   * `sequencias_id_global`/`registros_globais`. Criar pessoa durante a amostra segura o contador de verdade
-   * e não conta contra a prévia. Com a correção, a pessoa termina ENQUANTO a prévia ainda roda.
+   * A prévia simulada confere regras sem INSERT e sem `atribuirIdGlobalSeAplicavel`. A barreira:
+   *   (1) handshake cedo — backend da prévia em `active` OU `idle in transaction` (entre awaits da conferência);
+   *   (2) dispara a pessoa NO MESMO INSTANTE do handshake (não espera amostrar primeiro — senão a prévia
+   *       acaba e o inject da pessoa só roda depois, falso negativo de corrida);
+   *   (3) amostra `pg_locks` SÓ do PID da prévia: zero trava de escrita em sequencias_id_global/registros_globais;
+   *   (4) overlap observável: a pessoa COMEÇOU com a prévia ainda viva (`pidVistoAposInicio`) e obteve ID Global
+   *       sem esperar a prévia (se a prévia segurasse o contador, o POST da pessoa só terminaria depois).
    *
-   * Controle sequencial (evita verde vacuoso): depois que a prévia termina, criar outra pessoa ainda funciona
-   * e o contador anda de novo.
+   * Controle sequencial (evita verde vacuoso): depois que a prévia termina, criar outra pessoa ainda numera.
    */
   it("G11: enquanto uma prévia grande de produtos confere, criar uma pessoa (que recebe ID Global) termina ANTES da prévia", async () => {
-    const N = 2500;
+    const N = 4000;
     const wb = await modelo("products");
     const base = obrigatoriosDoProduto(wb, "x");
     for (let i = 0; i < N; i++) preencher(wb, i + 2, { ...base, "Descrição *": `Volume ${String(i + 1).padStart(4, "0")}`, "Controla estoque": "Não" });
@@ -326,75 +327,86 @@ describe("ID Global e travas", () => {
     const indicesAntes = await contar("registros_globais");
 
     const banco = "(select oid from pg_database where datname = current_database())";
-    /** Backend ativo nesta base que não é o amostrador — a prévia entrou na transação/consulta. */
+    /** Backend da prévia: active OU idle in transaction (a conferência cede entre consultas). */
     const pidDaPrevia = async () => (await admin.query<{ pid: number }>(
       `select pid from pg_stat_activity
         where datname = current_database() and pid <> pg_backend_pid()
-          and state = 'active' and query not ilike '%pg_stat_activity%' and query not ilike '%pg_locks%'
+          and state in ('active', 'idle in transaction')
+          and query not ilike '%pg_stat_activity%' and query not ilike '%pg_locks%'
+          and backend_type = 'client backend'
         order by backend_start desc limit 1`)).rows[0]?.pid ?? null;
-    /** Só as travas da PRÉVIA — criar pessoa durante a amostra segura o contador de verdade e não conta contra G11. */
     const travasDeEscritaDaPrevia = async (pidPrevia: number) => Number((await admin.query<{ n: string }>(
       `select count(*)::text n from pg_locks l
         join pg_class c on c.oid = l.relation join pg_namespace n on n.oid = c.relnamespace
         where l.database = ${banco} and n.nspname = 'erp'
           and c.relname in ('sequencias_id_global', 'registros_globais')
           and l.mode <> 'AccessShareLock' and l.granted and l.pid = $1`, [pidPrevia])).rows[0]!.n);
-    /** Backend da prévia ainda ligado (active OU idle in transaction — a conferência não fica `active` o tempo todo). */
     const previaAindaViva = async (pidPrevia: number) => Boolean((await admin.query<{ n: string }>(
       `select count(*)::text n from pg_stat_activity
         where pid = $1 and datname = current_database()`, [pidPrevia])).rows[0]!.n !== "0");
 
-    const marca: { previaFim: number | null } = { previaFim: null };
+    const marca: { previaFim: number | null; pessoaInicio: number | null; pessoaFim: number | null } = {
+      previaFim: null, pessoaInicio: null, pessoaFim: null,
+    };
     const previa = enviar(wb, "products", true).then((r) => { marca.previaFim = performance.now(); return r; });
-    const amostras = { total: 0, comTravaDoIdGlobal: 0, pidVisto: 0 };
+    const amostras = { total: 0, comTravaDoIdGlobal: 0, pidVisto: 0, pidVistoAposInicio: 0 };
     let amostrador: Promise<void> = Promise.resolve();
+    let pessoaP: Promise<{ statusCode: number; body: string }> = Promise.resolve({ statusCode: 0, body: "" });
     try {
-      // 1) handshake: a prévia aparece como backend ativo (XLSX já foi lido fora da transação)
+      // 1) handshake cedo: backend da prévia visível (XLSX já lido; conferência em andamento)
       const t0 = performance.now(); let pid: number | null = null;
       while (pid === null && marca.previaFim === null && performance.now() - t0 < 90_000) {
         pid = await pidDaPrevia();
         if (pid === null) await espera(5);
       }
-      expect(marca.previaFim, "a prévia terminou antes de ser vista ativa: aumente o volume").toBeNull();
+      expect(marca.previaFim, "a prévia terminou antes de ser vista: aumente o volume").toBeNull();
       expect(pid, "a prévia não foi vista em pg_stat_activity").not.toBeNull();
       const pidPrevia = pid!;
 
-      // 2) amostra travas de ID Global SÓ do PID da prévia até ela terminar
+      // 2) amostra + pessoa em paralelo — a pessoa parte no handshake, não depois de amostrar
       amostrador = (async () => {
-        while (marca.previaFim === null) {
+        while (marca.previaFim === null || marca.pessoaFim === null) {
           amostras.total += 1;
-          if (await previaAindaViva(pidPrevia)) amostras.pidVisto += 1;
-          amostras.comTravaDoIdGlobal += await travasDeEscritaDaPrevia(pidPrevia);
+          const viva = await previaAindaViva(pidPrevia);
+          if (viva) {
+            amostras.pidVisto += 1;
+            if (marca.pessoaInicio !== null && marca.pessoaFim === null) amostras.pidVistoAposInicio += 1;
+          }
+          if (marca.previaFim === null) amostras.comTravaDoIdGlobal += await travasDeEscritaDaPrevia(pidPrevia);
+          if (marca.previaFim !== null && marca.pessoaFim !== null) break;
           await espera(10);
         }
       })();
 
-      // 3) só agora a pessoa
-      const pessoa = await criarPessoa("Pessoa Durante Previa");
-      const pessoaFim = performance.now();
-      const previaRodando = marca.previaFim === null;
+      marca.pessoaInicio = performance.now();
+      pessoaP = criarPessoa("Pessoa Durante Previa").then((r) => { marca.pessoaFim = performance.now(); return r; });
 
-      const rp = await previa; await amostrador;
+      const [rp, pessoa] = await Promise.all([previa, pessoaP]);
+      await amostrador;
+
       expect(rp.statusCode, rp.body.slice(0, 300)).toBe(200);
       expect(j(rp)).toMatchObject({ linhas: N, gravadas: 0, erros: [], simulacao: true });
       expect(amostras.total).toBeGreaterThan(0);
-      expect(amostras.pidVisto, "a prévia esteve ativa durante a amostragem").toBeGreaterThan(0);
+      expect(amostras.pidVisto, "a prévia esteve viva durante a amostragem").toBeGreaterThan(0);
       expect(amostras.comTravaDoIdGlobal, "a prévia segurou trava de escrita no ID Global").toBe(0);
       expect(pessoa.statusCode, pessoa.body).toBe(201);
       expect(await idGlobalDe((JSON.parse(pessoa.body) as { id: string }).id)).toMatchObject({ tipo: "people" });
-      expect(previaRodando, "a pessoa só terminou depois da prévia").toBe(true);
-      expect(pessoaFim).toBeLessThan(marca.previaFim!);
+      // Overlap: a pessoa partiu com a prévia ainda viva (se o contador estivesse preso, o POST só acabaria depois).
+      expect(marca.pessoaInicio, "a pessoa partiu").not.toBeNull();
+      expect(marca.previaFim, "a prévia terminou").not.toBeNull();
+      expect(marca.pessoaInicio!, "a pessoa partiu depois da prévia — sem overlap").toBeLessThan(marca.previaFim!);
+      expect(amostras.pidVistoAposInicio, "a prévia morreu antes da pessoa começar a ser atendida").toBeGreaterThan(0);
       expect(await contar("products")).toBe(produtosAntes);
       expect(await contar("registros_globais")).toBe(indicesAntes + 1);
       expect(Number(await contador())).toBe(contadorAntes + 1);
 
-      // 4) controle sequencial: depois da prévia, criar pessoa ainda numera
+      // 3) controle sequencial: depois da prévia, criar pessoa ainda numera
       const depois = await criarPessoa("Pessoa Depois Da Previa");
       expect(depois.statusCode, depois.body).toBe(201);
       expect(Number(await contador())).toBe(contadorAntes + 2);
       expect(await contar("registros_globais")).toBe(indicesAntes + 2);
     } finally {
-      await previa.catch(() => undefined); await amostrador.catch(() => undefined);
+      await previa.catch(() => undefined); await pessoaP.catch(() => undefined); await amostrador.catch(() => undefined);
     }
   }, 180_000);
 });
