@@ -111,6 +111,13 @@ jobs:
         run: node scripts/artefato-operacional.mjs --compilado --deploy
       - name: Seed e2e database (migrations + reference data + demo org)
         run: DATABASE_URL=$E2E_DATABASE_URL pnpm --filter @agro/db exec tsx src/cli.ts seed
+      # Cache do Chromium do Playwright (chave = SO + versão do pacote + lockfile). Sem isso cada job
+      # baixa o browser de novo; a prova E2E continua a mesma — só o download é reutilizado.
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'apps/web/package.json') }}
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
       # Escopo SUPORTADO de docs/UI-SUPPORT-MATRIX.md. O recorte mora no script `e2e` do pacote
       # (`--grep-invert @mobile`), e não aqui: um filtro escrito no workflow divergiria em silêncio
@@ -225,6 +232,11 @@ jobs:
       # aceita o corpo que o web da base manda — conferidos no banco. A decisão é MEDIDA e expira sozinha. Falha fechado.
       - name: A base já tem a estrutura e as fichas de cadastro? (CADASTROS 0025–0030)
         run: node scripts/skew-fichas-cadastro.mjs --github-env
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'apps/web/package.json') }}
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
       # SENTIDO 1 — o web desta PR contra a API que está no ar (o Vercel sobe antes do Railway).
       - name: E2E de version skew (web deste HEAD × API da base)

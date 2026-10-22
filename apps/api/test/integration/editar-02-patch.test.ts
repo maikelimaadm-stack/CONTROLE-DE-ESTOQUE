@@ -875,15 +875,16 @@ describe("EDITAR-02B: classificação, CAPEX e rateio na compra ABERTA", () => {
   async function segundaNaturezaECentro(): Promise<{ cat: string; cc: string }> {
     const cat = (await c.admin.query<{ id: string }>(
       `select id::text as id from erp.financial_categories
-        where organization_id = $1 and nature = any($2::text[]) and id <> $3 and deleted_at is null
+        where organization_id = $1 and nature = any($2::text[]) and kind = 'analytic' and is_active
+          and id <> $3 and deleted_at is null
         order by code, id limit 1`,
       [c.h.demo.orgId, ["expense", "both"], c.I.category])).rows[0];
     const cc = (await c.admin.query<{ id: string }>(
       `select id::text as id from erp.cost_centers
-        where organization_id = $1 and kind = 'analytic' and id <> $2 and deleted_at is null
+        where organization_id = $1 and kind = 'analytic' and is_active and id <> $2 and deleted_at is null
         order by code, id limit 1`,
       [c.h.demo.orgId, c.I.costCenter])).rows[0];
-    expect(cat && cc, "premissa: há segunda natureza e centro analíticos no demo").toBeTruthy();
+    expect(cat && cc, "premissa: há segunda natureza e centro analíticos ativos no demo").toBeTruthy();
     return { cat: cat!.id, cc: cc!.id };
   }
 

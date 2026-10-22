@@ -135,8 +135,8 @@ test("F3B-C1 — compra: o Local de estoque é POR LINHA na grade (sem campo aci
   await escolherNoCampo(page, campoPeloRotulo(page, "Fornecedor"), c.fornecedor.nome);
   await expect(page.getByTestId(`${P}-alterado`), "premissa: o Fornecedor é alteração").toBeVisible();
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await escolherNoCampo(page, campoPeloRotulo(page, "Natureza de despesa"), c.natureza.label);
-  await escolherNoCampo(page, campoPeloRotulo(page, "Centro de resultado"), c.centro.label);
+  await escolherNoCampo(page, campoPeloRotulo(page, "Natureza Financeira"), c.natureza.label);
+  await escolherNoCampo(page, campoPeloRotulo(page, "Centro de Resultado"), c.centro.label);
 
   // (2) A LINHA NOVA: o local é escolhido NA CÉLULA da grade (a TOP não tem padrão: a linha nasce sem local).
   await page.getByTestId(`${P}-adicionar-item`).click();

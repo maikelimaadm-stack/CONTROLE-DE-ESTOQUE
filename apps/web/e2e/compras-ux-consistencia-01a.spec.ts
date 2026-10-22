@@ -168,7 +168,8 @@ test("UX1-1 — compra ABERTA com plano (entrada + 2 parcelas + obs): consultar 
   await expect(page.getByTestId("compras-parcela-valor-0")).toHaveValue(/100/);
   await expect(page.getByTestId("compras-parcela-valor-1")).toHaveValue(/200/);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await expect(page.getByTestId("compras-rateio-e-itens").or(page.getByTestId("compras-rateio"))).toBeVisible();
+  // `compras-rateio` é filho de `compras-rateio-e-itens` — `.or()` resolve 2 nós e quebra o strict mode.
+  await expect(page.getByTestId("compras-rateio-e-itens")).toBeVisible();
   // Dados principais NÃO duplicam rateio
   await expect(page.getByTestId(`${P}-dados`).locator('[data-testid^="compras-rateio-linha-"]')).toHaveCount(0);
   await foto(page, pasta, "ux1-1-edicao-1440x900");
@@ -338,16 +339,16 @@ test("UX1-3 — rateio por_valor: Classificação no painel; conta contábil só
   await expect(rateio).toBeVisible();
   await expect(page.getByTestId(`${P}-dados`).locator('[data-testid^="compras-rateio-linha-"]')).toHaveCount(0);
   await expect(page.getByTestId(`${P}-dados`).getByTestId("compras-rateio-tipo")).toHaveCount(0);
+  await expect(rateio.getByTestId("compras-rateio-tipo"), "sem seletor Como classificar").toHaveCount(0);
+  await expect(rateio.getByTestId("compras-classificacao-unica")).toBeVisible();
 
-  await rateio.getByTestId("compras-rateio-tipo").click();
-  await page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last()
-    .getByRole("option", { name: /Por valor/i }).first().click();
+  await rateio.getByTestId("compras-rateio-adicionar-por-valor").click();
   await expect(rateio.getByTestId("compras-rateio-linha-0")).toBeVisible();
-  // Conta contábil NÃO à vista — só sob Detalhes contábeis
+  // Conta Contábil NÃO à vista — só sob Detalhes contábeis
   await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toHaveCount(0);
   await rateio.getByTestId("compras-rateio-linha-0-detalhes").click();
   await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toBeVisible();
-  await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toContainText(/Conta contábil/i);
+  await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toContainText(/Conta Contábil/i);
   await foto(page, pasta, "ux1-3-rateio-por-valor-1440x900");
 
   // Mobile: inspeção visual (UI-SUPPORT-MATRIX DEFERRED) — não certifica suporte móvel

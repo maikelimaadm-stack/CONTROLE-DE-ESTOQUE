@@ -150,8 +150,8 @@ test("CX-1 — lançamento da COMPRA: o valor unitário '0' continua '0' depois 
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await escolher(page, "Fornecedor", c.fornecedor.nome);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await escolher(page, "Natureza de despesa", c.natureza.label);
-  await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Natureza Financeira", c.natureza.label);
+  await escolher(page, "Centro de Resultado", c.centro.label);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await escolherNaCelula(page, P, linha.getByTestId(`${P}-armazem`), c.armazem.nome);
@@ -351,8 +351,8 @@ async function preencherCompraPelaTela(page: Page, c: Cenario, top: { id: string
   await expect(page.getByTestId("compras-top-travada"), "a criação montou com a TOP pedida").toContainText(top.codigo);
   await escolher(page, "Fornecedor", c.fornecedor.nome);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await escolher(page, "Natureza de despesa", c.natureza.label);
-  await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Natureza Financeira", c.natureza.label);
+  await escolher(page, "Centro de Resultado", c.centro.label);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await escolherNaCelula(page, P, linha.getByTestId(`${P}-armazem`), c.armazem.nome);

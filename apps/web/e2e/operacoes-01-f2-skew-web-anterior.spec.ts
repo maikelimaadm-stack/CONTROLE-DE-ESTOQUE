@@ -246,10 +246,10 @@ async function abrirCriacaoDeCompra(page: Page, top: string, c: CenarioDaCompra,
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
+  // Sentido 2 = WEB DA BASE: rótulos da base (`Natureza de despesa`), não os deste HEAD.
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
-  // Decisão 319: Local de estoque padrão acima da grade (a linha nasce com ele).
-  await escolher(page, "Local de estoque", c.nomeArmazem);
+  // Local POR LINHA: o chamador escolhe na célula após Adicionar item (não há cabeçalho).
 }
 
 /** Clica no Salvar do web da base e devolve o POST (o corpo enviado e o devolvido) — o ouvinte nasce antes do clique. */
@@ -281,6 +281,7 @@ test("OP01-F2 · K-2b (sentido 2) — a Central de Compras do web da base contra
   await expect(salvar, `mundo ${mundo}: o nome acessível do Salvar do web da base com a TOP Automática, exato`).toHaveAttribute("aria-label", rotuloComAutomatica(mundo));
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
+  await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), c.nomeArmazem);
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), c.nomeProduto);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");

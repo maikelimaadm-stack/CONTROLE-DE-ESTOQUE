@@ -2504,8 +2504,8 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
     await expect(abaRateio, "Natureza/centro estão na aba Rateio e classificação").toBeVisible();
     await abaRateio.click();
     await expect(abaRateio).toHaveAttribute("aria-selected", "true");
-    await escolherNoCampo("Natureza de despesa", natureza.label);
-    await escolherNoCampo("Centro de resultado", centro.label);
+    await escolherNoCampo("Natureza Financeira", natureza.label);
+    await escolherNoCampo("Centro de Resultado", centro.label);
     const itens = page.getByTestId("compras-itens");
     // O WEB deste sentido é SEMPRE o deste HEAD (só a API é a da base), e a Central de Compras dele é o motor da
     // VISUAL-UX-04: "Adicionar produto", produto em `central-compras-produto`, campos com rótulo acessível. Nada de

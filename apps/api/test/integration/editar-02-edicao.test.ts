@@ -275,7 +275,8 @@ describe("(n) o número de consultas do /edicao: nenhuma por item", () => {
 
 describe("(p) P6: o /edicao declara a identidade da nota e o cabeçalho da compra vinda da nota — os MESMOS limites da PATCH", () => {
   const IDENTIDADE = { fornecedor_id: MSG_EDICAO_IDENTIDADE_DA_NOTA, numero_nota: MSG_EDICAO_IDENTIDADE_DA_NOTA, serie_nota: MSG_EDICAO_IDENTIDADE_DA_NOTA };
-  const DA_LINHA = Object.fromEntries(["produto_id", "quantidade", "valor_unitario", "desconto", "desconto_percentual", "valor_ipi", "valor_icms_st"].map((c) => [c, MSG_EDICAO_ITEM_DA_NOTA]));
+  /* decisão 324: produto_id do item da nota é remapeável na ABERTA — fora de ITEM_DA_LINHA_DA_NOTA. */
+  const DA_LINHA = Object.fromEntries(["quantidade", "valor_unitario", "desconto", "desconto_percentual", "valor_ipi", "valor_icms_st"].map((c) => [c, MSG_EDICAO_ITEM_DA_NOTA]));
 
   it("XML sem duplicatas: identidade + frete/outras despesas/desconto; com duplicatas: a P3 + identidade; manual com chave: só a identidade; sem chave: nada", async () => {
     const semDuplicatas = await compraDoXml({ duplicatas: false });

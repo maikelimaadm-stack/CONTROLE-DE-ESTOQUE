@@ -112,15 +112,18 @@ test("OP01-F7 · K2-1 (sentido 2) — a Central de Compras da base lança a comp
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", nomeFornecedor);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
+  // Sentido 2 = WEB DA BASE: rótulos da base (`Natureza de despesa`), não os deste HEAD.
   await escolher(page, "Natureza de despesa", ref.natureza.label);
   await escolher(page, "Centro de resultado", ref.centro.label);
-  // Decisão 319: Local de estoque padrão acima da grade (sem célula por linha).
-  await escolher(page, "Local de estoque", nomeLocal);
+  // Local POR LINHA na web da base (decisão 319/280) — não há campo de cabeçalho.
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
+  await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), nomeLocal);
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), nomeProduto);
   await linha.getByLabel("Quantidade do item 1").fill("4");
   await linha.getByLabel("Valor unitário do item 1").fill("25");
+  // Total do documento mora só na aba Totais (web da base e deste HEAD — sem faixa fora das abas).
+  await abrirAbaDoPainelDeCompras(page, "Totais");
   await expect(page.getByTestId("compras-total")).toContainText("100,00");
 
   const post = page.waitForResponse((r) => r.request().method() === "POST" && caminho(r) === "/api/compras/compras");

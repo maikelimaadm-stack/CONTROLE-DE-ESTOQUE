@@ -144,8 +144,8 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
 
   // (2) SALVAR SEM OBSERVAÇÃO: o documento está completo menos ela — a recusa é no campo, e nada sai para o servidor.
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await escolher(page, "Natureza de despesa", c.natureza.label);
-  await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Natureza Financeira", c.natureza.label);
+  await escolher(page, "Centro de Resultado", c.centro.label);
   const itens = page.getByTestId("compras-itens");
   await itens.getByTestId("central-compras-adicionar-item").click();
   const linha = itens.locator("tbody tr").first();

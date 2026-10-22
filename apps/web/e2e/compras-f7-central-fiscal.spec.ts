@@ -115,11 +115,11 @@ async function compraNaCentral(page: Page, c: Cenario) {
   const abaRateio = page.getByTestId(`${P}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
   if (await abaRateio.count()) {
     await abaRateio.click();
-    await escolher(page, "Natureza de despesa", c.natureza.label);
-    await escolher(page, "Centro de resultado", c.centro.label);
+    await escolher(page, "Natureza Financeira", c.natureza.label);
+    await escolher(page, "Centro de Resultado", c.centro.label);
   } else {
-    await escolher(page, "Natureza de despesa", c.natureza.label);
-    await escolher(page, "Centro de resultado", c.centro.label);
+    await escolher(page, "Natureza Financeira", c.natureza.label);
+    await escolher(page, "Centro de Resultado", c.centro.label);
   }
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
@@ -164,18 +164,16 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await expect(fiscais.getByTestId("compras-uf-nota"), "a UF vai em maiúsculas").toHaveValue("SP");
   await escolherNaLista(page, page.getByTestId("compras-tipo-documento-fiscal"), "NF-e");
   await fiscais.getByTestId("compras-valor-ipi").fill("10.00");
-  // O seguro mora no Financeiro, junto do que compõe o valor do documento.
-  const abaFinanceiro = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Financeiro" });
-  await abaFinanceiro.click();
-  await expect(abaFinanceiro).toHaveAttribute("aria-selected", "true");
-  await page.getByTestId("compras-seguro").fill("5.50");
+  // O seguro mora na aba Totais, junto do que compõe o valor do documento (não no Financeiro).
   await page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Totais" }).click();
+  await page.getByTestId("compras-seguro").fill("5.50");
   await expect(page.getByTestId("compras-total"), "100,00 + IPI 10,00 + seguro 5,50").toContainText("115,50");
   const rateio = await abaDoRateio(page);
   const classificacao = rateio.getByTestId("compras-item-classificacao-0");
   await expect(classificacao.getByTestId("compras-item-0-gera-estoque"), "premissa: o item nasce gerando estoque").toBeChecked();
   await classificacao.getByTestId("compras-item-0-imobilizado").check();
-  await expect(rateio.getByTestId("compras-rateio-tipo")).toContainText("Classificação única (documento)");
+  await expect(rateio.getByTestId("compras-classificacao-unica")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-tipo")).toHaveCount(0);
 
   // NO FIO: só as chaves preenchidas, os valores em TEXTO, a chave sem os espaços
   const post = postDaCompra(page);
@@ -215,7 +213,11 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await expect(secao.getByTestId("compras-consulta-uf")).toContainText("SP");
   await expect(secao.getByTestId("compras-consulta-tipo-documento")).toContainText("NF-e");
   await expect(secao.getByTestId("compras-consulta-ipi")).toContainText("10,00");
-  await expect(secao.getByTestId("compras-consulta-classificacao")).toContainText("Não classificado");
+  // CAPEX/OPEX mora na aba Rateio e classificação e só aparece quando informado (decisão 325).
+  await expect(secao.getByTestId("compras-consulta-classificacao"), "CAPEX/OPEX ausente não fica nos Dados fiscais").toHaveCount(0);
+  const abaRateioConsulta = page.getByTestId(`${P}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
+  await abaRateioConsulta.click();
+  await expect(page.getByTestId("compras-consulta-classificacao"), "sem CAPEX/OPEX gravado, nada na consulta").toHaveCount(0);
 });
 
 /* ═════════════════════════════════ FC-2 ═════════════════════════════════ */

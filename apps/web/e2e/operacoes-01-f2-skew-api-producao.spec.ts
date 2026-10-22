@@ -235,8 +235,8 @@ async function abrirCriacaoDeCompra(page: Page, top: string, c: CenarioDaCompra)
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
   await abrirAbaDoPainel(page, "Rateio e classificação");
-  await escolher(page, "Natureza de despesa", c.natureza.label);
-  await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Natureza Financeira", c.natureza.label);
+  await escolher(page, "Centro de Resultado", c.centro.label);
   return corpo;
 }
 

@@ -269,8 +269,8 @@ test("F2A-2 — compra, TOP Automática + aprovação 'Sempre': 'Salvar e confir
   await expect(salvar, "TOP Automática: o Salvar se chama 'Salvar e confirmar'").toHaveAttribute("aria-label", "Salvar e confirmar");
   await escolher(page, "Fornecedor", c.nomeFornecedor);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await escolher(page, "Natureza de despesa", c.natureza.label);
-  await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Natureza Financeira", c.natureza.label);
+  await escolher(page, "Centro de Resultado", c.centro.label);
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), c.nomeArmazem);

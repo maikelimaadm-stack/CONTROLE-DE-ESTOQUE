@@ -380,8 +380,8 @@ test("F6B-P3 — a rede cai depois de o servidor gravar a compra: o reenvio do S
   await expect(salvar, "o Salvar saiu da trava").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await escolher(page, "Natureza de despesa", c.natureza.label);
-  await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Natureza Financeira", c.natureza.label);
+  await escolher(page, "Centro de Resultado", c.centro.label);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.nomeArmazem);
