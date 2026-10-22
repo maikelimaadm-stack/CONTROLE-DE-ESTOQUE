@@ -62,10 +62,15 @@ async function abrirConsulta(page: Page, doc: DocLido, situacao = "aberto") {
 }
 
 async function abrirEdicao(page: Page, doc: DocLido) {
-  const doFio = page.waitForResponse((r) => r.request().method() === "GET" && caminho(r) === `/api/compras/compras/${doc.id}/edicao`);
+  /* Prefetch + cache do /edicao: o 2º Editar pode não ir ao fio — a UI basta. */
+  const doFio = page.waitForResponse(
+    (r) => r.request().method() === "GET" && caminho(r) === `/api/compras/compras/${doc.id}/edicao`,
+    { timeout: 8_000 }
+  ).catch(() => null);
   await expect(page.getByTestId("compras-editar")).toBeEnabled();
   await page.getByTestId("compras-editar").click();
-  expect((await doFio).status()).toBe(200);
+  const fio = await doFio;
+  if (fio) expect(fio.status()).toBe(200);
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-modo", "edicao");
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-documento-id", doc.id);
   await expect(page.getByTestId("compras-salvar")).toBeEnabled();

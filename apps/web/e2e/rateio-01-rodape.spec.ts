@@ -7,7 +7,7 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed, ty
  *
  * ┌─ O QUE ESTE ARQUIVO PROVA ─────────────────────────────────────────────────────────────────────┐
  * │ R01-1 com a capacidade `importacaoXml`, a criação da COMPRA tem a aba "Rateio e classificação"   │
- * │       no painel; tabelinha sempre à vista (Conta Contábil + Safra + CAPEX); sem seletor de modo; │
+ * │       no painel; CampoDaCentral sempre à vista (Conta Contábil + Safra + CAPEX); sem seletor;   │
  * │       sem itens na aba; sem “Adicionar rateio por valor”.                                       │
  * │ R01-2 a recusa do rateio ABRE a aba "Rateio e classificação", marca pendência e leva ao controle.│
  * │ R01-3 o CORPO do POST com fiscais e rateio por valor é BYTE A BYTE o de referência.             │

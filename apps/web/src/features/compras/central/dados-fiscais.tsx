@@ -120,15 +120,24 @@ function LinhaDoRateio({
     ?? (unica && (campo === "categoria_financeira_id" || campo === "centro_custo_id") ? e.erro(campo) : undefined);
   const base = String(e.totalExibido ?? "0");
   const valorExibido = valorDoPercentualDoRateio(base, l.percentual);
+  const dc = (c: "categoria_financeira_id" | "centro_custo_id") => (
+    unica
+      ? {
+          "data-campo": c,
+          ...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" as const } : {}),
+          ...(e.layout ? { "data-obrigatorio": String(e.obrigatorio(c)) } : {}),
+        }
+      : {}
+  );
   return <div data-testid={`compras-rateio-linha-${k}`} className="space-y-1">
     <ColunaDeCampos>
       <CampoDaCentral rotulo="Natureza Financeira" obrigatorio erro={erroEm("categoria_financeira_id")} icone="pesquisa" preenchido={Boolean(l.categoriaId)}
-        testId={unica ? "compras-classificacao-natureza" : `compras-rateio-linha-${k}-natureza`}>
+        testId={unica ? "compras-classificacao-natureza" : `compras-rateio-linha-${k}-natureza`} {...dc("categoria_financeira_id")}>
         <RefSelect resource="financial_categories" value={l.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa}
           onChange={(v) => onMudar({ categoriaId: v ?? "" })} labelHint={unica ? e.dica("categoria_financeira_id") : undefined} />
       </CampoDaCentral>
       <CampoDaCentral rotulo="Centro de Resultado" obrigatorio erro={erroEm("centro_custo_id")} icone="pesquisa" preenchido={Boolean(l.centroId)}
-        testId={unica ? "compras-classificacao-centro" : `compras-rateio-linha-${k}-centro`}>
+        testId={unica ? "compras-classificacao-centro" : `compras-rateio-linha-${k}-centro`} {...dc("centro_custo_id")}>
         <RefSelect resource="cost_centers" value={l.centroId} filter={{ kind: "analytic" }}
           onChange={(v) => onMudar({ centroId: v ?? "" })} labelHint={unica ? e.dica("centro_custo_id") : undefined} />
       </CampoDaCentral>

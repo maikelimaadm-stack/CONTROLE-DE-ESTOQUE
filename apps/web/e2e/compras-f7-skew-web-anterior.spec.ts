@@ -112,9 +112,9 @@ test("OP01-F7 · K2-1 (sentido 2) — a Central de Compras da base lança a comp
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", nomeFornecedor);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  // Sentido 2 = WEB DA BASE: rótulos da base (`Natureza de despesa`), não os deste HEAD.
-  await escolher(page, "Natureza de despesa", ref.natureza.label);
-  await escolher(page, "Centro de resultado", ref.centro.label);
+  // Sentido 2 = WEB DA BASE (pós-#151): "Natureza Financeira" / "Centro de Resultado".
+  await escolher(page, "Natureza Financeira", ref.natureza.label);
+  await escolher(page, "Centro de Resultado", ref.centro.label);
   // Local POR LINHA na web da base (decisão 319/280) — não há campo de cabeçalho.
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
