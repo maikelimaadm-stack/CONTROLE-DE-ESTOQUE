@@ -1,7 +1,7 @@
 /* Dimensões e cores vêm do padrão global de ações (botoes.css). */
 .portal {
-  --mg-btn-h: 28px;
-  --portal-espaco: 8px;
+  --mg-btn-h: 24px;
+  --portal-espaco: 6px;
   --mg-toolbar-h: 42px;
 }
 .contexto > button,
@@ -12,12 +12,12 @@
 .contexto > button,
 .contexto > span > button:first-child { padding-inline: 11px; }
 .contexto > span > button:last-child {
-  width: 28px;
-  min-width: 28px;
+  width: 24px;
+  min-width: 24px;
   padding: 0;
 }
 .contexto > span:has(> button) {
-  height: 28px;
+  height: 24px;
   margin-left: 0;
   background: #f1f3f4;
   box-shadow: none;
