@@ -1,9 +1,59 @@
-/* Aparência da Central, restrita às ações do Portal de Compras.
- * Mantém dimensões, comportamento e os componentes compartilhados de Vendas intactos. */
-.portal :is(:global(.tb-btn), :global(.mg-filter-pill__trigger), :global(.itbar .ib)),
+/* Padrão confortável do Portal de Compras; não altera as outras telas. */
+.portal {
+  --portal-botao: 32px;
+  --portal-espaco: 8px;
+  --mg-btn-h: var(--portal-botao);
+  --mg-toolbar-h: 42px;
+}
+
+.portal :is(:global(.tb-btn), :global(.mg-filter-pill__trigger), :global(.itbar .ib), :global(.view-seg button), :global(.fchip-lim)),
 .contexto > button,
 .contexto > span:has(> button),
+.contexto > span > button {
+  box-sizing: border-box;
+  height: var(--portal-botao);
+  min-height: var(--portal-botao);
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  gap: var(--portal-espaco);
+}
+
+.portal :is(:global(.tb-btn-icon), :global(.itbar .ib), :global(.view-seg button)),
+.contexto > span > button:last-child {
+  width: var(--portal-botao);
+  min-width: var(--portal-botao);
+  padding: 0;
+}
+
+.portal :is(:global(.tb-btn), :global(.itbar .ib), :global(.view-seg button)) svg,
+.contexto > button svg,
+.contexto > span > button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.contexto > button,
+.contexto > span > button:first-child { padding-inline: 12px; }
+.contexto > span:has(> button) { margin-left: 0; }
+
+/* Os grupos usam o mesmo intervalo, inclusive os botões de visualização. */
+.contexto,
+.portal :is(:global(.mg-toolbar), :global(.mg-toolbar > .ml-auto), :global(.mg-rail), :global(.mg-pills-rail__content), :global(.mg-pills-rail__content > .overflow-x-auto), :global(.itbar .grp), :global(.view-seg)) {
+  gap: var(--portal-espaco);
+}
+.portal :global(.mg-toolbar) { height: auto; }
 .portal :global(.view-seg) {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.portal :global(.view-seg button) { border-radius: 999px; }
+.portal :is(:global(.tb-btn), :global(.mg-filter-pill__trigger), :global(.itbar .ib), :global(.fchip-lim)),
+.contexto > button,
+.contexto > span:has(> button),
+.portal :global(.view-seg button) {
   background: #f1f3f4;
   color: #475569;
   border-color: transparent;
