@@ -21,8 +21,8 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed, ty
 const P = "central-compras";
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 const caminho = (r: Response) => new URL(r.url()).pathname;
-/** Testids do rateio na aba (grade sempre; Conta Contábil/Safra/CAPEX à vista). */
-const DO_RATEIO = ["compras-rateio-e-itens", "compras-rateio", "compras-classificacao-unica", "compras-rateio-tabela", "compras-rateio-linha-0", "compras-rateio-linha-0-conta", "compras-rateio-linha-0-safra", "compras-classificacao-gasto"];
+/** Testids do rateio na aba (campos padrão CampoDaCentral; Conta Contábil/Safra/CAPEX à vista). */
+const DO_RATEIO = ["compras-rateio-e-itens", "compras-rateio", "compras-classificacao-unica", "compras-rateio-linha-0", "compras-rateio-linha-0-conta", "compras-rateio-linha-0-safra", "compras-classificacao-gasto"];
 /** Testids fiscais (aba Fiscal + faixa de totais + Dados principais para tipo de documento). */
 const FISCAIS_NO_PAINEL = ["compras-chave-acesso", "compras-uf-nota", "compras-valor-ipi", "compras-valor-icms-st"];
 const ABA_RATEIO = "Rateio e classificação";
@@ -111,7 +111,7 @@ const hojeIso = () => new Date().toISOString().slice(0, 10);
 
 /* ═════════════════════════════════ R01-1 ═════════════════════════════════ */
 
-test("R01-1 — com importacaoXml, grade de rateio sempre à vista; Conta Contábil/Safra/CAPEX; sem seletor de modos", async ({ page }) => {
+test("R01-1 — com importacaoXml, campos padrão de rateio; Conta Contábil/Safra/CAPEX; sem seletor de modos", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
   const portas = await api<{ capacidades?: Record<string, unknown> }>(page, "GET", "/api/compras/compras/operation-types");

@@ -177,11 +177,13 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
         : e.documentoEmEdicao
           ? <div data-testid="compras-edicao-rateio-leitura" className="space-y-3">
               <RateioDaConsulta d={e.documentoEmEdicao} />
-              <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="travado" testId="compras-classificacao-gasto"
-                valor={typeof e.documentoEmEdicao["classificacao_gasto"] === "string"
-                  && (e.documentoEmEdicao["classificacao_gasto"] === "capex" || e.documentoEmEdicao["classificacao_gasto"] === "opex")
-                  ? enumLabel("classificacao_gasto", String(e.documentoEmEdicao["classificacao_gasto"]))
-                  : "—"} />
+              <ColunaDeCampos>
+                <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="selecao" testId="compras-classificacao-gasto"
+                  valor={typeof e.documentoEmEdicao["classificacao_gasto"] === "string"
+                    && (e.documentoEmEdicao["classificacao_gasto"] === "capex" || e.documentoEmEdicao["classificacao_gasto"] === "opex")
+                    ? enumLabel("classificacao_gasto", String(e.documentoEmEdicao["classificacao_gasto"]))
+                    : enumLabel("classification", "unclassified")} />
+              </ColunaDeCampos>
             </div>
           : rateioCampos.length > 0
             ? <ColunaDeCampos>{rateioCampos.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}</ColunaDeCampos>
