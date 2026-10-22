@@ -69,7 +69,7 @@ function LinhaDaParcelaNaTela({
         <CampoLeitura rotulo="Vencimento" adorno="data" valor={dateBR(l.vencimento)}
           testId={`compras-parcela-vencimento-campo-${k}`} />
         <CampoLeitura rotulo="Valor" valor={num(l.valor, 2)} testId={`compras-parcela-valor-campo-${k}`} />
-        <CampoLeitura rotulo="Observação" valor={l.entrada ? (l.observacao || "entrada") : (l.observacao || "")}
+        <CampoLeitura rotulo="Observação" valor={l.observacao || (l.entrada ? "Entrada" : "")}
           testId={`compras-parcela-observacao-campo-${k}`} />
       </>}
     </ColunaDeCampos>
