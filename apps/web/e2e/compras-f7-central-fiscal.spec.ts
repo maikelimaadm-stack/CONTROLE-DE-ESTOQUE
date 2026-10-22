@@ -164,12 +164,9 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await expect(fiscais.getByTestId("compras-uf-nota"), "a UF vai em maiúsculas").toHaveValue("SP");
   await escolherNaLista(page, page.getByTestId("compras-tipo-documento-fiscal"), "NF-e");
   await fiscais.getByTestId("compras-valor-ipi").fill("10.00");
-  // O seguro mora no Financeiro, junto do que compõe o valor do documento.
-  const abaFinanceiro = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Financeiro" });
-  await abaFinanceiro.click();
-  await expect(abaFinanceiro).toHaveAttribute("aria-selected", "true");
-  await page.getByTestId("compras-seguro").fill("5.50");
+  // O seguro mora na aba Totais, junto do que compõe o valor do documento (não no Financeiro).
   await page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Totais" }).click();
+  await page.getByTestId("compras-seguro").fill("5.50");
   await expect(page.getByTestId("compras-total"), "100,00 + IPI 10,00 + seguro 5,50").toContainText("115,50");
   const rateio = await abaDoRateio(page);
   const classificacao = rateio.getByTestId("compras-item-classificacao-0");
