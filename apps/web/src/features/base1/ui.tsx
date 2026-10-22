@@ -4,15 +4,17 @@ import * as Popover from "@radix-ui/react-popover";
 import { FileText, Table2, LayoutGrid, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** Botão de ícone do modelo base (tb-btn-icon do MG: 28px, fundo cinza, ativo em verde). */
-export const IconBtn = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; size?: "sm" | "md"; danger?: boolean }>(({ className, active, size = "md", danger, children, ...p }, ref) => (
-  <button ref={ref} type="button" className={cn("tb-btn tb-btn-icon", size === "sm" && "tb-btn-sm", active && "is-active", danger && "is-danger", className)} {...p}>{children}</button>
+import { DicaDeAcao } from "@/components/ui";
+
+/** Botão de ícone com a mesma dica visual das ações da Central. */
+export const IconBtn = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; size?: "sm" | "md"; danger?: boolean }>(({ className, active, size = "md", danger, children, title, ...p }, ref) => (
+  <DicaDeAcao texto={title ?? p["aria-label"]}><button ref={ref} type="button" className={cn("tb-btn tb-btn-icon", size === "sm" && "tb-btn-sm", active && "is-active", danger && "is-danger", className)} {...p}>{children}</button></DicaDeAcao>
 ));
 IconBtn.displayName = "IconBtn";
 
 /** Botão com texto (tb-btn-green / gray / red / outline do MG). */
-export const PillBtn = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "green" | "gray" | "red" | "outline" }>(({ className, tone = "green", children, ...p }, ref) => (
-  <button ref={ref} type="button" className={cn("tb-btn", { green: "tb-btn-green", gray: "tb-btn-gray", red: "tb-btn-red", outline: "tb-btn-outline" }[tone], className)} {...p}>{children}</button>
+export const PillBtn = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "green" | "gray" | "red" | "outline" }>(({ className, tone = "green", children, title, ...p }, ref) => (
+  <DicaDeAcao texto={title}><button ref={ref} type="button" className={cn("tb-btn", { green: "tb-btn-green", gray: "tb-btn-gray", red: "tb-btn-red", outline: "tb-btn-outline" }[tone], className)} {...p}>{children}</button></DicaDeAcao>
 ));
 PillBtn.displayName = "PillBtn";
 
@@ -20,7 +22,7 @@ export type ViewMode = "record" | "table" | "cards";
 /** Alternância Registro / Tabela / Cards (view-seg do MG). */
 export function ViewSwitch({ value, onChange, recordDisabled }: { value: ViewMode; onChange: (m: ViewMode) => void; recordDisabled?: boolean }) {
   const item = (m: ViewMode, label: string, Icon: React.ComponentType<{ className?: string }>, disabled?: boolean) => (
-    <button type="button" aria-label={label} title={label} aria-pressed={value === m} disabled={disabled} onClick={() => onChange(m)}><Icon /></button>
+    <DicaDeAcao texto={label}><button type="button" aria-label={label} aria-pressed={value === m} disabled={disabled} onClick={() => onChange(m)}><Icon /></button></DicaDeAcao>
   );
   return <div className="view-seg" role="group" aria-label="Modo de visualização">{item("record", "Registro", FileText, recordDisabled)}{item("table", "Tabela", Table2)}{item("cards", "Cards", LayoutGrid)}</div>;
 }

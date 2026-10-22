@@ -3,6 +3,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, FilterX, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import * as Select from "@radix-ui/react-select";
 
 /**
  * Filtro de cabeçalho do painel de itens — o `fpop` do HTML de referência (padrão Excel): limpar, condição
@@ -53,12 +54,11 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
   const [op, setOp] = React.useState(atual?.op ?? "");
   const [v1, setV1] = React.useState(atual?.v1 ?? "");
   const [v2, setV2] = React.useState(atual?.v2 ?? "");
-  const [opAberto, setOpAberto] = React.useState(false);
   const [busca, setBusca] = React.useState("");
   const [pos, setPos] = React.useState<React.CSSProperties>({ visibility: "hidden" });
   const fechar = React.useRef(onFechar); fechar.current = onFechar;
   React.useEffect(() => {
-    const teclado = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); fechar.current(); } };
+    const teclado = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); fechar.current(); } };
     document.addEventListener("keydown", teclado);
     return () => document.removeEventListener("keydown", teclado);
   }, []);
@@ -83,21 +83,26 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
   // portal no body: um ancestral com transform desloca o position:fixed para longe do cabeçalho
   return createPortal(<div className="b1ref">
     <button type="button" aria-label="Fechar o filtro" tabIndex={-1} className="fixed inset-0 z-[59] cursor-default" onClick={onFechar} />
-    <div className="pop fpop" role="menu" aria-label="Filtrar coluna" style={pos}>
-      <div className="fpop-h"><span>Filtrar</span><b>{rotulo}</b></div>
+    <div className="pop fpop" role="menu" aria-label={`Filtrar coluna ${rotulo}`} style={pos}>
       <button type="button" className="fmi" disabled={!atual} onClick={() => onAplicar(null)}><FilterX size={14} /><span className="fval-l">Limpar filtro de “{rotulo}”</span></button>
       <span className="opt-sep" aria-hidden="true" />
       <span className="fsec">{tipo === "num" ? "Filtros de número" : tipo === "data" ? "Filtros de data" : "Filtros de texto"}</span>
       <div className="fcond">
-        <button type="button" className="fselb" aria-haspopup="listbox" aria-expanded={opAberto} onClick={() => setOpAberto((v) => !v)}>
-          <span className="fselb-l">{ops.find(([k]) => k === op)?.[1]}</span><span className="fselb-c"><ChevronDown size={14} /></span>
-        </button>
+        <Select.Root value={op || "sem"} onValueChange={(v) => setOp(v === "sem" ? "" : v)}>
+          <Select.Trigger className="fselb" aria-label="Condição">
+            <span className="fselb-l"><Select.Value /></span><Select.Icon className="fselb-c"><ChevronDown size={14} /></Select.Icon>
+          </Select.Trigger>
+          <Select.Portal><div className="b1ref">
+            <Select.Content position="popper" sideOffset={4} className="fsell foperadores" aria-label="Condição" onEscapeKeyDown={(e) => e.stopPropagation()}>
+              <Select.Viewport>
+                {ops.map(([k, l]) => <Select.Item key={k} value={k || "sem"} className={cn("fopt", k === op && "on")}>
+                  <span className="fopt-c"><Select.ItemIndicator><Check size={12} /></Select.ItemIndicator></span><Select.ItemText>{l}</Select.ItemText>
+                </Select.Item>)}
+              </Select.Viewport>
+            </Select.Content>
+          </div></Select.Portal>
+        </Select.Root>
       </div>
-      {opAberto && <div className="fsell" role="listbox" aria-label="Condição">
-        {ops.map(([k, l]) => <button type="button" key={k} className={cn("fopt", k === op && "on")} role="option" aria-selected={k === op} onClick={() => { setOp(k); setOpAberto(false); }}>
-          <span className="fopt-c">{k === op && <Check size={12} />}</span><span className="fopt-l">{l}</span>
-        </button>)}
-      </div>}
       {op && <div className="fcond">
         <input className="fin" value={v1} onChange={(e) => setV1(e.target.value)} placeholder={ph} aria-label="Valor da condição" />
         {op === "entre" && <><span className="fe">e</span><input className="fin" value={v2} onChange={(e) => setV2(e.target.value)} placeholder={ph} aria-label="Segundo valor da condição" /></>}
@@ -106,7 +111,6 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
       <label className="cfgb" style={{ margin: "0 8px 6px", height: 28 }}><Search size={14} />
         <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar valor…" aria-label="Procurar valor" />
       </label>
-      <div className="ph2 fph" aria-hidden="true"><span /><span>Valor</span><span className="r">Linhas</span></div>
       <button type="button" className="pr fvr ftodos" role="checkbox" aria-checked={todos} onClick={() => setSel((p) => { const n = new Set(p); for (const [v] of vistos) { if (todos) n.delete(v); else n.add(v); } return n; })}>
         <span className="fck"><Chk on={todos} parte={algum} /></span><span className="pn">(Selecionar Tudo)</span><span className="r">{sel.size} de {contagem.length}</span>
       </button>

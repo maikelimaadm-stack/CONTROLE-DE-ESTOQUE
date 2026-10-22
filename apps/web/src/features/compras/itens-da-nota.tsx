@@ -6,6 +6,7 @@ import { D } from "@agro/shared";
 import { api } from "@/lib/api";
 import { brl, dateBR, num } from "@/lib/utils";
 import { Base1Grid } from "@/features/base1/grid";
+import { DicaDeAcao } from "@/components/ui";
 import { FiltroDeColuna, casa, type FiltroAtivo, type Tipo } from "./filtro-de-coluna";
 import { ColunasDosItens } from "./colunas-dos-itens";
 import type { Base1Column, Row } from "@/features/base1/types";
@@ -132,14 +133,14 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
       {documento && itens.length > 0 && !recolhido && <>
         {Object.keys(filtros).length > 0 && <button type="button" className="fchip-lim" onClick={() => setFiltros({})}><X className="h-3 w-3" /> Limpar filtros</button>}
         <span className="grp">
-          <button type="button" className="ib" aria-label="Configurar colunas dos itens" title={`Configurar colunas · ${colunas.length - ocultas.size} de ${colunas.length} colunas`} onClick={() => setMenuColunas(true)}><Columns3 /></button>
+          <DicaDeAcao texto={`Configurar colunas · ${colunas.length - ocultas.size} de ${colunas.length} colunas`}><button type="button" className="ib" aria-label="Configurar colunas dos itens" onClick={() => setMenuColunas(true)}><Columns3 /></button></DicaDeAcao>
         </span>
         <span className="vdiv" aria-hidden="true" />
       </>}
       {menuColunas && <ColunasDosItens colunas={colunasOrdenadas} ocultas={ocultas} onOrdenar={setOrdem}
         onMudar={(k, ocultar) => setOcultas((p) => { const n = new Set(p); if (ocultar) n.add(k); else n.delete(k); return n; })}
         onRestaurar={() => { setOcultas(new Set()); setColWidths({}); setOrdem([]); setCongeladas(0); }} onFechar={() => setMenuColunas(false)} />}
-      <span className="grp"><button type="button" className="ib" data-testid="itens-maximizar" aria-label={maximizado ? "Restaurar tamanho" : "Maximizar o painel"} title={maximizado ? "Restaurar tamanho" : "Maximizar o painel"} onClick={onMaximizar}>{maximizado ? <Minimize /> : <Maximize />}</button><button type="button" className="ib" data-testid="itens-recolher" aria-expanded={!recolhido} aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} title={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={onRecolher}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button></span>
+      <span className="grp"><DicaDeAcao texto={maximizado ? "Restaurar tamanho" : "Maximizar o painel"}><button type="button" className="ib" data-testid="itens-maximizar" aria-label={maximizado ? "Restaurar tamanho" : "Maximizar o painel"} onClick={onMaximizar}>{maximizado ? <Minimize /> : <Maximize />}</button></DicaDeAcao><DicaDeAcao texto={recolhido ? "Abrir o painel" : "Recolher o painel"}><button type="button" className="ib" data-testid="itens-recolher" aria-expanded={!recolhido} aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={onRecolher}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button></DicaDeAcao></span>
     </div>
     {recolhido ? null : !documento
       ? <div className="itvazio">
