@@ -20,6 +20,7 @@ import { DialogoImportarXml } from "@/features/compras/importacao/enviar-xml";
 import { Button } from "@/components/ui";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import estilos from "@/features/sales/portal-vendas.module.css";
+import botoes from "@/features/compras/portal-compras.module.css";
 
 /**
  * PORTAL DE COMPRAS (COMPRAS-01, decisão 267): Documentos (primeira e padrão) + Visão Geral + Processos.
@@ -85,7 +86,7 @@ function Documentos() {
   const opcoes = [...visiveis].reverse().map((v) => ({ value: v.variante, label: tr(v.chaveI18n) }));
   const rotuloDoTipo = opcoes.find((o) => o.value === atual)?.label ?? TODOS_OS_TIPOS;
   const focarTipo = React.useRef(false);
-  const barra = <span className={estilos.contexto} role="group" aria-label="Contexto operacional">
+  const barra = <span className={`${estilos.contexto} ${botoes.contexto}`} role="group" aria-label="Contexto operacional">
     <SeletorDeTipoDeDocumento prefixo="compras" valor={atual} opcoes={opcoes} focarAoMontar={focarTipo} onChange={(v) => { focarTipo.current = true; setEspecie(v); }} />
     <NovoDocumentoPorTop variante={atual} rotuloDoTipo={rotuloDoTipo} todosOsGrupos={grupos.filter((g) => g.variante.variante !== "orcamento")} prefixo="compras" rota={rotaDeLancamentoDeCompra} />
     <ImportarXml />
@@ -102,7 +103,7 @@ function Documentos() {
   const [maximizado, setMaximizado] = React.useState(false);
   const dividir = (altura: number) => { setAlturaDosItens(altura); setItensRecolhidos(altura <= 34); };
   const recolher = () => { setMaximizado(false); setItensRecolhidos((v) => !v); if (alturaDosItens <= 34) setAlturaDosItens(ALTURA_PADRAO_DOS_ITENS); };
-  return <div data-testid="compras-documentos" data-especie={atual} className="compras-paineis flex min-h-0 flex-1 flex-col overflow-hidden">
+  return <div data-testid="compras-documentos" data-especie={atual} className={`${botoes.portal} compras-paineis flex min-h-0 flex-1 flex-col overflow-hidden`}>
     <div data-compras-mestre hidden={maximizado} className={maximizado ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
       <DocumentosDeCompraList especie={atual} barra={barra} onSelecionar={aoSelecionar} />
     </div>

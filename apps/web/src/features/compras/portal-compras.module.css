@@ -1,0 +1,83 @@
+/* Aparência da Central, restrita às ações do Portal de Compras.
+ * Mantém dimensões, comportamento e os componentes compartilhados de Vendas intactos. */
+.portal :is(:global(.tb-btn), :global(.mg-filter-pill__trigger), :global(.itbar .ib)),
+.contexto > button,
+.contexto > span:has(> button),
+.portal :global(.view-seg) {
+  background: #f1f3f4;
+  color: #475569;
+  border-color: transparent;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1);
+}
+
+.contexto > button {
+  border-radius: 999px;
+}
+
+/* O Novo continua dividido: uma única sombra envolve corpo e seta. */
+.contexto > span > button {
+  background: transparent;
+  color: #475569;
+  border-color: #dfe2e7;
+}
+
+.portal :is(:global(.tb-btn), :global(.mg-filter-pill__trigger), :global(.itbar .ib)):hover:not(:disabled),
+.contexto > button:hover:not(:disabled),
+.contexto > span > button:hover:not(:disabled) {
+  background: #e8ecef;
+  color: #0f172a;
+  box-shadow: 0 3px 9px rgba(34, 197, 94, .36);
+}
+
+.portal :is(:global(.tb-btn), :global(.mg-filter-pill__trigger), :global(.itbar .ib)):active:not(:disabled),
+.contexto > button:active:not(:disabled),
+.contexto > span > button:active:not(:disabled) {
+  background: #dde3e8;
+}
+
+.portal :global(.tb-btn.is-active),
+.portal :global(.mg-filter-pill.is-active .mg-filter-pill__trigger),
+.portal :global(.tb-btn[data-state="open"]),
+.contexto > button[data-state="open"],
+.contexto > span > button:is([data-state="open"], [aria-expanded="true"]) {
+  background: #e2e8f0;
+  color: #0f172a;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px #cbd5e1, 0 2px 6px rgba(34, 197, 94, .30);
+}
+
+.portal :global(.view-seg button) {
+  color: #475569;
+}
+.portal :global(.view-seg button):hover:not(:disabled) {
+  background: rgba(15, 23, 42, .07);
+  color: #0f172a;
+}
+.portal :global(.view-seg button[aria-pressed="true"]) {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .08);
+}
+
+/* Ações destrutivas continuam reconhecíveis, como na Central. */
+.portal :global(.tb-btn-red),
+.portal :global(.tb-btn.is-danger) { color: #b91c1c; }
+.portal :is(:global(.tb-btn-red), :global(.tb-btn.is-danger)):hover:not(:disabled) {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+  box-shadow: 0 3px 9px rgba(185, 28, 28, .18);
+}
+
+.portal :is(:global(.tb-btn), :global(.mg-filter-pill__trigger), :global(.itbar .ib), :global(.view-seg button)):focus-visible,
+.contexto button:focus-visible {
+  outline: 2px solid #22a85c;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal :is(:global(.tb-btn), :global(.mg-filter-pill__trigger), :global(.itbar .ib), :global(.view-seg)),
+  .contexto > button,
+  .contexto > span:has(> button) { transition: none; }
+}
