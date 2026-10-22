@@ -12,8 +12,7 @@ import { RefSelect } from "@/components/ui/ref-select";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { SimpleTable, type Row } from "@/features/docs/shared";
 import {
-  centroDoItem, itemGeraEstoque, itemImobilizado, naturezaDoItem, opcoesDeNaturezaDeDespesa,
-  percentualDoValorDoRateio, somaDoRateio, valorDoPercentualDoRateio,
+  opcoesDeNaturezaDeDespesa, percentualDoValorDoRateio, somaDoRateio, valorDoPercentualDoRateio,
   type ChaveDosDadosFiscais, type EstadoDaCriacao
 } from "./estado";
 
@@ -64,7 +63,6 @@ export function DadosFiscaisDaCriacao({ e, noPainel = false }: { e: EstadoDaCria
     cc(c, rotulo, { preenchido: f[c] !== "" },
       <Input data-testid={testId} type="number" step="0.01" min="0" inputMode="decimal" value={f[c]} onChange={(ev) => e.mudarFiscal({ [c]: ev.target.value })} />);
   return <div data-testid="compras-dados-fiscais" className="space-y-1">
-    {!noPainel && <p className="text-[11px] font-semibold uppercase text-slate-500">Dados fiscais</p>}
     <ColunaDeCampos>
       {cc("chave_acesso", "Chave de acesso", { preenchido: f.chave_acesso !== "", dica: "Os 44 dígitos da chave da NF-e (espaços são ignorados)." },
         <Input data-testid="compras-chave-acesso" inputMode="numeric" autoComplete="off" maxLength={60} placeholder="44 dígitos" value={f.chave_acesso}
@@ -107,200 +105,152 @@ export function TipoDeTituloDaCriacao({ e }: { e: EstadoDaCriacao }) {
 }
 
 /**
- * Classificação da compra — classificação única por padrão; rateio por valor sob demanda.
- * Sem seletor de modos; por_produto só como leitura de legado.
+ * Grade do rateio (estilo vencimentos): Natureza, Centro, Conta Contábil, Safra, %, Valor —
+ * todos à vista, sem acordeão nem dependência entre campos.
  */
-const AJUDA_CONTA_CONTABIL =
-  "Opcional — informe somente se sua operação utiliza apropriação contábil detalhada. Natureza = tipo de gasto; Centro = destino/atividade; Conta = classificação no Plano de Contas.";
+const GRADE_RATEIO =
+  "grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,1.1fr)_minmax(0,1fr)_88px_104px_auto] md:items-end";
 
-/** Linha do rateio por valor: Natureza Financeira, Centro de Resultado, %, Valor (R$). */
-function LinhaDoRateioPorValor({ e, k, l }: { e: EstadoDaCriacao; k: number; l: { categoriaId: string; centroId: string; contaId: string; safraId: string; percentual: string } }) {
-  const erroEm = (campo: string) => e.erro(`rateio.linhas[${k}].${campo}`) ?? e.erro(`rateio.linhas.${k}.${campo}`);
-  const [avancado, setAvancado] = React.useState(Boolean(l.contaId) || Boolean(l.safraId));
+type LinhaRateioNaTela = { categoriaId: string; centroId: string; contaId: string; safraId: string; percentual: string };
+
+/** Uma linha da tabelinha — Conta Contábil e Safra sempre desenhados (opcionais, nunca escondidos). */
+function LinhaDoRateio({
+  e, k, l, unica, onMudar, onRemover,
+}: {
+  e: EstadoDaCriacao; k: number; l: LinhaRateioNaTela; unica: boolean;
+  onMudar: (p: Partial<LinhaRateioNaTela>) => void; onRemover?: () => void;
+}) {
+  const erroEm = (campo: string) => e.erro(`rateio.linhas[${k}].${campo}`) ?? e.erro(`rateio.linhas.${k}.${campo}`)
+    ?? (unica && (campo === "categoria_financeira_id" || campo === "centro_custo_id") ? e.erro(campo) : undefined);
   const base = String(e.totalExibido ?? "0");
   const valorExibido = valorDoPercentualDoRateio(base, l.percentual);
-  const aoMudarValor = (raw: string) => {
-    e.mudarLinhaDoRateio(k, { percentual: percentualDoValorDoRateio(base, raw) });
-  };
-  return <div data-testid={`compras-rateio-linha-${k}`} className="space-y-2 rounded-md border border-slate-100 px-2 py-2">
-    <div className="grid grid-cols-12 gap-2">
-      <div className="col-span-12 md:col-span-3">
-        <CampoDaCentral rotulo="Natureza Financeira" obrigatorio erro={erroEm("categoria_financeira_id")} icone="pesquisa" preenchido={Boolean(l.categoriaId)}>
-          <RefSelect resource="financial_categories" value={l.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa} onChange={(v) => e.mudarLinhaDoRateio(k, { categoriaId: v ?? "" })} />
-        </CampoDaCentral>
-      </div>
-      <div className="col-span-12 md:col-span-3">
-        <CampoDaCentral rotulo="Centro de Resultado" obrigatorio erro={erroEm("centro_custo_id")} icone="pesquisa" preenchido={Boolean(l.centroId)}>
-          <RefSelect resource="cost_centers" value={l.centroId} filter={{ kind: "analytic" }} onChange={(v) => e.mudarLinhaDoRateio(k, { centroId: v ?? "" })} />
-        </CampoDaCentral>
-      </div>
-      <div className="col-span-6 md:col-span-2">
-        <CampoDaCentral rotulo="Percentual (%)" obrigatorio erro={erroEm("percentual")} preenchido={l.percentual !== ""}>
-          <Input data-testid={`compras-rateio-linha-${k}-percentual`} inputMode="decimal" value={l.percentual} onChange={(ev) => e.mudarLinhaDoRateio(k, { percentual: ev.target.value })} />
-        </CampoDaCentral>
-      </div>
-      <div className="col-span-6 md:col-span-2">
-        <CampoDaCentral rotulo="Valor (R$)" preenchido={valorExibido !== ""}>
-          <Input data-testid={`compras-rateio-linha-${k}-valor`} inputMode="decimal" value={valorExibido}
-            onChange={(ev) => aoMudarValor(ev.target.value)} />
-        </CampoDaCentral>
-      </div>
-      <div className="col-span-4 md:col-span-2 flex items-end pb-0.5">
-        {e.rateio.linhas.length > 1 && <Button size="sm" variant="ghost" data-testid={`compras-rateio-linha-${k}-remover`} onClick={() => e.removerLinhaDoRateio(k)}>Remover linha</Button>}
-      </div>
-    </div>
-    <div>
-      <button type="button" data-testid={`compras-rateio-linha-${k}-detalhes`} className="text-[12px] font-medium text-brand-700 hover:underline"
-        onClick={() => setAvancado((v) => !v)} aria-expanded={avancado}>
-        {avancado ? "Ocultar detalhes contábeis" : "Detalhes contábeis (opcional)"}
-      </button>
-      {avancado && <div className="mt-2 grid grid-cols-12 gap-2" data-testid={`compras-rateio-linha-${k}-avancado`}>
-        <div className="col-span-12 md:col-span-6">
-          <CampoDaCentral rotulo="Conta Contábil (opcional)" icone="pesquisa" preenchido={Boolean(l.contaId)}
-            abaixo={<p className="text-[11px] text-slate-500">{AJUDA_CONTA_CONTABIL}</p>}>
-            <RefSelect resource="chart_accounts" value={l.contaId} onChange={(v) => e.mudarLinhaDoRateio(k, { contaId: v ?? "" })} />
-          </CampoDaCentral>
-        </div>
-        <div className="col-span-12 md:col-span-6">
-          <CampoDaCentral rotulo="Safra (opcional)" icone="pesquisa" erro={erroEm("safra_id")} preenchido={Boolean(l.safraId)}>
-            <RefSelect resource="harvests" value={l.safraId} onChange={(v) => e.mudarLinhaDoRateio(k, { safraId: v ?? "" })} />
-          </CampoDaCentral>
-        </div>
-      </div>}
+  return <div data-testid={`compras-rateio-linha-${k}`} className={GRADE_RATEIO + " border-b border-slate-100 px-2 py-2 last:border-b-0"}>
+    <CampoDaCentral rotulo="Natureza Financeira" obrigatorio erro={erroEm("categoria_financeira_id")} icone="pesquisa" preenchido={Boolean(l.categoriaId)}
+      testId={unica ? "compras-classificacao-natureza" : undefined}>
+      <RefSelect resource="financial_categories" value={l.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa}
+        onChange={(v) => onMudar({ categoriaId: v ?? "" })} labelHint={unica ? e.dica("categoria_financeira_id") : undefined} />
+    </CampoDaCentral>
+    <CampoDaCentral rotulo="Centro de Resultado" obrigatorio erro={erroEm("centro_custo_id")} icone="pesquisa" preenchido={Boolean(l.centroId)}
+      testId={unica ? "compras-classificacao-centro" : undefined}>
+      <RefSelect resource="cost_centers" value={l.centroId} filter={{ kind: "analytic" }}
+        onChange={(v) => onMudar({ centroId: v ?? "" })} labelHint={unica ? e.dica("centro_custo_id") : undefined} />
+    </CampoDaCentral>
+    <CampoDaCentral rotulo="Conta Contábil" icone="pesquisa" preenchido={Boolean(l.contaId)}
+      testId={`compras-rateio-linha-${k}-conta`}>
+      <RefSelect resource="chart_accounts" value={l.contaId} onChange={(v) => onMudar({ contaId: v ?? "" })} />
+    </CampoDaCentral>
+    <CampoDaCentral rotulo="Safra" icone="pesquisa" erro={erroEm("safra_id")} preenchido={Boolean(l.safraId)}
+      testId={`compras-rateio-linha-${k}-safra`}>
+      <RefSelect resource="harvests" value={l.safraId} onChange={(v) => onMudar({ safraId: v ?? "" })} />
+    </CampoDaCentral>
+    <CampoDaCentral rotulo="%" obrigatorio erro={erroEm("percentual")} preenchido={l.percentual !== ""}>
+      <Input data-testid={`compras-rateio-linha-${k}-percentual`} inputMode="decimal" value={l.percentual}
+        onChange={(ev) => onMudar({ percentual: ev.target.value })} />
+    </CampoDaCentral>
+    <CampoDaCentral rotulo="Valor" preenchido={valorExibido !== ""}>
+      <Input data-testid={`compras-rateio-linha-${k}-valor`} inputMode="decimal" value={valorExibido}
+        onChange={(ev) => onMudar({ percentual: percentualDoValorDoRateio(base, ev.target.value) })} />
+    </CampoDaCentral>
+    <div className="flex items-end pb-0.5">
+      {onRemover
+        ? <Button size="sm" variant="ghost" data-testid={`compras-rateio-linha-${k}-remover`} onClick={onRemover}>Remover</Button>
+        : <span className="invisible text-[12px]">—</span>}
     </div>
   </div>;
 }
 
 /**
- * Classificação da compra: par único por padrão; “Adicionar rateio por valor” para dividir.
- * Sem seletor `Como classificar` / `por_produto` para compras novas. Legado por_produto: resumo discreto.
+ * Rateio e classificação: tabelinha sempre à vista (estilo vencimentos). Conta Contábil, Safra e CAPEX/OPEX
+ * nunca ficam atrás de acordeão. Sem itens na aba; legado por_produto só em leitura.
  */
 export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
   if (!e.editarRateio) return null;
   const r = e.rateio;
   const f = e.fiscal;
   const h = e.cabecalho;
-  const erroEm = (base: string, k: number, campo: string) => e.erro(`${base}[${k}].${campo}`) ?? e.erro(`${base}.${k}.${campo}`);
   const legadoPorProduto = r.tipo === "por_produto";
   const porValor = r.tipo === "por_valor";
-  const nomeDoItem = (it: Record<string, unknown>, k: number) => {
-    const nome = typeof it["product_name"] === "string" && it["product_name"] ? it["product_name"] : "";
-    const codigo = typeof it["product_code"] === "string" && it["product_code"] ? it["product_code"] : "";
-    if (nome || codigo) return [codigo, nome].filter(Boolean).join(" — ");
-    return `Item ${k + 1}`;
-  };
+  /** Uma linha na tela: por_valor usa as linhas; classificação única (documento) = par do cabeçalho a 100%. */
+  const linhasNaTela: LinhaRateioNaTela[] = porValor
+    ? r.linhas
+    : [{
+        categoriaId: h.categoria_financeira_id, centroId: h.centro_custo_id,
+        contaId: "", safraId: "", percentual: "100",
+      }];
   const base = (() => { try { return D(String(e.totalExibido ?? "0")); } catch { return D(0); } })();
-  const valorUsado = r.linhas.reduce((a, l) => {
+  const valorUsado = linhasNaTela.reduce((a, l) => {
     try { return a.plus(base.times(D(l.percentual || "0")).div(100)); } catch { return a; }
   }, D(0));
   const diferenca = base.minus(valorUsado);
+  const somaPct = porValor ? somaDoRateio(r) : "100";
+
+  const mudarLinha = (k: number, p: Partial<LinhaRateioNaTela>) => {
+    if (!porValor) {
+      const precisaDividir = Boolean(p.contaId) || Boolean(p.safraId)
+        || (p.percentual !== undefined && p.percentual.trim() !== "" && p.percentual.trim() !== "100");
+      if (precisaDividir) {
+        e.ativarRateioPorValor({
+          ...(p.categoriaId !== undefined ? { categoriaId: p.categoriaId } : {}),
+          ...(p.centroId !== undefined ? { centroId: p.centroId } : {}),
+          ...(p.contaId !== undefined ? { contaId: p.contaId } : {}),
+          ...(p.safraId !== undefined ? { safraId: p.safraId } : {}),
+          ...(p.percentual !== undefined ? { percentual: p.percentual } : {}),
+        });
+        return;
+      }
+      /* Par do documento: Natureza/Centro no cabeçalho enquanto a linha for a única a 100% sem conta/safra. */
+      if (p.categoriaId !== undefined) e.mudar({ categoria_financeira_id: p.categoriaId });
+      if (p.centroId !== undefined) e.mudar({ centro_custo_id: p.centroId });
+      return;
+    }
+    e.mudarLinhaDoRateio(k, p);
+  };
+  const adicionarLinha = () => {
+    if (!porValor) {
+      e.ativarRateioPorValor(undefined, { categoriaId: "", centroId: "", contaId: "", safraId: "", percentual: "" });
+      return;
+    }
+    e.adicionarLinhaDoRateio();
+  };
 
   return <div data-testid="compras-rateio-e-itens" className="mt-1 space-y-3">
-    <div data-testid="compras-rateio" className="space-y-3">
+    <div data-testid="compras-rateio" className="space-y-2">
       {legadoPorProduto ? (
         <div data-testid="compras-rateio-legado-por-produto" className="space-y-2 rounded-md border border-amber-100 bg-amber-50/40 px-3 py-2">
-          <p className="text-[12px] font-medium text-slate-700">Classificação por produto (legado)</p>
           <p className="text-[12px] text-slate-600">
-            Esta compra foi gravada com classificação por item. A classificação permanece; novas compras usam classificação única ou rateio por valor.
+            Esta compra foi gravada com classificação por item. A classificação permanece; novas compras usam a grade de rateio.
           </p>
         </div>
-      ) : porValor ? (
-        <div data-testid="compras-rateio-por-valor" className="space-y-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Rateio por valor</p>
-            <p className="text-[12px] text-slate-600" data-testid="compras-rateio-base">Base: {num(e.totalExibido, 2)}</p>
-          </div>
-          {r.linhas.map((l, k) => <LinhaDoRateioPorValor key={k} e={e} k={k} l={l} />)}
-          <div className="flex flex-wrap items-center gap-3 text-[12.5px]">
-            <Button size="sm" variant="outline" data-testid="compras-rateio-adicionar" onClick={e.adicionarLinhaDoRateio} disabled={r.linhas.length >= 50}>Adicionar linha</Button>
-            <Button size="sm" variant="ghost" data-testid="compras-rateio-usar-unica" onClick={e.usarClassificacaoUnica}>Usar classificação única</Button>
-            <span data-testid="compras-rateio-soma">Soma: {somaDoRateio(r)}% | Valor: {num(valorUsado.toFixed(2), 2)} | Diferença: {num(diferenca.toFixed(2), 2)}</span>
+      ) : (
+        <div data-testid={porValor ? "compras-rateio-por-valor" : "compras-classificacao-unica"} className="space-y-2">
+          <div data-testid="compras-rateio-tabela" className="overflow-hidden rounded-md border border-slate-200">
+            <div aria-hidden className={GRADE_RATEIO + " border-b border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500"}>
+              <span>Natureza</span><span>Centro</span><span>Conta contábil</span><span>Safra</span><span>%</span><span>Valor</span><span />
+            </div>
+            {linhasNaTela.map((l, k) => (
+              <LinhaDoRateio key={k} e={e} k={k} l={l} unica={linhasNaTela.length === 1}
+                onMudar={(p) => mudarLinha(k, p)}
+                onRemover={porValor && r.linhas.length > 1 ? () => e.removerLinhaDoRateio(k) : undefined} />
+            ))}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1.5 text-[12px]">
+              <Button size="sm" variant="outline" data-testid="compras-rateio-adicionar" onClick={adicionarLinha}
+                disabled={porValor && r.linhas.length >= 50}>Adicionar linha</Button>
+              <span data-testid="compras-rateio-base" className="text-slate-600">Base: {num(e.totalExibido, 2)}</span>
+              <span data-testid="compras-rateio-soma" className="ml-auto text-slate-600">
+                Soma: {somaPct}% | Valor: {num(valorUsado.toFixed(2), 2)} | Diferença: {num(diferenca.toFixed(2), 2)}
+              </span>
+            </div>
           </div>
           {e.erro("rateio") && <p className="text-[12px] text-red-600" data-parte="erro">{e.erro("rateio")}</p>}
-        </div>
-      ) : (
-        <div data-testid="compras-classificacao-unica" className="space-y-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Classificação da compra</p>
-          <ColunaDeCampos>
-            {(["categoria_financeira_id", "centro_custo_id"] as const).map((c) => {
-              const natureza = c === "categoria_financeira_id";
-              const valor = natureza ? h.categoria_financeira_id : h.centro_custo_id;
-              const dc = {
-                ...(e.layout ? { "data-campo": c, "data-obrigatorio": String(e.obrigatorio(c)), ...(e.forcados.has(c) ? { "data-forcado": "true" } : {}) } : {}),
-                ...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" as const } : {}),
-              };
-              const aviso = e.padraoInvalido(c)
-                ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p>
-                : null;
-              const campo = <CampoDaCentral
-                rotulo={natureza ? "Natureza Financeira" : "Centro de Resultado"}
-                obrigatorio={e.obrigatorio(c)} erro={e.erro(c)} icone="pesquisa" preenchido={Boolean(valor)}
-                testId={natureza ? "compras-classificacao-natureza" : "compras-classificacao-centro"}
-                abaixo={aviso} dica={e.motivoNaEdicao(c) ?? undefined} {...dc}>
-                {natureza
-                  ? <RefSelect resource="financial_categories" value={h.categoria_financeira_id}
-                      buscarOpcoes={opcoesDeNaturezaDeDespesa}
-                      onChange={(v) => e.mudar({ categoria_financeira_id: v ?? "" })}
-                      labelHint={e.dica("categoria_financeira_id")} />
-                  : <RefSelect resource="cost_centers" value={h.centro_custo_id} filter={{ kind: "analytic" }}
-                      onChange={(v) => e.mudar({ centro_custo_id: v ?? "" })}
-                      labelHint={e.dica("centro_custo_id")} />}
-              </CampoDaCentral>;
-              return e.travado(c)
-                ? <fieldset key={c} disabled data-editavel="false" data-travado-pela-top={e.travadoPelaTop(c) ? "true" : undefined}
-                    data-travado-na-edicao={e.travadoNaEdicao(c) ? "true" : undefined} data-motivo={e.motivoNaEdicao(c) ?? undefined}
-                    style={{ display: "contents" }}>{campo}</fieldset>
-                : <React.Fragment key={c}>{campo}</React.Fragment>;
-            })}
-          </ColunaDeCampos>
-          <p className="text-[12px] text-slate-600" data-testid="compras-rateio-simples">100% do documento nesta classificação.</p>
-          <Button size="sm" variant="outline" data-testid="compras-rateio-adicionar-por-valor" onClick={e.ativarRateioPorValor}>
-            Adicionar rateio por valor
-          </Button>
         </div>
       )}
     </div>
 
-    <details className="rounded-md border border-slate-100 px-3 py-2" data-testid="compras-classificacao-avancado">
-      <summary className="cursor-pointer text-[12px] font-medium text-slate-700">Classificação avançada (CAPEX/OPEX)</summary>
-      <div className="mt-2">
-        <CampoDaCentral rotulo="Classificação CAPEX/OPEX" erro={e.erro("classificacao_gasto")} icone="selecao" preenchido testId="compras-classificacao-gasto-campo">
-          <MgSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto} onChange={(v) => e.mudarFiscal({ classificacao_gasto: v })} options={CLASSIFICACOES} />
-        </CampoDaCentral>
-      </div>
-    </details>
-
-    {e.itens.length > 0 && <ul className="space-y-2 text-[12.5px]" data-testid="compras-itens-classificacao">
-      {e.itens.map((it, k) => <li key={k} data-testid={`compras-item-classificacao-${k}`} className="space-y-2 rounded-md border border-slate-100 px-2 py-2">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <span className="font-medium">{nomeDoItem(it, k)}</span>
-          <label className="flex items-center gap-1.5">
-            <input type="checkbox" data-testid={`compras-item-${k}-gera-estoque`} checked={itemGeraEstoque(it)} onChange={(ev) => e.mudarClassificacaoDoItem(k, { geraEstoque: ev.target.checked })} />
-            Gera estoque
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input type="checkbox" data-testid={`compras-item-${k}-imobilizado`} checked={itemImobilizado(it)} onChange={(ev) => e.mudarClassificacaoDoItem(k, { imobilizado: ev.target.checked })} />
-            Imobilizado (cria o bem na confirmação)
-          </label>
-        </div>
-        {legadoPorProduto && <div className="grid grid-cols-12 gap-2">
-          <div className="col-span-12 md:col-span-6">
-            <CampoDaCentral rotulo="Natureza Financeira do item" obrigatorio icone="pesquisa" preenchido={Boolean(naturezaDoItem(it))}>
-              <RefSelect resource="financial_categories" value={naturezaDoItem(it)} buscarOpcoes={opcoesDeNaturezaDeDespesa}
-                onChange={(v) => e.mudarClassificacaoDoItem(k, { natureza: v ?? "" })} />
-            </CampoDaCentral>
-          </div>
-          <div className="col-span-12 md:col-span-6">
-            <CampoDaCentral rotulo="Centro de Resultado do item" obrigatorio icone="pesquisa" preenchido={Boolean(centroDoItem(it))}>
-              <RefSelect resource="cost_centers" value={centroDoItem(it)} filter={{ kind: "analytic" }}
-                onChange={(v) => e.mudarClassificacaoDoItem(k, { centro: v ?? "" })} />
-            </CampoDaCentral>
-          </div>
-        </div>}
-        {(["gera_estoque", "imobilizado", "categoria_financeira_id", "centro_custo_id"] as const).map((c) => erroEm("itens", k, c)
-          ? <span key={c} className="block text-[11px] text-red-600">{erroEm("itens", k, c)}</span> : null)}
-      </li>)}
-    </ul>}
+    <CampoDaCentral rotulo="Classificação CAPEX/OPEX" erro={e.erro("classificacao_gasto")} icone="selecao" preenchido
+      testId="compras-classificacao-gasto-campo">
+      <MgSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto}
+        onChange={(v) => e.mudarFiscal({ classificacao_gasto: v })} options={CLASSIFICACOES} />
+    </CampoDaCentral>
   </div>;
 }
 
@@ -331,7 +281,6 @@ export function DadosFiscaisDaConsulta({ d }: { d: Row }) {
   const importacaoId = ehTexto(d["importacao_id"]) ? d["importacao_id"] : "";
   const dinheiro = (c: string) => (temValor(d[c]) ? brl(String(d[c])) : "");
   return <div data-testid="compras-consulta-dados-fiscais" className="space-y-1">
-    <p className="text-[11px] font-semibold uppercase text-slate-500">Dados fiscais</p>
     <ColunaDeCampos>
       <CampoLeitura rotulo="Chave de acesso" adorno="travado" testId="compras-consulta-chave" valor={ehTexto(d["chave_acesso"]) ? chaveFormatada(d["chave_acesso"]) : ""} />
       <CampoLeitura rotulo="UF do emitente" adorno="travado" testId="compras-consulta-uf" valor={texto(d["uf_nota"])} />
@@ -362,35 +311,39 @@ const COLUNAS_DO_RATEIO: { key: string; label: string; render: (r: Row) => React
 ];
 
 /**
- * O RATEIO da compra (`compras-consulta-rateio`): por valor, as linhas; por produto legado, pares por item.
- * Conta contábil só no contrato por valor. Classificação única (null/`documento`) não desenha aqui — o par está no painel.
+ * O RATEIO da compra (`compras-consulta-rateio`): por valor, as linhas com Conta Contábil e Safra;
+ * classificação única = uma linha sintética do par do documento (mesmos campos à vista);
+ * por produto legado, pares por item.
  */
 export function RateioDaConsulta({ d }: { d: Row }) {
   const tipo = d["rateio_tipo"];
-  if (tipo !== "por_valor" && tipo !== "por_produto") return null;
   const linhas = Array.isArray(d["rateio"]) ? (d["rateio"] as unknown[]).filter(ehObj) as Row[] : [];
   const itens = Array.isArray(d["itens"]) ? (d["itens"] as unknown[]).filter(ehObj) as Row[] : [];
-  return <div data-testid="compras-consulta-rateio" data-tipo={tipo} className="space-y-1">
-    <p className="text-[11px] font-semibold uppercase text-slate-500">
-      {tipo === "por_valor" ? "Rateio por valor" : "Classificação por produto (legado)"}
-    </p>
-    {tipo === "por_valor"
-      ? <>
-          <SimpleTable rows={linhas} cols={COLUNAS_DO_RATEIO} />
-          <p className="text-[11px] text-slate-500">Conta Contábil é opcional e só existe no rateio por valor.</p>
-        </>
-      : <ul className="space-y-2 text-[12.5px]" data-testid="compras-consulta-rateio-por-produto">
-          {itens.length === 0
-            ? <li className="text-slate-600">Cada item leva a própria natureza e o próprio centro; os nomes dos itens não vieram neste detalhe.</li>
-            : itens.map((it, k) => {
-                const rotulo = codigoENome(it["produto_codigo"], it["produto_nome"]) || `Item ${k + 1}`;
-                return <li key={k} data-testid={`compras-consulta-rateio-item-${k}`} className="rounded-md border border-slate-100 px-2 py-2">
-                  <p className="font-medium text-slate-800">{rotulo}</p>
-                  <p className="text-slate-600">Natureza Financeira: {codigoENome(it["categoria_financeira_codigo"], it["categoria_financeira_nome"])}</p>
-                  <p className="text-slate-600">Centro de Resultado: {codigoENome(it["centro_custo_codigo"], it["centro_custo_nome"])}</p>
-                </li>;
-              })}
-        </ul>}
+  if (tipo === "por_produto") {
+    return <div data-testid="compras-consulta-rateio" data-tipo={tipo} className="space-y-1">
+      <ul className="space-y-2 text-[12.5px]" data-testid="compras-consulta-rateio-por-produto">
+        {itens.length === 0
+          ? <li className="text-slate-600">Cada item leva a própria natureza e o próprio centro; os nomes dos itens não vieram neste detalhe.</li>
+          : itens.map((it, k) => {
+              const rotulo = codigoENome(it["produto_codigo"], it["produto_nome"]) || `Item ${k + 1}`;
+              return <li key={k} data-testid={`compras-consulta-rateio-item-${k}`} className="rounded-md border border-slate-100 px-2 py-2">
+                <p className="font-medium text-slate-800">{rotulo}</p>
+                <p className="text-slate-600">Natureza Financeira: {codigoENome(it["categoria_financeira_codigo"], it["categoria_financeira_nome"])}</p>
+                <p className="text-slate-600">Centro de Resultado: {codigoENome(it["centro_custo_codigo"], it["centro_custo_nome"])}</p>
+              </li>;
+            })}
+      </ul>
+    </div>;
+  }
+  const linhasDaTela: Row[] = tipo === "por_valor" ? linhas : [{
+    categoria_financeira_codigo: d["categoria_financeira_codigo"],
+    categoria_financeira_nome: d["categoria_financeira_nome"],
+    centro_custo_codigo: d["centro_custo_codigo"],
+    centro_custo_nome: d["centro_custo_nome"],
+    conta_contabil_codigo: null, conta_contabil_nome: null, safra_nome: null, percentual: "100",
+  }];
+  return <div data-testid="compras-consulta-rateio" data-tipo={tipo ?? "documento"} className="space-y-1">
+    <SimpleTable rows={linhasDaTela} cols={COLUNAS_DO_RATEIO} />
   </div>;
 }
 

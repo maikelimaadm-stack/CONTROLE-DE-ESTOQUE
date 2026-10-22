@@ -291,16 +291,15 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
   if (e.ehCompra) abas.push({
     value: "rateio", label: "Rateio e classificação",
     content: <PainelLargo>
-      {/* Classificação única: par do documento quando rateio_tipo é null/ausente ou equivalente (não por_valor/por_produto). */}
-      {d["rateio_tipo"] !== "por_valor" && d["rateio_tipo"] !== "por_produto" && <PainelColuna>
-        <CampoLeitura rotulo="Natureza Financeira" adorno="pesquisa" valor={codigoNome(d["categoria_financeira_codigo"], d["categoria_financeira_nome"])} />
-        <CampoLeitura rotulo="Centro de Resultado" adorno="pesquisa" valor={codigoNome(d["centro_custo_codigo"], d["centro_custo_nome"])} />
-      </PainelColuna>}
-      {temValor(d["classificacao_gasto"]) && <PainelColuna>
-        <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="travado" testId="compras-consulta-classificacao"
-          valor={typeof d["classificacao_gasto"] === "string" ? d["classificacao_gasto"].toUpperCase() : ""} />
-      </PainelColuna>}
-      <RateioDaConsulta d={d} />
+      <div className="space-y-3">
+        <RateioDaConsulta d={d} />
+        <PainelColuna>
+          <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="travado" testId="compras-consulta-classificacao"
+            valor={typeof d["classificacao_gasto"] === "string" && (d["classificacao_gasto"] === "capex" || d["classificacao_gasto"] === "opex")
+              ? enumLabel("classificacao_gasto", d["classificacao_gasto"])
+              : enumLabel("classification", "unclassified")} />
+        </PainelColuna>
+      </div>
     </PainelLargo>
   });
   abas.push({ value: "entrega", label: "Entrega e transporte", content: <PainelColuna>

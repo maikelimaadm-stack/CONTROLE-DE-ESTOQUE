@@ -489,7 +489,7 @@ export interface EstadoDaCriacao {
   adicionarLinhaDoRateio: () => void;
   removerLinhaDoRateio: (k: number) => void;
   /** UX: classificação única → linhas por valor (preserva o par na 1ª linha). */
-  ativarRateioPorValor: () => void;
+  ativarRateioPorValor: (patch?: Partial<LinhaDoRateioDaCompra>, extra?: LinhaDoRateioDaCompra) => void;
   /** UX: linhas por valor → classificação única (1ª linha vira o par do documento). */
   usarClassificacaoUnica: () => void;
   /** A classificação de UM item: gera estoque / imobilizado (natureza/centro do item só em legado por_produto). */
@@ -703,21 +703,21 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const adicionarLinhaDoRateio = () => setRateio((r) => (r.linhas.length >= 50 ? r : { ...r, linhas: [...r.linhas, linhaDoRateioVazia()] }));
   const removerLinhaDoRateio = (k: number) => setRateio((r) => (r.linhas.length <= 1 ? r : { ...r, linhas: r.linhas.filter((_, i) => i !== k) }));
   /**
-   * UX classificação única → rateio por valor: preserva o par do documento como 1ª linha a 100%,
+   * Classificação única → rateio por valor: preserva o par do documento como 1ª linha a 100%,
    * limpa o cabeçalho (CHECK 0047: com por_valor o par do documento fica nulo).
+   * `patch` / `extra` permitem Conta Contábil, Safra, % ou 2ª linha na mesma transição (sem esconder campo).
    */
-  const ativarRateioPorValor = () => {
-    setRateio({
-      tipo: "por_valor",
-      linhas: [{
-        categoriaId: h.categoria_financeira_id,
-        centroId: h.centro_custo_id,
-        contaId: "", safraId: "", percentual: "100",
-      }],
-    });
+  const ativarRateioPorValor = (patch?: Partial<LinhaDoRateioDaCompra>, extra?: LinhaDoRateioDaCompra) => {
+    const primeira: LinhaDoRateioDaCompra = {
+      categoriaId: h.categoria_financeira_id,
+      centroId: h.centro_custo_id,
+      contaId: "", safraId: "", percentual: "100",
+      ...patch,
+    };
+    setRateio({ tipo: "por_valor", linhas: extra ? [primeira, extra] : [primeira] });
     setH((o) => ({ ...o, categoria_financeira_id: "", centro_custo_id: "" }));
   };
-  /** Volta à classificação única a partir da 1ª linha (ou vazia). */
+  /** Volta à classificação única a partir da 1ª linha (ou vazia) — mantido para compat; a UI nova não oferece o atalho. */
   const usarClassificacaoUnica = () => {
     const primeira = rateio.linhas[0];
     setRateio(rateioDoDocumento());

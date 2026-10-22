@@ -284,7 +284,7 @@ test("UX1-2 — XML: gerar compra ABERTA → consulta com parcelas_nota → Edit
 
 /* ═════════════════════════════════ UX1-3 — rateio por valor: conta opcional; sem duplicar nos Dados ═════════════════════════════════ */
 
-test("UX1-3 — rateio por_valor: Classificação no painel; conta contábil só em Detalhes contábeis; Dados sem linhas de rateio", async ({ page }) => {
+test("UX1-3 — rateio: grade no painel; Conta Contábil e Safra sempre à vista; Dados sem linhas de rateio", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const portas = await api<{ capacidades?: Record<string, unknown> }>(page, "GET", "/api/compras/compras/operation-types");
@@ -341,14 +341,12 @@ test("UX1-3 — rateio por_valor: Classificação no painel; conta contábil só
   await expect(page.getByTestId(`${P}-dados`).getByTestId("compras-rateio-tipo")).toHaveCount(0);
   await expect(rateio.getByTestId("compras-rateio-tipo"), "sem seletor Como classificar").toHaveCount(0);
   await expect(rateio.getByTestId("compras-classificacao-unica")).toBeVisible();
-
-  await rateio.getByTestId("compras-rateio-adicionar-por-valor").click();
   await expect(rateio.getByTestId("compras-rateio-linha-0")).toBeVisible();
-  // Conta Contábil NÃO à vista — só sob Detalhes contábeis
-  await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toHaveCount(0);
-  await rateio.getByTestId("compras-rateio-linha-0-detalhes").click();
-  await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toBeVisible();
-  await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toContainText(/Conta Contábil/i);
+  // Conta Contábil e Safra SEMPRE à vista — sem Detalhes contábeis / dependência
+  await expect(rateio.getByTestId("compras-rateio-linha-0-conta")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-linha-0-safra")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-linha-0-detalhes")).toHaveCount(0);
+  await expect(rateio.getByTestId("compras-classificacao-gasto")).toBeVisible();
   await foto(page, pasta, "ux1-3-rateio-por-valor-1440x900");
 
   // Mobile: inspeção visual (UI-SUPPORT-MATRIX DEFERRED) — não certifica suporte móvel
