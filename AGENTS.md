@@ -22,10 +22,6 @@ organização DEMO).
 - **`pnpm` não existe no host.** Os comandos do repositório (`pnpm lint`, `pnpm test`,
   `pnpm typecheck`) rodam **dentro dos containers**, onde o workspace já está instalado:
   `docker compose -f docker-compose.base44.yml exec -T web pnpm --filter @agro/web typecheck`.
-- **`next dev` reescreve `apps/web/next-env.d.ts`** (o arquivo é gerado): os imports passam de
-  `.next/types/…` (estado commitado, o de um `next build`) para `.next/dev/types/…` na primeira
-  compilação do dev server. É por isso que a árvore aparece suja nesse arquivo; não é alteração de
-  ninguém e o valor do dev é o que faz o `typecheck` passar na sandbox.
 - **Supabase não é necessário para rodar.** As migrations rodam em **Postgres 16 puro** (é o que o
   próprio CI faz, `.github/workflows/ci.yml` job `integration`). O que o Supabase fornecia fora do
   Postgres não é usado no fluxo local: `AUTH_MODE=local` (login por e-mail/senha em `erp.users`) e
@@ -38,23 +34,9 @@ organização DEMO).
   criam schema, papéis, políticas e triggers.
 - **Pacotes do workspace precisam de `dist/`.** Os `exports` de `@agro/shared`, `@erp/plataforma`,
   `@agro/domain` e `@agro/db` apontam para `dist/index.js`; por isso o `setup` builda os quatro
-  antes de subir API e web. **`@agro/api` também**: o `setup` builda esse quinto pacote
-  (`./server` → `dist/server.js`) porque a ponte `/api/*` da web
-  (`apps/web/src/server/erp-api-bridge.ts`) importa `@agro/api/server` — sem o `dist/` o
-  `pnpm --filter @agro/web typecheck`/`build` falha com `Cannot find module '@agro/api/server'` e
-  as rotas `apps/web/src/app/api/[...path]/route.ts` e `.../health/route.ts` respondem 500. É a
-  mesma ordem do CI (`quality` e `e2e` buildam `@agro/api` antes de typecheck/build da web).
-  Editar `packages/*/src` exige rebuild (`pnpm --filter <pacote> build`) para API e web verem a
-  mudança; `apps/api/src` e `apps/web/src` recarregam sozinhos (`tsx watch`, `next dev`).
-  O serviço `web` recebe a mesma `DATABASE_URL` da API (âncora YAML `&database-url-app`, reusada em
-  `web`: o valor é UM só, para os dois não divergirem), porque a ponte roda a API **no processo do
-  Next** — é o desenho de produção (um projeto só na Vercel). Sem essa variável, `GET /health` e
-  `/api/*` na porta `3000` respondem 500 (`DATABASE_URL: expected string, received undefined`);
-  com ela, `curl -s http://localhost:3000/health` responde `{"status":"ok","db":"ok",…}`.
-  O navegador, no preview, continua falando direto com a API em `3333` (`NEXT_PUBLIC_API_URL`);
-  a ponte é o caminho de mesma origem, e agora ele também funciona.
-  O que **não** é esperado, em nenhum dos dois caminhos, é `Can't resolve '@agro/api/server'`:
-  isso é o `dist/` do `@agro/api` faltando, e o conserto é o `setup` buildá-lo.
+  antes de subir API e web. Editar `packages/*/src` exige rebuild (`pnpm --filter <pacote> build`)
+  para API e web verem a mudança; `apps/api/src` e `apps/web/src` recarregam sozinhos
+  (`tsx watch`, `next dev`).
 - **Duas origens, e a página é que manda no CORS.** A web fica em `3000` e a API em `3333`; o
   navegador chama `NEXT_PUBLIC_API_URL` (host **público** da sandbox, não `localhost`).
   `WEB_ORIGIN` da API recebe a origem **pública** da página (`https://3000-${BASE44_PUBLIC_HOST_SUFFIX}`).
@@ -90,8 +72,7 @@ Nenhum caminho de autenticação, autorização, RLS ou CSRF foi afrouxado: o lo
 ## Como verificar que está de pé
 
 1. `curl -s http://localhost:3333/health` → `{"status":"ok","db":"ok",...}`.
-2. `curl -s http://localhost:3000/health` → o mesmo corpo (prova a ponte de mesma origem), e
-   `curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login` → `200`.
+2. `curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login` → `200`.
 3. No preview: entrar com `admin@demo.local` / `Demo@12345` e conferir que a tela **Início** mostra
    os cartões de resultado (Receitas, Despesas, Resultado operacional) — isso prova web → API → banco
    com RLS no caminho. Sem console limpo e sem requisição falhando, não está de pé.
