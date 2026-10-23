@@ -11,6 +11,8 @@ export type EntradaNumeroProps = Omit<React.InputHTMLAttributes<HTMLInputElement
   casas?: number;
   /** Só inteiro (sem vírgula). */
   inteiro?: boolean;
+  /** Sem o chrome `mg-input` (pílula cinza) — uso na grade de itens, que traz o próprio estilo. */
+  semChrome?: boolean;
 };
 
 /**
@@ -18,7 +20,7 @@ export type EntradaNumeroProps = Omit<React.InputHTMLAttributes<HTMLInputElement
  * canônico no estado. No foco, zero some para digitar limpo.
  */
 export const EntradaNumero = React.forwardRef<HTMLInputElement, EntradaNumeroProps>(function EntradaNumero(
-  { value, onChange, casas, inteiro, className, onFocus, onBlur, onWheel, ...rest },
+  { value, onChange, casas, inteiro, semChrome, className, onFocus, onBlur, onWheel, ...rest },
   ref
 ) {
   const [foco, setFoco] = React.useState(false);
@@ -39,7 +41,7 @@ export const EntradaNumero = React.forwardRef<HTMLInputElement, EntradaNumeroPro
       type="text"
       inputMode={inteiro ? "numeric" : "decimal"}
       autoComplete="off"
-      className={cn("mg-input", className)}
+      className={cn(!semChrome && "mg-input", className)}
       placeholder={rest.placeholder ?? " "}
       value={exibido}
       onFocus={(e) => {

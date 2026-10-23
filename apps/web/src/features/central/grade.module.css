@@ -160,17 +160,22 @@
 .grade td:last-child { border-right: 0; }
 .cabecalhoColuna { position: relative; }
 .cabecalhoRotulo { display: block; overflow: hidden; text-overflow: ellipsis; }
+/* Alça só na divisão: hit de 5px, sem marcador colorido (par com Base1Grid / portal). */
 .alcaResize {
   position: absolute;
-  right: 0;
+  right: -2px;
   top: 0;
-  width: 6px;
+  width: 5px;
   height: 100%;
   cursor: col-resize;
-  opacity: 0;
   background: transparent;
+  opacity: 0;
 }
-.cabecalhoColuna:hover .alcaResize { opacity: .55; background: #22a85c; }
+.alcaResize:hover,
+.cabecalhoColuna:hover .alcaResize {
+  background: transparent;
+  opacity: 0;
+}
 /* número: o valor à direita; o rótulo do cabeçalho continua à esquerda, como no desenho */
 .grade td.numero { text-align: right; font-variant-numeric: tabular-nums; }
 .grade td.forte { font-weight: 600; }
@@ -498,26 +503,34 @@
 .celulaIcone svg { width: 13px; height: 13px; }
 .celulaBotao:hover .celulaIcone { color: #22a85c; }
 
-/* entrada da linha marcada (Quantidade, Valor unitário): 74px, à direita */
-.entrada {
+/* Célula editável plana — sem pílula/badge (mg-input + borda branca). Foco só com filete leve. */
+.entrada,
+.entrada:global(.mg-input) {
   width: 74px;
-  height: 26px;
+  height: 22px;
   box-sizing: border-box;
-  border: 1px solid #cfd6de;
-  border-radius: 8px;
-  background: #fff;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
   text-align: right;
   font: inherit;
   font-size: 12.5px;
-  padding: 0 8px;
+  padding: 0 4px;
   font-variant-numeric: tabular-nums;
-  transition: border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io);
+  color: inherit;
+  transition: box-shadow var(--mi) var(--ez-io), background-color var(--mi) var(--ez-io);
 }
 /* sem setas nativas se algum type=number sobrar; EntradaNumero usa text */
 .entrada[type="number"]::-webkit-inner-spin-button,
 .entrada[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .entrada[type="number"] { -moz-appearance: textfield; appearance: textfield; }
-.entrada:focus { outline: none; border-color: #cfd6de; box-shadow: 0 1px 3px rgba(15, 23, 42, .10); }
+.entrada:focus,
+.entrada:global(.mg-input):focus {
+  outline: none;
+  background: rgba(255, 255, 255, .72) !important;
+  box-shadow: inset 0 -1px 0 #cfd6de !important;
+}
 .quantidade .entrada { flex: 0 1 74px; min-width: 0; }
 
 /* grade vazia: frase + o mesmo círculo só-ícone da barra (decisão 327; sem pílula com texto) */

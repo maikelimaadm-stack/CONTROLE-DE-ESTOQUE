@@ -411,18 +411,18 @@ export function ItensDaCentral({
       case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{numeroBR(maxDaOrigem(it) ?? "0", 4)}</td>;
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
         {ativa && !daOrigem?.quantidadeTravada && !travas(it).quantidade
-          ? <EntradaNumero className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} casas={casasDaQuantidade ?? 4} value={it.quantity} onChange={(v) => atualizar(i, "quantity", v)} />
+          ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} casas={casasDaQuantidade ?? 4} value={it.quantity} onChange={(v) => atualizar(i, "quantity", v)} />
           : <span data-testid={tid("quantidade")}>{numeroBR(it.quantity, casasDaQuantidade)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
       case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario
-        ? <EntradaNumero className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} casas={6} value={it.unit_value ?? ""} onChange={(v) => atualizar(i, "unit_value", v)} />
+        ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} casas={6} value={it.unit_value ?? ""} onChange={(v) => atualizar(i, "unit_value", v)} />
         : (it.unit_value !== undefined && it.unit_value !== "" ? dinheiro(it.unit_value) : "—")}</td>;
       case "desconto": return <td key={k} className={grade.numero}>{ativa && !travas(it).desconto
-        ? <EntradaNumero className={grade.entrada} aria-label={`Desconto do item ${i + 1}`} casas={2} value={it.discount ?? ""} onChange={(v) => atualizarDesconto(i, "discount", v)} />
+        ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Desconto do item ${i + 1}`} casas={2} value={it.discount ?? ""} onChange={(v) => atualizarDesconto(i, "discount", v)} />
         : (Number(it.discount || 0) ? dinheiro(it.discount!) : "—")}</td>;
       case "descontoPercentual": return <td key={k} className={grade.numero}>{ativa && !travas(it).desconto
-        ? <EntradaNumero className={grade.entrada} aria-label={`Desconto % do item ${i + 1}`} casas={4} value={it.discount_percent ?? ""} onChange={(v) => atualizarDesconto(i, "discount_percent", v)} />
+        ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Desconto % do item ${i + 1}`} casas={4} value={it.discount_percent ?? ""} onChange={(v) => atualizarDesconto(i, "discount_percent", v)} />
         : (Number(it.discount_percent || 0) ? `${numeroBR(it.discount_percent!, 4)}%` : "—")}</td>;
       case "total": return <td key={k} className={cn(grade.numero, grade.forte)}>{dinheiro(totalDaLinhaExibido(it))}</td>;
       case "lote": {
