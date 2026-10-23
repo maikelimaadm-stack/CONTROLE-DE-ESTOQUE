@@ -64,12 +64,12 @@
 .botaoItem:disabled { opacity: .45; }
 .botaoItem svg { width: 16px; height: 16px; }
 
-/* Grade | Formulário — segmentado de 25px */
+/* Grade | Formulário — trilho 28px; polegar branco 22px (mesmo recorte do Posição do rótulo) */
 .segmento {
   height: 28px;
   box-sizing: border-box;
-  padding: 0;
-  gap: 5px;
+  padding: 3px;
+  gap: 2px;
   border-radius: 999px;
   background: #f1f3f4;
   box-shadow: none;
@@ -79,8 +79,8 @@
 }
 .segmento button {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -90,6 +90,7 @@
   justify-content: center;
   cursor: pointer;
   padding: 0;
+  flex-shrink: 0;
   transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
 }
 .segmento button:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
@@ -97,8 +98,8 @@
 .segmento button[aria-pressed="true"]:hover { background: #fff; color: #0f172a; box-shadow: 0 1px 4px rgba(15, 23, 42, .16); }
 .segmento button:active { transform: scale(.97); }
 .segmento button:focus-visible { outline: 2px solid #22a85c; outline-offset: 1px; }
-.segmento button svg { width: 16px; height: 16px; }
-.segmento button[data-visao="formulario"] svg { width: 16px; height: 16px; }
+.segmento button svg { width: 14px; height: 14px; }
+.segmento button[data-visao="formulario"] svg { width: 14px; height: 14px; }
 
 /* aviso funcional dos itens (saldo encerrado, parte gerada): faixa discreta entre a barra e a grade */
 .aviso {

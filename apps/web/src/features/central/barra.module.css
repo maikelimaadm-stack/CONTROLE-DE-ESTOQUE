@@ -88,22 +88,22 @@
 .girar { display: inline-flex; animation: girar 800ms linear infinite; }
 @keyframes girar { to { transform: rotate(360deg); } }
 
-/* ═════════════ posição do rótulo (`.vseg`) ═════════════ */
+/* ═════════════ posição do rótulo (`.vseg`) — trilho 28px; polegar branco 22px (não enche o trilho) ═════════════ */
 .segmentado {
   height: 28px;
   box-sizing: border-box;
-  padding: 0;
+  padding: 3px;
   border-radius: 999px;
   background: #f1f3f4;
   box-shadow: none;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 2px;
   flex-shrink: 0;
 }
 .segmentado > button {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -113,6 +113,7 @@
   justify-content: center;
   cursor: pointer;
   padding: 0;
+  flex-shrink: 0;
   transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
 }
 .segmentado > button:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
