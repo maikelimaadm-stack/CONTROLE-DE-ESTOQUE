@@ -48,44 +48,38 @@
 .linha[data-multilinha] { height: 80px; }
 
 /*
- * rótulo à frente (padrão): 126px, à direita, ":" antes do "*". Centro óptico da caixa = `top: 50%` +
- * `translateY(-50%)` com altura automática (o mesmo truque do painel em `painel.module.css`): `top: 0` +
- * `height: 28px` + flex deixava o glifo visualmente alto demais frente à caixa. Duas linhas cabem nos 28px
- * (line-height 14). Flex permanece por causa do `order` (":" antes do "*").
+ * rótulo à frente (padrão): 126px, à direita, ":" antes do "*". Altura de 28px, a do padding-box da linha (o da caixa):
+ * o centro do rótulo é o da caixa, 15. A caixa de linha é a do valor, 15px (12,5 × 1,2): o glifo da DM Sans (16px) não
+ * cabe nela e o Chrome reparte a sobra −1/0 — com a mesma linha, rótulo e valor ficam no mesmo centro e na mesma
+ * linha-base (com linha de 12px a sobra é −2/−2 e o rótulo ficava 0,5px abaixo).
  */
 .rotulo {
   position: absolute;
   left: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
   z-index: 2;
   box-sizing: content-box;
   width: 126px;
-  height: auto;
+  height: 28px;
   max-width: none;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
   padding: 0 2px 0 0;
   font-size: 12px;
   font-weight: 500;
-  line-height: 14px;
+  line-height: 15px;
   color: #64748b;
-  /* O rótulo PODE QUEBRAR (decisão do usuário, 10/2026): nome comprido vira duas linhas, em vez de perder o começo. */
+  /* O rótulo PODE QUEBRAR (decisão do usuário, 10/2026): nome comprido vira duas linhas dentro dos 30px da linha
+     (12px × 1,15 ≈ 13,8 por linha), em vez de perder o começo do nome — o "…de despesa" que aparecia cortado. */
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
   text-align: right;
+  line-height: 1.15;
   overflow-wrap: anywhere;
   pointer-events: none;
   transition: font-size .22s cubic-bezier(.2, .8, .2, 1), padding .22s cubic-bezier(.2, .8, .2, 1), top .22s cubic-bezier(.2, .8, .2, 1);
-}
-/* multilinha: o valor começa no topo — o rótulo acompanha a 1ª linha, não o centro dos 80px */
-.linha[data-multilinha] .rotulo {
-  top: 0;
-  transform: none;
-  height: 28px;
 }
 .rotulo::after { content: ":"; order: 0; }
 .obrigatorio { order: 1; margin-left: 3px; color: #dc2626; font-weight: 600; }
@@ -124,8 +118,8 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
 .linha:not([data-estado]):focus-within .caixa,
 .linha:not([data-estado]):has([aria-expanded="true"]) .caixa { border-color: #cfd6de; box-shadow: 0 1px 3px rgba(15, 23, 42, .10); }
 
-/* o valor (leitura e travado): texto que encurta, "—" apagado quando vazio */
-.valor { display: flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
+/* o valor (leitura e travado): texto que encurta, "—" apagado quando vazio — centro vertical na caixa */
+.valor { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .valor > :last-child { overflow: hidden; text-overflow: ellipsis; }
 .vazio { color: #94a3b8; }
 /*
@@ -144,11 +138,17 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
  * com ou sem ícone) — o texto termina em reticências antes do recuo direito, e antes do "limpar" quando há valor.
  */
 .caixa[data-controle] { padding: 0; }
+/*
+ * Filho da caixa (input, envelope do RefSelect, botão da pesquisa do item): enche o inset.
+ * `align-items: center` — NÃO stretch. Com stretch, o `cmd-display` (especificidade menor) perdia o centro e o
+ * texto/"Pesquisar"/"—" ficava no TOPO da caixa (descentralizado). O envelope do CmdDisplay já é flex; o botão
+ * direto (CampoReferenciaBotao) também.
+ */
 .caixa[data-controle] > :not([type="hidden"]) {
   position: absolute;
   inset: -1px;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   min-width: 0;
   width: auto;
   height: auto;
@@ -180,13 +180,14 @@ fieldset:disabled .caixa .controle { cursor: default; }
 /* área de texto (sempre multilinha), densidade padrão: a 1ª linha no y do valor de uma linha só (centro 15). O conteúdo
    começa em 2 e a linha mede 1,5em ⇒ 15 − 2 − ,75em = 13px − ,75em (3,625px com 12,5px). A especificidade é BAIXA de
    propósito: vence o padding da `.controle` (!important lá também) e perde para as do compacto (13px), que não mudam */
-.caixa textarea.controle { resize: none; line-height: 1.5; padding-top: calc(13px - .75em) !important; }
-/* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" continua à direita.
-   flex + align-items:center — com rótulo à frente o `display:block` deixava o texto no topo da caixa (fora do centro do rótulo). */
+.caixa textarea.controle { resize: none; line-height: 1.5; padding-top: calc(13px - .75em) !important; align-self: stretch; }
+/* seletor de referência / pesquisa do item: texto e placeholder no centro vertical da caixa */
 .caixa :global(.cmd-display) {
   display: flex;
   align-items: center;
+  align-self: stretch;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -268,8 +269,6 @@ fieldset:disabled .caixa .controle { cursor: default; }
 [data-densidade="rotulo-acima"] .linha[data-multilinha] { height: auto; }
 [data-densidade="rotulo-acima"] .rotulo {
   position: static;
-  top: auto;
-  transform: none;
   width: auto;
   height: auto;
   max-width: none;
