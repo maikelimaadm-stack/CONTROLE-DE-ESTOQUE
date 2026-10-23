@@ -101,7 +101,7 @@
   height: 14px !important;
 }
 
-/* Tipo: altura alinhada aos círculos 25px. */
+/* Tipo: altura alinhada; ícones na mesma cor dos demais. */
 .portal :global(.tipo) {
   height: 25px !important;
   min-height: 25px !important;
@@ -109,6 +109,9 @@
   background: var(--portal-acao-bg) !important;
   color: var(--portal-acao-fg) !important;
   box-shadow: var(--portal-sombra) !important;
+}
+.portal :global(.tipo svg) {
+  color: var(--portal-acao-fg) !important;
 }
 .portal :global(.tipo:hover),
 .portal :global(.tipo[data-state="open"]) {
@@ -120,49 +123,63 @@
 .portal :global(.tipoPrefixo) { color: #94a3b8; }
 .portal :global(.tipoValor) { color: inherit; font-weight: 600; }
 
-/* Novo dividido: altura 25px; partes só-ícone em círculo 25px. */
+/*
+ * Novo + menu de lançamento — o MESMO trilho do Tabela|Cards (decisão 335/336):
+ * um único pill; os dois ícones dentro, mesma cor #475569; sem círculo/sombra por metade.
+ */
 .portal :global(.dividido) {
   height: 25px !important;
   min-height: 25px !important;
   margin-left: 0;
+  box-sizing: border-box;
+  padding: 2px;
+  gap: 5px;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
   background: var(--portal-acao-bg) !important;
   box-shadow: var(--portal-sombra) !important;
   border-radius: 999px;
 }
 .portal :global(.novo),
 .portal :global(.abrirMenu) {
-  color: var(--portal-acao-fg) !important;
+  width: 21px !important;
+  min-width: 21px !important;
+  height: 21px !important;
+  min-height: 21px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 999px !important;
   background: transparent !important;
-  height: 25px !important;
-  min-height: 25px !important;
+  color: var(--portal-acao-fg) !important;
   box-shadow: none !important;
-}
-.portal :global(.abrirMenu) {
-  width: 25px !important;
-  min-width: 25px !important;
-  border-left-color: #e2e8f0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
 }
 .portal :global(.novo.novoSoIcone),
 .portal :global(.novoSoIcone) {
-  width: 25px !important;
-  min-width: 25px !important;
+  width: 21px !important;
+  min-width: 21px !important;
   padding: 0 !important;
+  gap: 0 !important;
 }
 .portal :global(.novo svg),
 .portal :global(.abrirMenu svg) {
-  width: 16px !important;
-  height: 16px !important;
+  width: 14px !important;
+  height: 14px !important;
+  color: inherit !important;
 }
 .portal :global(.novo:hover),
 .portal :global(.abrirMenu:hover),
 .portal :global(.novo[aria-expanded="true"]),
 .portal :global(.abrirMenu[data-state="open"]) {
-  background: var(--portal-acao-hover) !important;
+  background: rgba(15, 23, 42, .07) !important;
   color: var(--portal-acao-fg-hover) !important;
 }
 .portal :global(.novo:active),
 .portal :global(.abrirMenu:active) {
-  background: #dde3e8 !important;
+  background: rgba(15, 23, 42, .1) !important;
 }
 
 /* Importar XML: círculo 25px, só ícone. */
