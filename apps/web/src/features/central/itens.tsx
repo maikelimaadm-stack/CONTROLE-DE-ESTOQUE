@@ -1,11 +1,12 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Copy, FileText, Grid3x3, Lock, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, FileText, Grid3x3, Lock, MoreVertical, PanelLeft, Plus, Scaling, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
-import { cn, brl, numeroBR, dateBR } from "@/lib/utils";
+import { cn, brl, num, dateBR } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { EntradaNumero, Input } from "@/components/ui";
+import { B1Popover, MenuList } from "@/features/base1/ui";
 import { StockCell, totalDaLinhaExibido, type ItemRow } from "@/features/docs/shared";
 import { EstoqueDisponivelDoItem } from "@/features/stock/reserva-estoque";
 import { PainelDePesquisa } from "./pesquisa";
@@ -180,8 +181,8 @@ export function ItensDaCentral({
   semSimboloDeMoeda = false
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
-  /** Dinheiro na tela: com o símbolo (o de sempre) ou pt-BR sem `R$` — inteiro `1.000`, decimal `1.000,00`. */
-  const dinheiro = (v: string | number) => (semSimboloDeMoeda ? numeroBR(v) : brl(v));
+  /** Dinheiro na tela: com o símbolo (o de sempre) ou pt-BR sem `R$` — sempre 2 casas (315 → 315,00). */
+  const dinheiro = (v: string | number) => (semSimboloDeMoeda ? num(v, 2) : brl(v));
   // a capacidade da pesquisa nova é perguntada ao montar os itens (uma vez por sessão): ao abrir a pesquisa ela já chegou
   const fonteDaPesquisa = useFonteDaPesquisaDeProdutos();
   const { doSistema, doCatalogo } = colunasDaEspecie;
@@ -238,8 +239,12 @@ export function ItensDaCentral({
   const [conhecidos, setConhecidos] = React.useState<Record<string, OpcaoReal>>({});
   /** Larguras redimensionadas na sessão (decisão 347) — sem persistência. */
   const [larguras, setLarguras] = React.useState<Partial<Record<ChaveColunaDoItem, number>>>({});
+  /** Uma coluna congelada por vez (decisão 349); `null` = nenhuma. */
+  const [congelada, setCongelada] = React.useState<ChaveColunaDoItem | null>(null);
+  const [menuColuna, setMenuColuna] = React.useState<ChaveColunaDoItem | null>(null);
   const raizItens = React.useRef<HTMLDivElement | null>(null);
   const colsRef = React.useRef<Partial<Record<ChaveColunaDoItem, HTMLTableColElement | null>>>({});
+  const tabelaRef = React.useRef<HTMLTableElement | null>(null);
   const colunasPadrao = React.useCallback(() => (layout ? padrao(chavesDoLayout(layout)) : padrao(chavesColunas)), [layout, chavesDoLayout, chavesColunas]);
   const camposPadrao = React.useCallback(() => (layout ? padrao(camposDoLayout(layout)) : padrao(chavesCampos)), [layout, camposDoLayout, chavesCampos]);
   const [colunas, setColunas] = React.useState<Preferencia<ChaveColunaDoItem>[]>(colunasPadrao);
@@ -428,22 +433,22 @@ export function ItensDaCentral({
           aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId={tid("armazem")} tabulavel={ativa}
           onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} />}</td>;
       case "estoque": return <td key={k} className={cn(grade.numero, grade.estoque)}>{saldoDoItem(it)}</td>;
-      case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{numeroBR(maxDaOrigem(it) ?? "0", 4)}</td>;
+      case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{num(maxDaOrigem(it) ?? "0", 4)}</td>;
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
         {ativa && !daOrigem?.quantidadeTravada && !travas(it).quantidade
           ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} casas={casasDaQuantidade ?? 4} value={it.quantity} onChange={(v) => atualizar(i, "quantity", v)} />
-          : <span data-testid={tid("quantidade")}>{numeroBR(it.quantity, casasDaQuantidade)}</span>}
+          : <span data-testid={tid("quantidade")}>{num(it.quantity, casasDaQuantidade ?? 2)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
       case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario
         ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} casas={6} value={it.unit_value ?? ""} onChange={(v) => atualizar(i, "unit_value", v)} />
-        : (it.unit_value !== undefined && it.unit_value !== "" ? dinheiro(it.unit_value) : "—")}</td>;
+        : (it.unit_value !== undefined && it.unit_value !== "" ? (semSimboloDeMoeda ? num(it.unit_value, 6) : brl(it.unit_value)) : "—")}</td>;
       case "desconto": return <td key={k} className={grade.numero}>{ativa && !travas(it).desconto
         ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Desconto do item ${i + 1}`} casas={2} value={it.discount ?? ""} onChange={(v) => atualizarDesconto(i, "discount", v)} />
         : (Number(it.discount || 0) ? dinheiro(it.discount!) : "—")}</td>;
       case "descontoPercentual": return <td key={k} className={grade.numero}>{ativa && !travas(it).desconto
         ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Desconto % do item ${i + 1}`} casas={4} value={it.discount_percent ?? ""} onChange={(v) => atualizarDesconto(i, "discount_percent", v)} />
-        : (Number(it.discount_percent || 0) ? `${numeroBR(it.discount_percent!, 4)}%` : "—")}</td>;
+        : (Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 4)}%` : "—")}</td>;
       case "total": return <td key={k} className={cn(grade.numero, grade.forte)}>{dinheiro(totalDaLinhaExibido(it))}</td>;
       case "lote": {
         const aceita = loteDe(it).lote;
@@ -460,8 +465,28 @@ export function ItensDaCentral({
     }
   };
 
+  const autoAjustar = (k: ChaveColunaDoItem) => {
+    const table = tabelaRef.current;
+    const idx = colunasVisiveis.indexOf(k);
+    if (!table || idx < 0) {
+      setLarguras((m) => { const n = { ...m }; delete n[k]; return n; });
+      return;
+    }
+    let max = 56;
+    const th = table.querySelectorAll("thead th")[idx] as HTMLElement | undefined;
+    if (th) max = Math.max(max, Math.ceil(th.scrollWidth) + 28);
+    table.querySelectorAll(`tbody tr td:nth-child(${idx + 1})`).forEach((td) => {
+      max = Math.max(max, Math.ceil((td as HTMLElement).scrollWidth) + 18);
+    });
+    setLarguras((m) => ({ ...m, [k]: Math.min(480, Math.max(LARGURA_MIN_COLUNA, max)) }));
+  };
+
+  React.useEffect(() => {
+    if (congelada && !colunasVisiveis.includes(congelada)) setCongelada(null);
+  }, [congelada, colunasVisiveis]);
+
   const tabela = <div className={grade.rolagem} onClick={cliqueNaGrade}>
-    <table className={grade.grade} style={{ width: larguraMinima, minWidth: larguraMinima }} aria-label="Itens do documento" data-testid={tid("grade")}>
+    <table ref={tabelaRef} className={grade.grade} style={{ width: larguraMinima, minWidth: larguraMinima }} aria-label="Itens do documento" data-testid={tid("grade")}>
       <colgroup>{colunasVisiveis.map((k) => {
         const w = larguraDe(k);
         return <col key={k} ref={(el) => { colsRef.current[k] = el; }} style={{ width: w, minWidth: w, maxWidth: w }} />;
@@ -469,8 +494,22 @@ export function ItensDaCentral({
       <thead><tr>
         {colunasVisiveis.map((k) => {
           const w = larguraDe(k);
-          return <th key={k} scope="col" className={grade.cabecalhoColuna} style={{ width: w, minWidth: w, maxWidth: w }} {...dataCampo(k)}>
-            <span className={grade.cabecalhoRotulo}>{rotuloColuna(k)}{obrigatoria(k) && !doSistema.has(catalogo(k)) && <span className="req text-red-500"> *</span>}</span>
+          const estaCongelada = congelada === k;
+          return <th key={k} scope="col" className={cn(grade.cabecalhoColuna, estaCongelada && grade.congelada)} style={{ width: w, minWidth: w, maxWidth: w }} {...dataCampo(k)}>
+            <div className={grade.cabecalhoLinha}>
+              <span className={grade.cabecalhoRotulo}>{rotuloColuna(k)}{obrigatoria(k) && !doSistema.has(catalogo(k)) && <span className="req text-red-500"> *</span>}</span>
+              <B1Popover className="w-52 p-1" align="start" open={menuColuna === k} onOpenChange={(o) => setMenuColuna(o ? k : null)}
+                trigger={<button type="button" className={grade.menuCabecalho} aria-label={`Abrir menu da coluna ${rotuloColuna(k)}`} onClick={(e) => e.stopPropagation()}><MoreVertical /></button>}>
+                <MenuList onPick={(acao) => {
+                  setMenuColuna(null);
+                  if (acao === "fit") autoAjustar(k);
+                  if (acao === "freeze") setCongelada((c) => (c === k ? null : k));
+                }} items={[
+                  { key: "fit", label: "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" /> },
+                  { key: "freeze", label: estaCongelada ? "Descongelar coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" /> }
+                ]} />
+              </B1Popover>
+            </div>
             <span role="separator" aria-label={`Redimensionar ${rotuloColuna(k)}`} className={grade.alcaResize} onMouseDown={(e) => iniciarResize(e, k)} />
           </th>;
         })}
@@ -489,9 +528,12 @@ export function ItensDaCentral({
             onClick={() => setSelecionado(i)}>
             {colunasVisiveis.map((k) => {
               const td = celula(k, it, i, ativa);
-              if (!layout && !erros) return td;
               const erro = erroDe(i, k);
-              return React.cloneElement(td, { ...dataCampo(k), ...(erro ? { "aria-invalid": true, title: erro, "data-erro": erro } : {}) });
+              return React.cloneElement(td, {
+                className: cn(td.props.className, congelada === k && grade.congelada),
+                ...(layout ? dataCampo(k) : {}),
+                ...(erro ? { "aria-invalid": true as const, title: erro, "data-erro": erro } : {})
+              });
             })}
           </tr>;
         })}
@@ -541,7 +583,7 @@ export function ItensDaCentral({
       case "produto": return <>{campoDeReferencia("product_id", "products")}{pesquisaEmFluxo("product_id")}</>;
       case "armazem": return <>{campoDeReferencia("warehouse_id", "warehouses")}{pesquisaEmFluxo("warehouse_id")}</>;
       case "estoque": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "estoque" : undefined}>{saldoDoItem(it)}</CampoDaCentral>;
-      case "saldo": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" testId={tid("item-saldo")}>{numeroBR(maxDaOrigem(it) ?? "0", 4)}</CampoDaCentral>;
+      case "saldo": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" testId={tid("item-saldo")}>{num(maxDaOrigem(it) ?? "0", 4)}</CampoDaCentral>;
       case "unidade": return <CampoDaCentral rotulo="Unidade" estado="travado" testId={tid("item-unidade")}><UnidadeTravada produto={it.product_id} /></CampoDaCentral>;
       case "quantidade": return campoNumerico(k, "quantity", it.quantity, { casas: casasDaQuantidade ?? 4, ...(daOrigem ? { desabilitado: daOrigem.quantidadeTravada } : {}), ...(travas(it).quantidade ? { desabilitado: true, dica: travas(it).motivos?.quantidade } : {}) });
       case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { casas: 6, ...(travas(it).unitario ? { desabilitado: true, dica: travas(it).motivos?.unitario } : {}) });

@@ -117,7 +117,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-grid tfoot th, .mg-grid tfoot td { position: sticky; bottom: 0; background: #f8fafc; z-index: 3; }
 .mg-grid { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; font-size: 12px; }
 .mg-grid thead th { position: sticky; top: 0; z-index: 3; height: 30px; padding: 0 9px; background: #fff; color: #334155; font-size: 12px; font-weight: 600; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--mg-table-line); border-right: 1px solid var(--mg-table-line); }
-.mg-grid thead th:last-child, .mg-grid tbody td:last-child { border-right: 0; }
+/* borda direita da última coluna permanece (decisão 349) */
 .mg-grid tbody td { height: 26px; padding: 0 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--mg-text-1); border-bottom: 1px solid var(--mg-table-line); border-right: 1px solid var(--mg-table-line); transition: none; }
 .mg-grid tbody tr.even td { background: #fff; } .mg-grid tbody tr.odd td { background: var(--mg-row-alt); }
 .mg-grid tbody tr:hover td { background: var(--mg-row-hover); }

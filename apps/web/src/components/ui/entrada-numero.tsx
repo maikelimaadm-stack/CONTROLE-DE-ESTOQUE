@@ -1,13 +1,13 @@
 "use client";
 import * as React from "react";
-import { cn, numeroBR } from "@/lib/utils";
+import { cn, num, numeroBR } from "@/lib/utils";
 import { canonicoDoDigitado, ehZeroCanonico, filtrarDigitacao, paraDigitacao } from "@/lib/numero-digitado";
 
 export type EntradaNumeroProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "onChange" | "inputMode"> & {
   /** Valor canônico (ponto decimal, sem milhar), como a API e o estado do lançamento usam. */
   value: string;
   onChange: (canonico: string) => void;
-  /** Teto de casas na digitação; no blur a exibição segue `numeroBR` (inteiro sem casas / decimal com 2, ou este teto). */
+  /** Teto de casas na digitação; fora do foco a exibição força essas casas (315 → 315,00). */
   casas?: number;
   /** Só inteiro (sem vírgula). */
   inteiro?: boolean;
@@ -26,14 +26,14 @@ export const EntradaNumero = React.forwardRef<HTMLInputElement, EntradaNumeroPro
   const [foco, setFoco] = React.useState(false);
   const [texto, setTexto] = React.useState("");
 
-  // Dinheiro (casas 2 ou omitido): inteiro `1.000` / decimal `1.000,00`. Quantidade (casas ≠ 2): teto com trim.
+  // Fora do foco: casas fixas (`num`) — inteiro também mostra decimais (decisão 349). Sem `casas`: numeroBR.
   const exibido = foco
     ? texto
     : (value === "" || value == null
       ? ""
       : inteiro
         ? numeroBR(value, 0)
-        : (casas !== undefined && casas !== 2 ? numeroBR(value, casas) : numeroBR(value)));
+        : (casas !== undefined ? num(value, casas) : numeroBR(value)));
 
   return (
     <input

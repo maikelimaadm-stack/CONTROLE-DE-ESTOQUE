@@ -171,6 +171,7 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
               <Base1Grid
                 columns={visibleColumns}
                 referenceHeaders
+                freezeSingle
                 selecaoSticky={false}
                 frozen={congeladas} onFreeze={setCongeladas}
                 rows={sortedRows}
@@ -185,6 +186,7 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
                 onHide={(k) => setOcultas((p) => new Set(p).add(k))}
                 onFilter={(k) => setFiltrando(k)}
                 filteredKeys={new Set(Object.keys(filtros))}
+                popoverClassName="b1-portal-compras"
               />
               {filtrando && <FiltroDeColuna
                 rotulo={colunas.find((c) => c.key === filtrando)?.label ?? ""}
