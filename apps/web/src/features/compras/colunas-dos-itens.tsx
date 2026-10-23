@@ -113,25 +113,28 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
   const busca = (valor: string, onChange: (v: string) => void, rotulo: string) => (
     <label className="cfgb cfgb-lista"><Search size={14} aria-hidden />
       <input value={valor} onChange={(e) => onChange(e.target.value)} placeholder="Procurar coluna" aria-label={rotulo} />
-      {valor && <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => onChange("")}><X size={12} /></button>}
+      {valor
+        ? <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => onChange("")}><X size={12} /></button>
+        : <span className="xlim" aria-hidden />}
     </label>
   );
 
   return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title={titulo} size="lg" profile="large"
-    className={cn("b1-portal-compras", className)}
+    className={cn("b1-portal-compras b1-colunas-dlg", className)}
+    bodyClassName="!p-4"
     fecharSoPeloBotao
     antesDoFechar={<button type="button" className="tb-btn tb-btn-icon tb-btn-sm" aria-label="Restaurar padrão" title="Restaurar padrão" onClick={restaurarRascunho}><RotateCcw className="h-4 w-4" /></button>}
     footer={<div className="b1ref flex w-full items-center justify-end gap-2">
       <button type="button" className="tb-btn tb-btn-icon" aria-label="Pronto" title="Pronto" onClick={salvar}><Check className="h-4 w-4" /></button>
     </div>}>
-    <div className="b1ref">
-      <div className="dcol" style={{ minHeight: 320 }}>
+    <div className="b1ref flex h-full min-h-0 flex-col">
+      <div className="dcol">
         <div className="dbox">
           {busca(qa, setQa, "Procurar em disponíveis")}
           <span className="dbox-h">Disponíveis<span className="bd t-plain">{livres.length}</span></span>
           {lista(livres, false, qa, qa ? "Nenhuma coluna com esse texto." : "Todas as colunas estão na tabela.")}
         </div>
-        <div className="dmid">
+        <div className="dmid" aria-label="Mover colunas">
           <button type="button" className="tb-btn tb-btn-icon" title="Usar todas" aria-label="Usar todas" onClick={usarTodas}><ChevronsRight className="h-4 w-4" /></button>
           <button type="button" className="tb-btn tb-btn-icon" title="Usar coluna selecionada" aria-label="Usar coluna selecionada" onClick={usarSel}><ChevronRight className="h-4 w-4" /></button>
           <button type="button" className="tb-btn tb-btn-icon" title="Remover coluna selecionada" aria-label="Remover coluna selecionada" onClick={removerSel}><ChevronLeft className="h-4 w-4" /></button>

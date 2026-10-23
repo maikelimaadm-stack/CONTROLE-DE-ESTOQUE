@@ -31,19 +31,22 @@ export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, o
   const busca = (valor: string, onChange: (v: string) => void, rotulo: string) => (
     <label className="cfgb cfgb-lista"><Search size={14} aria-hidden />
       <input value={valor} onChange={(e) => onChange(e.target.value)} placeholder="Procurar coluna" aria-label={rotulo} />
-      {valor && <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => onChange("")}><X size={12} /></button>}
+      {valor
+        ? <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => onChange("")}><X size={12} /></button>
+        : <span className="xlim" aria-hidden />}
     </label>
   );
 
   return <Dialog open={open} onOpenChange={onOpenChange} title="Colunas" size="lg" profile="large"
-    className={cn("b1-portal-compras", className)}
+    className={cn("b1-portal-compras b1-colunas-dlg", className)}
+    bodyClassName="!p-4"
     fecharSoPeloBotao
     antesDoFechar={<button type="button" className="tb-btn tb-btn-icon tb-btn-sm" title="Restaurar padrão" aria-label="Restaurar padrão" onClick={restaurarRascunho}><RotateCcw className="h-4 w-4" /></button>}
     footer={<div className="b1ref flex w-full items-center justify-end gap-2">
       <button type="button" className="tb-btn tb-btn-icon" title="Pronto" aria-label="Pronto" onClick={salvar}><Check className="h-4 w-4" /></button>
     </div>}>
-    <div className="b1ref">
-      <div className="dcol" style={{ minHeight: 320 }}>
+    <div className="b1ref flex h-full min-h-0 flex-col">
+      <div className="dcol">
         <div className="dbox">
           {busca(qa, setQa, "Procurar em disponíveis")}
           <div className="dbox-h">Disponíveis<span className="bd t-plain">{available.length}</span></div>
@@ -52,7 +55,7 @@ export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, o
             {available.filter((k) => match(k, qa)).map((k) => <button type="button" key={k} onDoubleClick={() => add(k)} onClick={() => setSel(k)} className={cn("dlin", sel === k && "sel")}><span className="dlin-l">{label(k)}</span><Columns3 className="h-3.5 w-3.5 shrink-0 text-slate-400" /></button>)}
           </div>
         </div>
-        <div className="dmid">
+        <div className="dmid" aria-label="Mover colunas">
           <button type="button" className="tb-btn tb-btn-icon" title="Usar todas" aria-label="Usar todas" onClick={setTodas}><ChevronsRight className="h-4 w-4" /></button>
           <button type="button" className="tb-btn tb-btn-icon" title="Usar coluna selecionada" aria-label="Usar coluna selecionada" onClick={() => sel && add(sel)}><ChevronRight className="h-4 w-4" /></button>
           <button type="button" className="tb-btn tb-btn-icon" title="Remover coluna selecionada" aria-label="Remover coluna selecionada" onClick={() => sel && remove(sel)}><ChevronLeft className="h-4 w-4" /></button>
