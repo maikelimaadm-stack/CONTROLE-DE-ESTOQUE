@@ -48,38 +48,44 @@
 .linha[data-multilinha] { height: 80px; }
 
 /*
- * rótulo à frente (padrão): 126px, à direita, ":" antes do "*". Altura de 28px, a do padding-box da linha (o da caixa):
- * o centro do rótulo é o da caixa, 15. A caixa de linha é a do valor, 15px (12,5 × 1,2): o glifo da DM Sans (16px) não
- * cabe nela e o Chrome reparte a sobra −1/0 — com a mesma linha, rótulo e valor ficam no mesmo centro e na mesma
- * linha-base (com linha de 12px a sobra é −2/−2 e o rótulo ficava 0,5px abaixo).
+ * rótulo à frente (padrão): 126px, à direita, ":" antes do "*". Centro óptico da caixa = `top: 50%` +
+ * `translateY(-50%)` com altura automática (o mesmo truque do painel em `painel.module.css`): `top: 0` +
+ * `height: 28px` + flex deixava o glifo visualmente alto demais frente à caixa. Duas linhas cabem nos 28px
+ * (line-height 14). Flex permanece por causa do `order` (":" antes do "*").
  */
 .rotulo {
   position: absolute;
   left: 0;
-  top: 0;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 2;
   box-sizing: content-box;
   width: 126px;
-  height: 28px;
+  height: auto;
   max-width: none;
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   padding: 0 2px 0 0;
   font-size: 12px;
   font-weight: 500;
-  line-height: 15px;
+  line-height: 14px;
   color: #64748b;
-  /* O rótulo PODE QUEBRAR (decisão do usuário, 10/2026): nome comprido vira duas linhas dentro dos 30px da linha
-     (12px × 1,15 ≈ 13,8 por linha), em vez de perder o começo do nome — o "…de despesa" que aparecia cortado. */
+  /* O rótulo PODE QUEBRAR (decisão do usuário, 10/2026): nome comprido vira duas linhas, em vez de perder o começo. */
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
   text-align: right;
-  line-height: 1.15;
   overflow-wrap: anywhere;
   pointer-events: none;
   transition: font-size .22s cubic-bezier(.2, .8, .2, 1), padding .22s cubic-bezier(.2, .8, .2, 1), top .22s cubic-bezier(.2, .8, .2, 1);
+}
+/* multilinha: o valor começa no topo — o rótulo acompanha a 1ª linha, não o centro dos 80px */
+.linha[data-multilinha] .rotulo {
+  top: 0;
+  transform: none;
+  height: 28px;
 }
 .rotulo::after { content: ":"; order: 0; }
 .obrigatorio { order: 1; margin-left: 3px; color: #dc2626; font-weight: 600; }
@@ -262,6 +268,8 @@ fieldset:disabled .caixa .controle { cursor: default; }
 [data-densidade="rotulo-acima"] .linha[data-multilinha] { height: auto; }
 [data-densidade="rotulo-acima"] .rotulo {
   position: static;
+  top: auto;
+  transform: none;
   width: auto;
   height: auto;
   max-width: none;
