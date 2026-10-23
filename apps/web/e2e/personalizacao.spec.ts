@@ -2,11 +2,12 @@ import { test, expect } from "@playwright/test";
 import { login, api } from "./helpers";
 
 /** MODELO BASE1: listagem (chips de filtro, colunas, cards), modo Registro, configuração de layout e relatórios. */
+/** Decisão 353: sem "Restaurar padrão da tela" no Mais opções — restaura pela API + limpa cache local. */
 async function restoreScreen(page: import("@playwright/test").Page) {
-  await page.getByLabel("Mais opções").click();
-  await page.getByRole("menuitem", { name: "Restaurar padrão da tela" }).click();
-  await expect(page.locator("[data-sonner-toast]").first()).toContainText("restaurada");
-  await page.waitForTimeout(500);
+  await api(page, "DELETE", "/api/preferences/warehouses/list?scope=user", {});
+  await page.evaluate(() => { Object.keys(localStorage).filter((k) => k.startsWith("agro:prefs:")).forEach((k) => localStorage.removeItem(k)); });
+  await page.reload();
+  await expect(page.getByTestId("b1-list")).toBeVisible();
 }
 
 test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta e modo cards persistem", async ({ page }) => {

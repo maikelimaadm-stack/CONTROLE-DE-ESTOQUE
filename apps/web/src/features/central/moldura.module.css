@@ -25,19 +25,20 @@
 
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   flex: 1 1 auto;
   min-height: 600px;
   min-width: 0;
 }
 
-/* ═════════════ barra de ações — cartão próprio; a barra de 44px mora dentro dele (46px com a borda) ═════════════ */
+/* ═════════════ barra de ações — dentro do cartão do documento (decisão 353; paridade com Portal) ═════════════ */
 .barraCartao {
   flex-shrink: 0;
   background: #fff;
-  border: 1px solid #e7eaee;
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, .03), 0 2px 6px rgba(15, 23, 42, .02);
+  border: 0;
+  border-bottom: 1px solid #e7eaee;
+  border-radius: 0;
+  box-shadow: none;
 }
 .barra {
   position: relative;

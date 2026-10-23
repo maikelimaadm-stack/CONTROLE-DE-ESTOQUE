@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
-import { Plus, Pencil, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw, Paperclip, LayoutGrid, ListChecks } from "lucide-react";
+import { Plus, Pencil, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, History, FileBarChart, ListPlus, ListX, Trash2, Paperclip, LayoutGrid, ListChecks } from "lucide-react";
 import { IconeRaio } from "@/features/central/barra";
 import { MgSelect } from "@/components/ui/mg-controls";
 import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, CARD_FIELDS_MAX, type ListPreferences } from "@agro/shared";
@@ -113,7 +113,7 @@ function comColunaDeIdentidade(rodape: React.ReactNode, deslocamento: number): R
  * rodapé com contadores e "Carregar mais". Preferências por usuário (padrão da organização opcional).
  */
 export function Base1List(props: Base1ListProps) {
-  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, semModoRegistro, semFaixaDeFiltros, barraIntegrada, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra, csvName } = props;
+  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, reportHref, canDelete, onDelete, onDuplicate, Record, semModoRegistro, semFaixaDeFiltros, barraIntegrada, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra } = props;
   const colInfo = React.useMemo(() => columns.map((c) => ({ key: c.key, label: c.label })), [columns]);
   const filterInfo = React.useMemo<ListFilterInfo[]>(() => filters.map((f) => ({ key: f.key, label: f.label, kind: f.kind })), [filters]);
   const p = useListPrefs(moduleId, colInfo, filterInfo);
@@ -245,7 +245,6 @@ export function Base1List(props: Base1ListProps) {
   const target = inRecord ? recordRow : one;
   const locked = inRecord && recMode !== "view";
   const targetHint = inRecord ? (recordRow ? undefined : "Salve o registro antes") : selectedRows.length === 0 ? "Selecione um registro" : selectedRows.length > 1 ? "Selecione apenas um registro" : undefined;
-  const exportCsv = () => { const cols = visibleColumns; const esc = (s: string) => `"${s.replace(/"/g, '""')}"`; const lines = [cols.map((c) => esc(c.label)).join(";"), ...rows.map((r) => cols.map((c) => esc(c.text ? c.text(r) : String(r[c.key] ?? ""))).join(";"))]; const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${csvName ?? moduleId}.csv`; a.click(); URL.revokeObjectURL(a.href); };
   const enterRecord = (r?: Row) => {
     if (!Record) { if (r) onOpen?.(r); return; }
     if (!r && selectedRows.length > 1) { toast.info("Selecione apenas um registro para abrir"); return; }
@@ -266,27 +265,19 @@ export function Base1List(props: Base1ListProps) {
   const newRecord = () => { if (Record) { setCopyFrom(null); setRecMode("new"); setView("record"); } else onNew?.(); };
   const duplicate = (r: Row) => { if (onDuplicate) return onDuplicate(r); if (Record) { setCopyFrom(r); setRecMode("new"); setView("record"); } };
   const rowMenu = one && rowActions ? rowActions(one) : [];
+  /** Mais opções (decisão 353): só ações do registro + layout; sem Duplicar/Imprimir/exportar/padrão da org. */
   const menuItems = [
     ...rowMenu.map((a, i) => ({ key: `row:${i}`, label: a.label, danger: a.danger })),
-    { key: "dup", label: "Duplicar", icon: <Copy className="h-4 w-4" />, disabled: !one || (!onDuplicate && !Record) },
-    { key: "print", label: "Imprimir", icon: <Printer className="h-4 w-4" /> },
-    { key: "export", label: exportXlsx ? "Exportar (Excel)" : "Exportar (CSV)", icon: <Download className="h-4 w-4" /> },
     ...(entity ? [{ key: "hist", label: targetHint ? `Histórico (${targetHint.toLowerCase()})` : "Histórico", icon: <History className="h-4 w-4" />, disabled: !target }] : []),
     // Configurações de layout (decisão 329): saíram da faixa de filtros e moram só aqui.
     { key: "cfg", label: "Configurar colunas", icon: <Columns3 className="h-4 w-4" /> },
     { key: "cards-layout", label: "Layout dos cards", icon: <LayoutGrid className="h-4 w-4" />, disabled: view !== "cards" },
     { key: "card-fields", label: "Campos dos cards", icon: <ListChecks className="h-4 w-4" />, disabled: view !== "cards" },
-    { key: "pdf", label: "Exportar PDF", icon: <FileDown className="h-4 w-4" /> },
     ...(reportHref ? [{ key: "report", label: "Relatório personalizado", icon: <FileBarChart className="h-4 w-4" /> }] : []),
     ...(extraMenu ?? []).map((m) => ({ key: m.key, label: m.label, icon: m.icon })),
-    ...(p.canEditOrg ? [{ key: "org", label: "Salvar tela como padrão da organização", icon: <Building2 className="h-4 w-4" /> }] : []),
-    { key: "reset", label: "Restaurar padrão da tela", icon: <RotateCcw className="h-4 w-4" /> }
   ];
   const onMenu = (k: string) => {
     if (k.startsWith("row:")) { rowMenu[Number(k.slice(4))]?.onClick(); return; }
-    if (k === "dup" && one) duplicate(one);
-    if (k === "print" || k === "pdf") window.print();
-    if (k === "export") { if (exportXlsx) void exportXlsx({ search: applied.search || undefined, filters: applied.params }); else exportCsv(); }
     if (k === "hist" && target) setHistDlg(true);
     // Fecha o Mais opções antes de abrir diálogo/popover filho (evita dois layers Radix).
     if (k === "cfg") { setMaisOpcoesOpen(false); setColsDlg(true); }
@@ -294,8 +285,6 @@ export function Base1List(props: Base1ListProps) {
     if (k === "cards-layout") { setMaisOpcoesOpen(false); setCardsLayoutOpen(true); }
     if (k === "card-fields") { setMaisOpcoesOpen(false); setCardFieldsOpen(true); }
     if (k === "report" && reportHref) location.href = reportHref({ search: applied.search || undefined, filters: applied.params });
-    if (k === "org") void p.saveAsOrgDefault();
-    if (k === "reset") void p.reset().then(() => { setSortLocal(undefined); setPageSizeLocal(undefined); toast.success("Tela restaurada ao padrão"); });
     extraMenu?.find((m) => m.key === k)?.onClick();
   };
   const attachBtn = entity ? <IconBtn aria-label="Anexos" title={targetHint ? `Anexos — ${targetHint.toLowerCase()}` : "Anexos"} disabled={!target} onClick={() => setAttachDlg(true)} data-testid="b1-attach"><Paperclip className="h-4 w-4" /></IconBtn> : null;

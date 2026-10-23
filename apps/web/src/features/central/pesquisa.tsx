@@ -196,7 +196,11 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
       {daPesquisa.isFetchingNextPage ? "Carregando…" : "Mostrar mais"}
     </button>}
   </div>;
+  /** Fundo escuro como o diálogo de colunas (decisão 353) — fecha ao clicar fora do painel. */
+  const fundo = <div className="mg-overlay" data-testid={testId ? `${testId}-fundo` : undefined} aria-hidden
+    onMouseDown={(e) => { e.preventDefault(); onFechar(); }} />;
   // Flutuante no body (como RefSelect): não recorta na coluna de itens nem fica sob Dados principais.
-  if (modo === "flutuante" && typeof document !== "undefined") return createPortal(corpo, document.body);
+  if (modo === "flutuante" && typeof document !== "undefined") return createPortal(<>{fundo}{corpo}</>, document.body);
+  if (typeof document !== "undefined") return <>{createPortal(fundo, document.body)}{corpo}</>;
   return corpo;
 }

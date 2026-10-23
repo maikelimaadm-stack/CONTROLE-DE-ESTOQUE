@@ -219,17 +219,15 @@ export function CentralDeDocumento({ prefixoTestid, titulo, acoes, acoesDireita,
     data-densidade={densidade} data-ampliado={ampliado ?? undefined} aria-busy={carregando || undefined}
     className={cn(estilos.workspace, className)} style={estilo}>
     <AmpliarContexto.Provider value={ampliar}>
-      {/* A barra é AÇÃO, não cabeçalho: o contexto do documento mora no cabeçalho de Dados principais.
-          O cartão é a moldura (borda e sombra); a barra de 44px mora dentro dele. */}
-      <div className={estilos.barraCartao}>
-        <div className={estilos.barra} data-testid={`${prefixoTestid}-acoes`} role="toolbar" aria-label={`Ações · ${titulo}`}>
-          {acoes}
-          <span className={estilos.barraEspaco} />
-          {acoesDireita}
-        </div>
-      </div>
-
+      {/* Decisão 353: barra e documento no MESMO cartão (como barraIntegrada do Portal) — sem vão entre eles. */}
       <section className={estilos.doc} aria-label="Documento em edição">
+        <div className={estilos.barraCartao}>
+          <div className={estilos.barra} data-testid={`${prefixoTestid}-acoes`} role="toolbar" aria-label={`Ações · ${titulo}`}>
+            {acoes}
+            <span className={estilos.barraEspaco} />
+            {acoesDireita}
+          </div>
+        </div>
         <div ref={corpoRef} className={estilos.corpo}>
           <section className={estilos.coluna} data-testid={`${prefixoTestid}-dados`} data-regiao="dados" aria-label="Dados principais">
             <div className={estilos.cabecalho}>

@@ -204,69 +204,66 @@
 .selo { font-size: 10.5px; font-weight: 600; color: #475569; background: #eef1f4; border-radius: 999px; padding: 0 6px; line-height: 16px; }
 .separador { height: 1px; background: rgba(15, 23, 42, .08); margin: 4px 0; }
 
-/* ═════════════ ações rápidas em meia-lua (`.radial`, `.rs-item`) ═════════════ */
+/* ═════════════ ações rápidas — lista vertical estilo Portal (decisão 353) ═════════════ */
 .leque { position: relative; display: inline-flex; flex-shrink: 0; }
-/* o conteúdo do menu é um ponto no CENTRO do ⚡: os itens orbitam a partir dele */
-.lequeConteudo { position: relative; width: 0; height: 0; z-index: 36; outline: none; }
-.lequeConteudo[data-state="closed"] { animation: lequeFecha 410ms linear forwards; }
-/* especificidade acima de `.workspace [data-dica]` (position: relative da dica) */
-.lequeConteudo .lequeItem[data-dica] {
-  position: absolute;
-  left: 0;
-  top: 0;
-  translate: -50% -50%;
-  z-index: 36;
-  width: 28px;
-  height: 28px;
+.menuPortal {
+  z-index: 50;
+  width: 16rem;
   box-sizing: border-box;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, .95);
-  border: 1px solid #e6ece8;
-  color: #475569;
-  padding: 0;
-  cursor: pointer;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid #e7eaee;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, .08), 0 2px 8px rgba(16, 24, 40, .06);
+  outline: none;
+  animation: sobeDeLeve 140ms cubic-bezier(.16, 1, .3, 1) both;
+}
+.menuItem {
   display: flex;
   align-items: center;
-  justify-content: center;
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  backdrop-filter: blur(14px) saturate(160%);
-  box-shadow: 0 6px 16px rgba(15, 23, 42, .13);
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #334155;
+  font-size: 12.5px;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
   outline: none;
-  transform: translate(var(--x), var(--y)) scale(1);
-  transition: border-color 120ms cubic-bezier(.4, 0, .2, 1), background-color 120ms cubic-bezier(.4, 0, .2, 1), color 120ms cubic-bezier(.4, 0, .2, 1);
-  animation: lequeSai 340ms cubic-bezier(.2, .8, .3, 1.2) var(--atraso-entrada) backwards, lequeAcende 170ms cubic-bezier(.4, 0, .2, 1) var(--atraso-entrada) backwards;
 }
-.lequeConteudo .lequeItem[data-highlighted]:not([data-disabled]),
-.lequeConteudo .lequeItem:hover:not([data-disabled]) { border-color: #cbd5e1; background: #fff; color: #0f172a; }
-.lequeConteudo .lequeItem:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-/* no desenho `.radial.open .rs-item` vence o `:disabled`: o item desabilitado (Imprimir e Histórico na criação) fica
-   com opacidade 1 — só o cursor e a falta de resposta ao passar dizem que ele não age */
-.lequeConteudo .lequeItem[data-disabled] { opacity: 1; cursor: not-allowed; }
-/* a mesma especificidade da regra base do item (`.lequeConteudo .lequeItem[data-dica]`) + 1 classe: sem isso a cor da
-   base vencia — o número saía #475569 e o Cancelar saía cinza, não vermelho (VD-3) */
-.lequeConteudo .lequeItem.lequeNumero[data-dica] { font-size: 13px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; color: #0f172a; }
-.lequeConteudo .lequeItem.lequePerigo[data-dica] { color: #b91c1c; }
-.lequeConteudo .lequePerigo[data-highlighted]:not([data-disabled]),
-.lequeConteudo .lequePerigo:hover:not([data-disabled]) { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
-.lequeConteudo[data-state="closed"] .lequeItem[data-dica] {
-  animation: lequeVolta 340ms cubic-bezier(.2, .8, .3, 1.2) var(--atraso-saida) forwards, lequeApaga 170ms cubic-bezier(.4, 0, .2, 1) var(--atraso-saida) forwards;
-  pointer-events: none;
+.menuItem[data-highlighted]:not(:disabled),
+.menuItem:hover:not(:disabled) { background: #f8fafc; color: #0f172a; }
+.menuItem:focus-visible { outline: 2px solid #22a85c; outline-offset: -2px; }
+.menuItem:disabled { opacity: .42; cursor: not-allowed; }
+.menuItemPerigo { color: #b91c1c; }
+.menuItemPerigo[data-highlighted]:not(:disabled),
+.menuItemPerigo:hover:not(:disabled) { background: #fef2f2; color: #b91c1c; }
+.menuIcone { display: inline-flex; flex-shrink: 0; color: #64748b; }
+.menuIcone svg { width: 16px; height: 16px; }
+.menuNumero {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
 }
+.menuRotulo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-@keyframes lequeSai { from { transform: translate(0, 0) scale(.55); } }
-@keyframes lequeAcende { from { opacity: 0; } }
-@keyframes lequeVolta { to { transform: translate(0, 0) scale(.55); } }
-@keyframes lequeApaga { to { opacity: 0; } }
-@keyframes lequeFecha { to { opacity: 1; } }
 @keyframes sobeDeLeve { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 @keyframes surge { from { opacity: 0; transform: translateY(-7px) scale(.985); } to { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
   .botao, .pilula, .segmentado > button, .mi { transition: none; }
   .botao:active:not(:disabled), .pilula:active:not(:disabled), .segmentado > button:active, .mi:active { transform: none; }
-  .salvo, .pendencias, .pop { animation: none; }
+  .salvo, .pendencias, .pop, .menuPortal { animation: none; }
   .girar { animation-duration: 1.6s; }
-  .lequeConteudo[data-state="closed"] { animation: none; }
-  .lequeConteudo .lequeItem[data-dica],
-  .lequeConteudo[data-state="closed"] .lequeItem[data-dica] { animation: none; transition: none; }
 }
