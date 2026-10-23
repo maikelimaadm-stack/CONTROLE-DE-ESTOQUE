@@ -66,9 +66,9 @@ export function RadioRow({ checked, onClick, title, hint }: { checked: boolean; 
     <span><span className="block text-[12.5px] font-medium text-slate-800">{title}</span>{hint && <span className="block text-[11px] text-slate-500">{hint}</span>}</span>
   </button>;
 }
-export function CheckRow({ checked, onChange, label, hint }: { checked: boolean; onChange: (c: boolean) => void; label: React.ReactNode; hint?: string }) {
-  return <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1.5 hover:bg-slate-50">
-    <input type="checkbox" className="peer sr-only" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+export function CheckRow({ checked, onChange, label, hint, disabled }: { checked: boolean; onChange: (c: boolean) => void; label: React.ReactNode; hint?: string; disabled?: boolean }) {
+  return <label className={cn("flex items-center gap-2 rounded-md px-1 py-1.5", disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-slate-50")}>
+    <input type="checkbox" className="peer sr-only" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
     <span className={cn("inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-white", checked ? "border-[var(--mg-accent)] bg-[var(--mg-accent)]" : "border-slate-300 bg-white")}>{checked && <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 6l3 3 5-6" /></svg>}</span>
     <span className="text-[12.5px] text-slate-800">{label}</span>{hint && <span className="ml-auto text-[11px] text-slate-400">{hint}</span>}
   </label>;

@@ -45,12 +45,16 @@ test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta
   await expect(page.getByTestId("b1-card").first()).toBeVisible();
   await page.getByLabel("Mais opções").click();
   await page.getByRole("menuitem", { name: "Layout dos cards" }).click();
-  await page.getByRole("radio", { name: /2 cards por linha/ }).click();
-  await page.getByRole("button", { name: "OK" }).click();
+  const layoutDlg = page.getByRole("dialog", { name: "Layout dos cards" });
+  await expect(layoutDlg).toBeVisible();
+  await layoutDlg.getByRole("radio", { name: /2 cards por linha/ }).click();
+  await layoutDlg.getByRole("button", { name: "OK" }).click();
   await page.getByLabel("Mais opções").click();
   await page.getByRole("menuitem", { name: "Campos dos cards" }).click();
-  await expect(page.getByText("Campos dos cards").first()).toBeVisible();
-  await page.getByRole("button", { name: "OK" }).click();
+  const camposDlg = page.getByRole("dialog", { name: "Campos dos cards" });
+  await expect(camposDlg).toBeVisible();
+  await expect(camposDlg.getByText(/de 10 campos/)).toBeVisible();
+  await camposDlg.getByRole("button", { name: "OK" }).click();
   await saved;
   // recarrega sem cache local: preferências vêm do servidor
   await page.evaluate(() => { Object.keys(localStorage).filter((k) => k.startsWith("agro:prefs:")).forEach((k) => localStorage.removeItem(k)); });

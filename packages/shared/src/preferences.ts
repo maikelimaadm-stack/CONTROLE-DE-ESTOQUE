@@ -106,6 +106,8 @@ export interface ListPreferences {
 }
 /** Máximo de campos de detalhe nos resultados da pesquisa (como no MG: 5). */
 export const SEARCH_DROPDOWN_MAX_FIELDS = 5;
+/** Máximo de campos exibidos no card da listagem (Campos dos cards). */
+export const CARD_FIELDS_MAX = 10;
 export interface ListKnown { columns?: string[]; filters?: string[]; filterKinds?: Record<string, FilterKind> }
 export const LIST_PAGE_SIZES = [10, 20, 30, 50, 80, 100, 200, 300, 400, 500, 1000] as const;
 /** Quantidade de registros por carregamento no rodapé do modelo base (como no MG: 100…1000). */
@@ -132,7 +134,7 @@ export function normalizeListPreferences(raw: unknown, known: ListKnown = {}): L
   if (typeof raw["pageSize"] === "number" && (LIST_PAGE_SIZES as readonly number[]).includes(raw["pageSize"])) d.pageSize = raw["pageSize"];
   const view = isObj(raw["view"]) ? raw["view"] : {};
   d.view.mode = view["mode"] === "cards" ? "cards" : "table";
-  d.view.cardFields = strList(view["cardFields"], known.columns, 12);
+  d.view.cardFields = strList(view["cardFields"], known.columns, CARD_FIELDS_MAX);
   if (view["cardsPerRow"] === 1 || view["cardsPerRow"] === 2 || view["cardsPerRow"] === 3 || view["cardsPerRow"] === 4) d.view.cardsPerRow = view["cardsPerRow"];
   if (view["density"] === "compact" || view["density"] === "normal") d.view.density = view["density"];
   const fl = isObj(raw["filters"]) ? raw["filters"] : {};

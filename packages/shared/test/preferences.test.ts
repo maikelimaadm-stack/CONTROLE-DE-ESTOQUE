@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeListPreferences, normalizeItensPreferences, preferenciasDeLista, applyColumnPreferences, normalizeFormLayout, buildDefaultFormLayout, parseFilterKey, filterKey, relativeDateRange, filterKindOf, isValidOperator, decodeRange, encodeRange, MAX_FIELDS_PER_ROW } from "../src/preferences.js";
+import { normalizeListPreferences, normalizeItensPreferences, preferenciasDeLista, applyColumnPreferences, normalizeFormLayout, buildDefaultFormLayout, parseFilterKey, filterKey, relativeDateRange, filterKindOf, isValidOperator, decodeRange, encodeRange, MAX_FIELDS_PER_ROW, CARD_FIELDS_MAX } from "../src/preferences.js";
 
 describe("preferências de listagem", () => {
   it("descarta colunas/filtros desconhecidos e valores inválidos", () => {
@@ -84,5 +84,13 @@ describe("operador de lista (chip de filtro)", () => {
   it("aceita 1 card por linha na visualização", () => {
     expect(normalizeListPreferences({ view: { mode: "cards", cardsPerRow: 1 } }).view.cardsPerRow).toBe(1);
     expect(normalizeListPreferences({ view: { mode: "cards", cardsPerRow: 5 } }).view.cardsPerRow).toBeUndefined();
+  });
+  it("limita campos dos cards a CARD_FIELDS_MAX (10)", () => {
+    expect(CARD_FIELDS_MAX).toBe(10);
+    const keys = Array.from({ length: 15 }, (_, i) => `c${i}`);
+    const p = normalizeListPreferences({ view: { mode: "cards", cardFields: keys } }, { columns: keys });
+    expect(p.view.cardFields).toHaveLength(10);
+    expect(p.view.cardFields?.[0]).toBe("c0");
+    expect(p.view.cardFields?.[9]).toBe("c9");
   });
 });

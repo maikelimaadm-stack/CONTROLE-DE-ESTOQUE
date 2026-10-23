@@ -1,8 +1,9 @@
 "use client";
 import * as React from "react";
 import { Bookmark, Check, MoreVertical } from "lucide-react";
+import { CARD_FIELDS_MAX } from "@agro/shared";
 import { cn } from "@/lib/utils";
-import { Spinner, Empty } from "@/components/ui";
+import { Spinner, Empty, Dialog } from "@/components/ui";
 import { B1Popover, IconBtn, PillBtn, RadioRow, CheckRow } from "./ui";
 import type { Base1Column, Row } from "./types";
 
@@ -48,33 +49,61 @@ export function Base1Cards({ rows, columns, fields, perRow, loading, onOpen, sel
 
 const PER_ROW: { n: 1 | 2 | 3 | 4; hint: string }[] = [{ n: 1, hint: "Até 5 campos por linha no card" }, { n: 2, hint: "Até 2 campos por linha no card" }, { n: 3, hint: "1 campo por linha no card" }, { n: 4, hint: "1 campo por linha no card" }];
 
-/** Âncora invisível: o popover abre pelo menu "Mais opções" (decisão 329), sem botão na faixa. */
-const AncoraInvisivel = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>((p, ref) =>
-  <button ref={ref} type="button" tabIndex={-1} aria-hidden className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0" {...p} />);
-AncoraInvisivel.displayName = "AncoraInvisivel";
-
-/** Popover "Configurar layout dos cards" (cards por linha) com Restaurar / Ok. */
+/**
+ * Diálogo "Layout dos cards" (cards por linha). Saiu do popover com âncora invisível: ao fechar
+ * o Mais opções o Radix dismissava o filho no mesmo clique — configuração parecia morta.
+ */
 export function CardsLayoutPopover({ value, onChange, onRestore, open, onOpenChange, className }: {
   value: 1 | 2 | 3 | 4; onChange: (n: 1 | 2 | 3 | 4) => void; onRestore: () => void;
   open: boolean; onOpenChange: (o: boolean) => void; className?: string;
 }) {
   const [draft, setDraft] = React.useState(value);
   React.useEffect(() => { if (open) setDraft(value); }, [open, value]);
-  return <B1Popover open={open} onOpenChange={onOpenChange} className={className} title="Layout dos cards" trigger={<AncoraInvisivel aria-label="Configurar layout dos cards" />}
-    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); onOpenChange(false); }}>OK</PillBtn></>}>
+  if (!open) return null;
+  return <Dialog open onOpenChange={onOpenChange} title="Layout dos cards" size="sm" className={cn("b1-portal-compras", className)}
+    bodyClassName="!p-4"
+    footer={<div className="b1ref flex w-full items-center justify-end gap-2">
+      <PillBtn tone="gray" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn>
+      <PillBtn onClick={() => { onChange(draft); onOpenChange(false); }}>OK</PillBtn>
+    </div>}>
     <div role="radiogroup" aria-label="Cards por linha">{PER_ROW.map((o) => <RadioRow key={o.n} checked={draft === o.n} onClick={() => setDraft(o.n)} title={`${o.n} card${o.n > 1 ? "s" : ""} por linha`} hint={o.hint} />)}</div>
-  </B1Popover>;
+  </Dialog>;
 }
 
-/** Popover "Configurar campos dos cards" (quais colunas aparecem nos cards). */
+/**
+ * Diálogo "Campos dos cards" — até CARD_FIELDS_MAX campos (preferência do usuário).
+ * Mesmo motivo do Layout: diálogo estável em vez de popover aninhado ao Mais opções.
+ */
 export function CardFieldsPopover({ columns, value, onChange, onRestore, open, onOpenChange, className }: {
   columns: Base1Column[]; value: string[]; onChange: (keys: string[]) => void; onRestore: () => void;
   open: boolean; onOpenChange: (o: boolean) => void; className?: string;
 }) {
-  const [draft, setDraft] = React.useState<string[]>(value);
-  React.useEffect(() => { if (open) setDraft(value); }, [open, value]);
-  return <B1Popover open={open} onOpenChange={onOpenChange} className={cn("w-72", className)} title="Campos dos cards" trigger={<AncoraInvisivel aria-label="Configurar campos dos cards" />}
-    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); onOpenChange(false); }}>OK</PillBtn></>}>
-    <div className="max-h-72 overflow-auto">{[...columns].sort((a, b) => a.label.localeCompare(b.label)).map((c) => <CheckRow key={c.key} checked={draft.includes(c.key)} onChange={(on) => setDraft((d) => (on ? [...d, c.key] : d.filter((k) => k !== c.key)))} label={c.label} />)}</div>
-  </B1Popover>;
+  const [draft, setDraft] = React.useState<string[]>(() => value.slice(0, CARD_FIELDS_MAX));
+  React.useEffect(() => { if (open) setDraft(value.slice(0, CARD_FIELDS_MAX)); }, [open, value]);
+  if (!open) return null;
+  const cheio = draft.length >= CARD_FIELDS_MAX;
+  const toggle = (key: string, on: boolean) => {
+    setDraft((d) => {
+      if (on) {
+        if (d.includes(key) || d.length >= CARD_FIELDS_MAX) return d;
+        return [...d, key];
+      }
+      return d.filter((k) => k !== key);
+    });
+  };
+  return <Dialog open onOpenChange={onOpenChange} title="Campos dos cards" size="sm" className={cn("b1-portal-compras", className)}
+    bodyClassName="!p-4"
+    footer={<div className="b1ref flex w-full items-center justify-end gap-2">
+      <PillBtn tone="gray" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn>
+      <PillBtn onClick={() => { onChange(draft.slice(0, CARD_FIELDS_MAX)); onOpenChange(false); }}>OK</PillBtn>
+    </div>}>
+    <p className="mb-2 text-[11.5px] text-slate-500">{draft.length} de {CARD_FIELDS_MAX} campos{cheio ? " · máximo atingido" : ""}</p>
+    <div className="max-h-72 overflow-auto">{[...columns].sort((a, b) => a.label.localeCompare(b.label, "pt-BR")).map((c) => {
+      const marcado = draft.includes(c.key);
+      const travado = !marcado && cheio;
+      return <CheckRow key={c.key} checked={marcado} disabled={travado}
+        onChange={(on) => toggle(c.key, on)} label={c.label}
+        hint={travado ? "Máximo 10" : undefined} />;
+    })}</div>
+  </Dialog>;
 }

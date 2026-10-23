@@ -5,7 +5,7 @@ import { toast } from "@/lib/toast";
 import { Plus, Pencil, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw, Paperclip, LayoutGrid, ListChecks } from "lucide-react";
 import { IconeRaio } from "@/features/central/barra";
 import { MgSelect } from "@/components/ui/mg-controls";
-import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, type ListPreferences } from "@agro/shared";
+import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, CARD_FIELDS_MAX, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { getSession } from "@/lib/api";
 import { Confirm, ErrorBox } from "@/components/ui";
@@ -290,15 +290,16 @@ export function Base1List(props: Base1ListProps) {
     if (k === "hist" && target) setHistDlg(true);
     // Fecha o Mais opções antes de abrir diálogo/popover filho (evita dois layers Radix).
     if (k === "cfg") { setMaisOpcoesOpen(false); setColsDlg(true); }
-    if (k === "cards-layout") { setMaisOpcoesOpen(false); queueMicrotask(() => setCardsLayoutOpen(true)); }
-    if (k === "card-fields") { setMaisOpcoesOpen(false); queueMicrotask(() => setCardFieldsOpen(true)); }
+    // Diálogo (não popover): fecha o Mais opções e abre na mesma virada — sem corrida do dismiss Radix.
+    if (k === "cards-layout") { setMaisOpcoesOpen(false); setCardsLayoutOpen(true); }
+    if (k === "card-fields") { setMaisOpcoesOpen(false); setCardFieldsOpen(true); }
     if (k === "report" && reportHref) location.href = reportHref({ search: applied.search || undefined, filters: applied.params });
     if (k === "org") void p.saveAsOrgDefault();
     if (k === "reset") void p.reset().then(() => { setSortLocal(undefined); setPageSizeLocal(undefined); toast.success("Tela restaurada ao padrão"); });
     extraMenu?.find((m) => m.key === k)?.onClick();
   };
   const attachBtn = entity ? <IconBtn aria-label="Anexos" title={targetHint ? `Anexos — ${targetHint.toLowerCase()}` : "Anexos"} disabled={!target} onClick={() => setAttachDlg(true)} data-testid="b1-attach"><Paperclip className="h-4 w-4" /></IconBtn> : null;
-  const cardFields = prefs.view.cardFields ?? columns.slice(0, 7).map((c) => c.key);
+  const cardFields = (prefs.view.cardFields ?? columns.slice(0, CARD_FIELDS_MAX).map((c) => c.key)).slice(0, CARD_FIELDS_MAX);
   // em edição/novo (secondaryToolsLocked do MG) ficam só os anexos: pesquisa, alternância de modo e menu somem
   const rightSlot = locked ? <div className="ml-auto flex items-center gap-1.5">{attachBtn}</div> : <div className="ml-auto flex items-center gap-1.5">
     {attachBtn}
@@ -317,7 +318,7 @@ export function Base1List(props: Base1ListProps) {
         onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: undefined } }))} />
       <CardFieldsPopover open={cardFieldsOpen} onOpenChange={setCardFieldsOpen} columns={columns} value={cardFields}
         className={barraIntegrada ? "b1-portal-compras" : undefined}
-        onChange={(keys) => p.update((x) => ({ ...x, view: { ...x.view, cardFields: keys } }))}
+        onChange={(keys) => p.update((x) => ({ ...x, view: { ...x.view, cardFields: keys.slice(0, CARD_FIELDS_MAX) } }))}
         onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardFields: undefined } }))} />
     </span>
   </div>;
