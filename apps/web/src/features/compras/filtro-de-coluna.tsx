@@ -45,9 +45,9 @@ export function casa(f: FiltroAtivo, tipo: Tipo, valor: string): boolean {
 
 const Chk = ({ on, parte }: { on: boolean; parte?: boolean }) => <span className={cn("chk", on && "on", !on && parte && "parte")}>{(on || parte) && <Check strokeWidth={3} />}</span>;
 
-export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar, onFechar }: {
+export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar, onFechar, className }: {
   rotulo: string; tipo: Tipo; ancora: string; valores: string[]; atual: FiltroAtivo | null;
-  onAplicar: (f: FiltroAtivo | null) => void; onFechar: () => void;
+  onAplicar: (f: FiltroAtivo | null) => void; onFechar: () => void; className?: string;
 }) {
   const contagem = React.useMemo(() => { const m = new Map<string, number>(); for (const v of valores) m.set(v, (m.get(v) ?? 0) + 1); return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], "pt-BR", { numeric: true })); }, [valores]);
   const [sel, setSel] = React.useState<Set<string>>(() => new Set(atual?.valores ?? contagem.map(([v]) => v)));
@@ -90,8 +90,8 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
   };
   const ph = tipo === "data" ? "dd/mm/aaaa" : tipo === "num" ? "Número" : "Valor";
   // portal no body: um ancestral com transform desloca o position:fixed para longe do cabeçalho
-  return createPortal(<div className="b1ref" ref={painel}>
-    <div className="pop fpop" role="menu" aria-label={`Filtrar coluna ${rotulo}`} style={pos}>
+  return createPortal(<div className={cn("b1ref", className)} ref={painel}>
+    <div className={cn("pop fpop", className)} role="menu" aria-label={`Filtrar coluna ${rotulo}`} style={pos}>
       <button type="button" className="fmi" disabled={!atual} onClick={() => onAplicar(null)}><FilterX size={14} /><span className="fval-l">Limpar filtro de “{rotulo}”</span></button>
       <span className="opt-sep" aria-hidden="true" />
       <div className="fcond">

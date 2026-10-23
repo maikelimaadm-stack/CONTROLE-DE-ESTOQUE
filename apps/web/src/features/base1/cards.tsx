@@ -54,26 +54,26 @@ const AncoraInvisivel = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttr
 AncoraInvisivel.displayName = "AncoraInvisivel";
 
 /** Popover "Configurar layout dos cards" (cards por linha) com Restaurar / Ok. */
-export function CardsLayoutPopover({ value, onChange, onRestore, open, onOpenChange }: {
+export function CardsLayoutPopover({ value, onChange, onRestore, open, onOpenChange, className }: {
   value: 1 | 2 | 3 | 4; onChange: (n: 1 | 2 | 3 | 4) => void; onRestore: () => void;
-  open: boolean; onOpenChange: (o: boolean) => void;
+  open: boolean; onOpenChange: (o: boolean) => void; className?: string;
 }) {
   const [draft, setDraft] = React.useState(value);
   React.useEffect(() => { if (open) setDraft(value); }, [open, value]);
-  return <B1Popover open={open} onOpenChange={onOpenChange} title="Layout dos cards" trigger={<AncoraInvisivel aria-label="Configurar layout dos cards" />}
+  return <B1Popover open={open} onOpenChange={onOpenChange} className={className} title="Layout dos cards" trigger={<AncoraInvisivel aria-label="Configurar layout dos cards" />}
     footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); onOpenChange(false); }}>OK</PillBtn></>}>
     <div role="radiogroup" aria-label="Cards por linha">{PER_ROW.map((o) => <RadioRow key={o.n} checked={draft === o.n} onClick={() => setDraft(o.n)} title={`${o.n} card${o.n > 1 ? "s" : ""} por linha`} hint={o.hint} />)}</div>
   </B1Popover>;
 }
 
 /** Popover "Configurar campos dos cards" (quais colunas aparecem nos cards). */
-export function CardFieldsPopover({ columns, value, onChange, onRestore, open, onOpenChange }: {
+export function CardFieldsPopover({ columns, value, onChange, onRestore, open, onOpenChange, className }: {
   columns: Base1Column[]; value: string[]; onChange: (keys: string[]) => void; onRestore: () => void;
-  open: boolean; onOpenChange: (o: boolean) => void;
+  open: boolean; onOpenChange: (o: boolean) => void; className?: string;
 }) {
   const [draft, setDraft] = React.useState<string[]>(value);
   React.useEffect(() => { if (open) setDraft(value); }, [open, value]);
-  return <B1Popover open={open} onOpenChange={onOpenChange} className="w-72" title="Campos dos cards" trigger={<AncoraInvisivel aria-label="Configurar campos dos cards" />}
+  return <B1Popover open={open} onOpenChange={onOpenChange} className={cn("w-72", className)} title="Campos dos cards" trigger={<AncoraInvisivel aria-label="Configurar campos dos cards" />}
     footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); onOpenChange(false); }}>OK</PillBtn></>}>
     <div className="max-h-72 overflow-auto">{[...columns].sort((a, b) => a.label.localeCompare(b.label)).map((c) => <CheckRow key={c.key} checked={draft.includes(c.key)} onChange={(on) => setDraft((d) => (on ? [...d, c.key] : d.filter((k) => k !== c.key)))} label={c.label} />)}</div>
   </B1Popover>;

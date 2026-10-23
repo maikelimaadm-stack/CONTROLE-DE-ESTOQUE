@@ -53,25 +53,25 @@ export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMonta
   const todas: OpcaoDeTipo[] = [{ value: TODOS, label: TODOS_OS_TIPOS }, ...opcoes];
   const atual = todas.find((o) => o.value === (valor || TODOS))?.label ?? TODOS_OS_TIPOS;
 
-  // O nome acessível é o TEXTO VISÍVEL ("Tipo Venda"), com o espaço escrito: um rótulo que o leitor de tela
-  // lê diferente do que a tela mostra quebra quem navega por voz ("clicar em Tipo Venda").
+  // Portal de Compras (decisão 337): só o valor ("Compra"), sem o prefixo "Tipo".
+  // Vendas mantém "Tipo · …". O nome acessível segue o texto visível.
   return <MenuP.Root modal={false}>
     <DicaDeAcao texto={dicasPadronizadas ? "Tipo de documento" : undefined}><MenuP.Trigger asChild>
       <button ref={gatilho} type="button" className={cn(estilos.tipo, dicasPadronizadas && "app-altura-28")} title={dicasPadronizadas ? undefined : "Tipo de documento"}
         data-testid={`${prefixo}-tipo`} data-valor={valor || TODOS}>
-        <span className={estilos.tipoPrefixo}>Tipo</span>{" "}
+        {!dicasPadronizadas && <><span className={estilos.tipoPrefixo}>Tipo</span>{" "}</>}
         <span className={estilos.tipoValor}>{atual}</span>
         <ChevronDown className={estilos.seta11} strokeWidth={2.4} aria-hidden />
       </button>
     </MenuP.Trigger></DicaDeAcao>
     <MenuP.Portal>
-      <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuTipo)} aria-label="Tipo de documento" data-testid={`${prefixo}-tipo-opcoes`}>
+      <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuTipo, dicasPadronizadas && estilos.menuTipoDoGatilho)} aria-label="Tipo de documento" data-testid={`${prefixo}-tipo-opcoes`}>
         <MenuP.RadioGroup value={valor || TODOS} onValueChange={(v) => { if (v !== (valor || TODOS)) onChange(v === TODOS ? "" : v); }}>
           {todas.map((o, i) => <React.Fragment key={o.value}>
             {i === 1 && <MenuP.Separator className={estilos.separador} />}
-            <MenuP.RadioItem value={o.value} className={estilos.opcaoTipo} data-testid={`${prefixo}-tipo-opcao`} data-valor={o.value}>
+            <MenuP.RadioItem value={o.value} className={estilos.opcaoTipo} data-testid={`${prefixo}-tipo-opcao`} data-valor={o.value} title={o.label}>
               <span className={estilos.marca}><MenuP.ItemIndicator><Check strokeWidth={3} aria-hidden /></MenuP.ItemIndicator></span>
-              {o.label}
+              <span className={estilos.opcaoTipoRotulo}>{o.label}</span>
             </MenuP.RadioItem>
           </React.Fragment>)}
         </MenuP.RadioGroup>

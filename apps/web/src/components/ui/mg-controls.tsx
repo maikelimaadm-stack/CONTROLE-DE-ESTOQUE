@@ -48,14 +48,14 @@ export const CmdDisplay = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAt
 CmdDisplay.displayName = "CmdDisplay";
 
 /** Seletor de opções fixas (substitui o <select> nativo): pesquisa, teclado e painel flutuante iguais ao MG. */
-export function MgSelect({ value, onChange, options, placeholder = "Selecione", disabled, allowEmpty, id, name, onOpenChange, className, wrapClassName, align = "start", "aria-label": ariaLabel, "data-testid": testId }: { value: string; onChange: (v: string) => void; options: SelectOption[]; placeholder?: string; disabled?: boolean; allowEmpty?: boolean; id?: string; name?: string; onOpenChange?: (o: boolean) => void; className?: string; /** classe do envelope do gatilho (ex.: `w-auto` na pílula do rodapé da listagem). */ wrapClassName?: string; align?: "start" | "center" | "end"; "aria-label"?: string; "data-testid"?: string }) {
+export function MgSelect({ value, onChange, options, placeholder = "Selecione", disabled, allowEmpty, id, name, onOpenChange, className, wrapClassName, panelClassName, align = "start", "aria-label": ariaLabel, "data-testid": testId }: { value: string; onChange: (v: string) => void; options: SelectOption[]; placeholder?: string; disabled?: boolean; allowEmpty?: boolean; id?: string; name?: string; onOpenChange?: (o: boolean) => void; className?: string; /** classe do envelope do gatilho (ex.: `w-auto` na pílula do rodapé da listagem). */ wrapClassName?: string; /** classe extra no painel portalado (ex.: marcador do Portal de Compras). */ panelClassName?: string; align?: "start" | "center" | "end"; "aria-label"?: string; "data-testid"?: string }) {
   const [open, setOpenState] = React.useState(false); const [search, setSearch] = React.useState("");
   const setOpen = (o: boolean) => { if (disabled) return; setOpenState(o); onOpenChange?.(o); if (!o) setSearch(""); };
   const cur = options.find((o) => o.value === value);
   const filtered = search ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase())) : options;
   return <Popover.Root open={open} onOpenChange={setOpen}>
     <Popover.Trigger asChild><CmdDisplay id={id} name={name} data-testid={testId} aria-label={ariaLabel} aria-expanded={open} disabled={disabled} empty={!cur} placeholder={placeholder} onClear={allowEmpty ? () => onChange("") : undefined} className={className} wrapClassName={wrapClassName}>{cur?.label}</CmdDisplay></Popover.Trigger>
-    <Popover.Portal><Popover.Content align={align} sideOffset={4} className="cmd-panel z-[10000] w-[var(--radix-popover-trigger-width)] min-w-[220px] outline-none" onOpenAutoFocus={(e) => { if (options.length <= 8) e.preventDefault(); }}>
+    <Popover.Portal><Popover.Content align={align} sideOffset={4} className={cn("cmd-panel z-[10000] w-[var(--radix-popover-trigger-width)] min-w-[220px] outline-none", panelClassName)} onOpenAutoFocus={(e) => { if (options.length <= 8) e.preventDefault(); }}>
       <CmdPanel options={filtered} value={value} search={search} onSearch={setSearch} searchable={options.length > 8} autoFocus={options.length > 8} onPick={(o) => { onChange(o.value); setOpen(false); }} />
     </Popover.Content></Popover.Portal>
   </Popover.Root>;

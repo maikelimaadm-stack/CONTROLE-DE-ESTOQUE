@@ -239,7 +239,7 @@ export function NovoDocumentoPorTop({ variante, rotuloDoTipo, todosOsGrupos, pre
 
   if (!grupos.length) return null;
   return <>
-    <span className={estilos.dividido}>
+    <span className={cn(estilos.dividido, somenteIcone && estilos.divididoSoIcone)}>
       <DicaDeAcao texto={dicasPadronizadas ? `Novo documento · ${rotuloDoTipo}: escolher a operação` : undefined}><button ref={botaoNovo} type="button" className={cn(estilos.novo, somenteIcone && estilos.novoSoIcone)} data-testid={`${prefixo}-novo`} aria-haspopup="dialog" aria-expanded={aberto}
         aria-label={`Novo documento · ${rotuloDoTipo}`}
         title={dicasPadronizadas ? undefined : `Novo documento · ${rotuloDoTipo}: escolher a operação`} onClick={abrir}>

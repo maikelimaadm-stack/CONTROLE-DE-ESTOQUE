@@ -5,10 +5,10 @@ import { cn } from "@/lib/utils";
 import { Dialog } from "@/components/ui";
 
 /** Duas listas do HTML: clique transfere, arraste transfere ou muda a ordem. Overlay = Dialog oficial (ui-audit). */
-export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestaurar, onFechar, titulo = "Colunas dos itens" }: {
+export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestaurar, onFechar, titulo = "Colunas dos itens", className }: {
   colunas: { key: string; label: string }[]; ocultas: Set<string>;
   onMudar: (key: string, ocultar: boolean) => void; onOrdenar: (keys: string[]) => void;
-  onRestaurar: () => void; onFechar: () => void; titulo?: string;
+  onRestaurar: () => void; onFechar: () => void; titulo?: string; className?: string;
 }) {
   const [busca, setBusca] = React.useState("");
   const [arrastada, setArrastada] = React.useState<string | null>(null);
@@ -50,6 +50,7 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
     {!itens.some((c) => c.label.toLowerCase().includes(busca.toLowerCase())) && <span className="dvaz">{vazio}</span>}
   </div>;
   return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title={titulo} size="lg" profile="large"
+    className={className}
     description="Escolha e ordene as colunas da tabela"
     footer={<div className="b1ref flex w-full items-center gap-2">
       <span className="ltmp" style={{ flexGrow: 1, paddingLeft: 6 }}>Arraste para ordenar ou mover entre as listas · <b>{usadas.length}</b> de {colunas.length}</span>

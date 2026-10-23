@@ -10,7 +10,7 @@ import type { Base1Column } from "./types";
  * "Configuração de colunas": colunas disponíveis × colunas em uso (numeradas, com busca em cada lista),
  * setas para mover, ↺ para restaurar, Cancelar/Ok. Edita um rascunho e só aplica no Ok.
  */
-export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, onRestore }: { open: boolean; onOpenChange: (o: boolean) => void; columns: Base1Column[]; visible: string[]; onApply: (keys: string[]) => void; onRestore: () => void }) {
+export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, onRestore, className }: { open: boolean; onOpenChange: (o: boolean) => void; columns: Base1Column[]; visible: string[]; onApply: (keys: string[]) => void; onRestore: () => void; className?: string }) {
   const [inUse, setInUse] = React.useState<string[]>(visible);
   const [sel, setSel] = React.useState<string | null>(null);
   const [qa, setQa] = React.useState(""); const [qu, setQu] = React.useState("");
@@ -23,9 +23,9 @@ export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, o
   const move = (k: string, dir: -1 | 1) => setInUse((u) => { const i = u.indexOf(k); const j = i + dir; if (i < 0 || j < 0 || j >= u.length) return u; const c = [...u]; [c[i], c[j]] = [c[j]!, c[i]!]; return c; });
   return <DialogP.Root open={open} onOpenChange={onOpenChange}><DialogP.Portal>
     <DialogP.Overlay className="mg-overlay" />
-    <DialogP.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[90vh] w-[95vw] max-w-4xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+    <DialogP.Content className={cn("fixed left-1/2 top-1/2 z-50 flex max-h-[90vh] w-[95vw] max-w-4xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl", className)}>
       <div className="flex items-center justify-between px-5 py-3"><DialogP.Title className="text-[13px] font-semibold text-slate-800">Configuração de colunas</DialogP.Title><DialogP.Description className="sr-only">Escolha e ordene as colunas da tabela</DialogP.Description>
-        <div className="flex items-center gap-1"><button type="button" className="rounded-full p-1.5 text-slate-500 hover:bg-slate-100" title="Restaurar padrão" aria-label="Restaurar padrão" onClick={() => { onRestore(); onOpenChange(false); }}><RotateCcw className="h-4 w-4" /></button><DialogP.Close className="rounded-full p-1.5 text-slate-500 hover:bg-slate-100" aria-label="Fechar"><X className="h-4 w-4" /></DialogP.Close></div></div>
+        <div className="flex items-center gap-1"><button type="button" className="tb-btn tb-btn-icon" title="Restaurar padrão" aria-label="Restaurar padrão" onClick={() => { onRestore(); onOpenChange(false); }}><RotateCcw className="h-4 w-4" /></button><DialogP.Close className="tb-btn tb-btn-icon" aria-label="Fechar"><X className="h-4 w-4" /></DialogP.Close></div></div>
       <div className="grid min-h-0 flex-1 grid-cols-[1fr_auto_1fr] gap-2 border-t px-4 py-3 text-[12.5px]">
         <div className="flex min-h-[320px] flex-col rounded-lg border">
           <div className="border-b px-3 py-2 font-semibold text-slate-700">Colunas disponíveis</div>
@@ -36,7 +36,7 @@ export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, o
           </div>
         </div>
         <div className="flex flex-col items-center justify-center gap-1">
-          {[{ i: <ChevronsLeft className="h-4 w-4" />, t: "Usar todas", f: () => setInUse(columns.map((c) => c.key)) }, { i: <ChevronLeft className="h-4 w-4" />, t: "Usar coluna selecionada", f: () => sel && add(sel) }, { i: <ChevronRight className="h-4 w-4" />, t: "Remover coluna selecionada", f: () => sel && remove(sel) }, { i: <ChevronsRight className="h-4 w-4" />, t: "Remover todas (mantém a primeira)", f: () => setInUse((u) => u.slice(0, 1)) }].map((b, i) => <button key={i} type="button" title={b.t} aria-label={b.t} onClick={b.f} className="rounded-full border bg-white p-1.5 text-slate-500 hover:bg-slate-100">{b.i}</button>)}
+          {[{ i: <ChevronsLeft className="h-4 w-4" />, t: "Usar todas", f: () => setInUse(columns.map((c) => c.key)) }, { i: <ChevronLeft className="h-4 w-4" />, t: "Usar coluna selecionada", f: () => sel && add(sel) }, { i: <ChevronRight className="h-4 w-4" />, t: "Remover coluna selecionada", f: () => sel && remove(sel) }, { i: <ChevronsRight className="h-4 w-4" />, t: "Remover todas (mantém a primeira)", f: () => setInUse((u) => u.slice(0, 1)) }].map((b, i) => <button key={i} type="button" title={b.t} aria-label={b.t} onClick={b.f} className="tb-btn tb-btn-icon">{b.i}</button>)}
         </div>
         <div className="flex min-h-[320px] flex-col rounded-lg border">
           <div className="flex items-center justify-between border-b px-3 py-2"><span className="font-semibold text-slate-700">Colunas em uso</span><span className="text-[11px] text-slate-500">{inUse.length} colunas</span></div>

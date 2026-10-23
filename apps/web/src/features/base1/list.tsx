@@ -308,11 +308,13 @@ export function Base1List(props: Base1ListProps) {
       setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } }));
     }} />
     <span className="relative inline-flex">
-      <B1Popover open={maisOpcoesOpen} onOpenChange={setMaisOpcoesOpen} className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><IconeRaio /></IconBtn>}><MenuList items={menuItems} onPick={(k) => { setMaisOpcoesOpen(false); onMenu(k); }} /></B1Popover>
+      <B1Popover open={maisOpcoesOpen} onOpenChange={setMaisOpcoesOpen} className={cn("w-64 p-1.5", barraIntegrada && "b1-portal-compras")} trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><IconeRaio /></IconBtn>}><MenuList items={menuItems} onPick={(k) => { setMaisOpcoesOpen(false); onMenu(k); }} /></B1Popover>
       <CardsLayoutPopover open={cardsLayoutOpen} onOpenChange={setCardsLayoutOpen} value={prefs.view.cardsPerRow ?? 4}
+        className={barraIntegrada ? "b1-portal-compras" : undefined}
         onChange={(n) => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: n } }))}
         onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: undefined } }))} />
       <CardFieldsPopover open={cardFieldsOpen} onOpenChange={setCardFieldsOpen} columns={columns} value={cardFields}
+        className={barraIntegrada ? "b1-portal-compras" : undefined}
         onChange={(keys) => p.update((x) => ({ ...x, view: { ...x.view, cardFields: keys } }))}
         onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardFields: undefined } }))} />
     </span>
@@ -372,7 +374,7 @@ export function Base1List(props: Base1ListProps) {
         {q.error && <div className="p-2"><ErrorBox error={q.error} /></div>}
         {view === "cards"
           ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={colunasDosCards} fields={cardFieldsExibidos} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelectClick={onSelectClick} actions={rowActions} favorites={favorites} onFavorite={toggleFavorite} scrollToId={scrollToId} /></div>
-          : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid referenceHeaders={props.referenceHeaders} filteredKeys={new Set(Object.keys(headerFilters))} columns={visibleColumns} rows={rows} loading={q.isLoading} sort={props.referenceHeaders ? headerOrder ?? undefined : sort} onSort={props.referenceHeaders ? (key) => setHeaderOrder((s) => ({ key, dir: s?.key === key && s.dir === "asc" ? "desc" : "asc" })) : onSort} selected={selected} onSelectClick={onSelectClick} onToggle={onToggle} onToggleAll={onToggleAll} onOpen={(r) => enterRecord(r)} frozen={frozen} scrollToId={scrollToId}
+          : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid referenceHeaders={props.referenceHeaders} popoverClassName={barraIntegrada ? "b1-portal-compras" : undefined} filteredKeys={new Set(Object.keys(headerFilters))} columns={visibleColumns} rows={rows} loading={q.isLoading} sort={props.referenceHeaders ? headerOrder ?? undefined : sort} onSort={props.referenceHeaders ? (key) => setHeaderOrder((s) => ({ key, dir: s?.key === key && s.dir === "asc" ? "desc" : "asc" })) : onSort} selected={selected} onSelectClick={onSelectClick} onToggle={onToggle} onToggleAll={onToggleAll} onOpen={(r) => enterRecord(r)} frozen={frozen} scrollToId={scrollToId}
             onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n - deslocamentoIdentidade, colunasDoUsuario.length)) }))} onHide={(k) => updCols((c) => { if (k === CHAVE_COLUNA_ID_GLOBAL) return c; const keys = colunasDoUsuario.map((x) => x.key); const idx = keys.indexOf(k); const fz = c.frozen ?? 0; return { ...c, visible: keys.filter((x) => x !== k), frozen: idx >= 0 && idx < fz ? fz - 1 : fz }; })} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
             onFilter={(k) => { if (props.referenceHeaders) { setHeaderOpen(k); return; } const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}
             footer={!headerActive && footerTotals && totals ? comColunaDeIdentidade(footerTotals(totals), deslocamentoIdentidade) : undefined} /></div>}
@@ -384,6 +386,7 @@ export function Base1List(props: Base1ListProps) {
               aria-label="Quantidade de registros por carregamento"
               className="mg-pill-select"
               wrapClassName="w-auto shrink-0"
+              panelClassName={barraIntegrada ? "b1-portal-compras" : undefined}
               align="end"
               value={String(pageSize)}
               onChange={(v) => setPageSize(Number(v))}
@@ -395,17 +398,18 @@ export function Base1List(props: Base1ListProps) {
       </div>
     </div>
     {headerOpen && <FiltroDeColuna rotulo={columns.find((c) => c.key === headerOpen)?.label ?? ""} tipo={headerType(headerOpen)}
+      className={barraIntegrada ? "b1-portal-compras" : undefined}
       ancora={`[data-testid="b1-list"] [aria-label="Abrir menu da coluna ${columns.find((c) => c.key === headerOpen)?.label ?? ""}"]`}
       valores={loadedRows.map((r) => headerText(headerOpen, r))} atual={headerFilters[headerOpen] ?? null}
       onAplicar={(f) => { const key = headerOpen; setHeaderFilters((p) => { const n = { ...p }; if (f) n[key] = f; else delete n[key]; return n; }); setHeaderOpen(null); }} onFechar={() => setHeaderOpen(null)} />}
-    {props.referenceHeaders && colsDlg && <ColunasDosItens titulo="Colunas da tabela" colunas={[...columns].sort((a, b) => (orderRank.get(a.key) ?? 1e6) - (orderRank.get(b.key) ?? 1e6))}
+    {props.referenceHeaders && colsDlg && <ColunasDosItens titulo="Colunas da tabela" className={barraIntegrada ? "b1-portal-compras" : undefined} colunas={[...columns].sort((a, b) => (orderRank.get(a.key) ?? 1e6) - (orderRank.get(b.key) ?? 1e6))}
       ocultas={new Set(columns.filter((c) => !visibleKeys.includes(c.key)).map((c) => c.key))}
       onMudar={(key, ocultar) => updCols((c) => ({ ...c, visible: ocultar ? visibleKeys.filter((k) => k !== key) : [...visibleKeys, key] }))}
       onOrdenar={(order) => updCols((c) => ({ ...c, order }))}
       onRestaurar={() => updCols(() => ({}))} onFechar={() => setColsDlg(false)} />}
-    <ColumnsDialog open={!props.referenceHeaders && colsDlg} onOpenChange={setColsDlg} columns={columns} visible={colunasDoUsuario.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: [...keys, ...columns.map((x) => x.key).filter((x) => !keys.includes(x))], frozen: Math.min(c.frozen ?? 0, keys.length) }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
+    <ColumnsDialog open={!props.referenceHeaders && colsDlg} onOpenChange={setColsDlg} className={barraIntegrada ? "b1-portal-compras" : undefined} columns={columns} visible={colunasDoUsuario.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: [...keys, ...columns.map((x) => x.key).filter((x) => !keys.includes(x))], frozen: Math.min(c.frozen ?? 0, keys.length) }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
     {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={one ? rowId(one) : undefined} title={title} />}
     {entity && <AttachmentsDialog open={attachDlg} onOpenChange={setAttachDlg} entity={entity} entityId={one ? rowId(one) : null} title={title} />}
-    {onDelete && <Confirm open={Boolean(delRow)} onOpenChange={() => setDelRow(null)} title="Confirme a exclusão" text={props.deleteText ?? (selectedRows.length > 1 ? `Excluir os ${selectedRows.length} registros selecionados? A ação fica registrada na auditoria.` : "Excluir o registro selecionado? A ação fica registrada na auditoria.")} danger onConfirm={async () => { if (delRow) { for (const r of selectedRows.length > 1 ? selectedRows : [delRow]) await onDelete(r); setDelRow(null); setSelected(new Set()); void q.refetch(); } }} />}
+    {onDelete && <Confirm open={Boolean(delRow)} onOpenChange={() => setDelRow(null)} className={barraIntegrada ? "b1-portal-compras" : undefined} title="Confirme a exclusão" text={props.deleteText ?? (selectedRows.length > 1 ? `Excluir os ${selectedRows.length} registros selecionados? A ação fica registrada na auditoria.` : "Excluir o registro selecionado? A ação fica registrada na auditoria.")} danger onConfirm={async () => { if (delRow) { for (const r of selectedRows.length > 1 ? selectedRows : [delRow]) await onDelete(r); setDelRow(null); setSelected(new Set()); void q.refetch(); } }} />}
   </div>;
 }
