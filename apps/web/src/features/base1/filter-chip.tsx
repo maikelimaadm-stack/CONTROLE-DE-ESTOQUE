@@ -1,7 +1,8 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, X, Loader2 } from "lucide-react";
+import { Check, ChevronDown, FilterX, Search, X, Loader2 } from "lucide-react";
+import { CalendarioDeData, CalendarioDePeriodo, DicaDeAcao, SeletorDeOperador } from "@/components/ui";
 import { FILTER_OPERATORS, operatorArity, isListOperator } from "@agro/shared";
 import { api, qs } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -15,7 +16,7 @@ import type { Base1FilterDef, FilterValue, DistinctValue } from "./types";
  * pesquisa e lista de valores distintos com seleção múltipla ("(Selecionar Tudo)"), ou campo de valor para
  * operadores que não usam lista. Cancelar descarta; OK aplica.
  */
-export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenChange, scope }: { f: Base1FilterDef; value: FilterValue | undefined; onApply: (v: FilterValue) => void; onClear: () => void; distinct?: (search: string) => Promise<DistinctValue[]>; open?: boolean; onOpenChange?: (o: boolean) => void; /** identifica a tela/tenant/empresa de origem dos valores (chave de cache) */ scope?: string }) {
+export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenChange, scope, referenceStyle = false }: { referenceStyle?: boolean; f: Base1FilterDef; value: FilterValue | undefined; onApply: (v: FilterValue) => void; onClear: () => void; distinct?: (search: string) => Promise<DistinctValue[]>; open?: boolean; onOpenChange?: (o: boolean) => void; /** identifica a tela/tenant/empresa de origem dos valores (chave de cache) */ scope?: string }) {
   const [localOpen, setLocalOpen] = React.useState(false);
   const isOpen = open ?? localOpen; const setOpen = onOpenChange ?? setLocalOpen;
   const [draft, setDraft] = React.useState<FilterValue>(value ?? emptyValue(f));
@@ -51,6 +52,34 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
   };
   const arity = f.mode === "advanced" ? operatorArity(f.kind, draft.op) : (f.kind === "date" ? 2 : 1);
   const inputType = f.kind === "date" ? "date" : f.kind === "number" ? "number" : "text";
+  // Compras reutiliza o visual dos filtros dos produtos; consulta, operadores suportados
+  // e seleção simples/múltipla continuam sendo os declarados pelo filtro.
+  if (referenceStyle) return <B1Popover open={isOpen} onOpenChange={setOpen} align="start" className="w-[252px] p-0"
+    trigger={<span className={cn("mg-filter-pill", isOpen && "is-open", active && "is-active")}><DicaDeAcao texto={`Filtrar ${f.label}`}><button type="button" aria-label={`Filtro ${f.label}`} className="mg-filter-pill__trigger"><span className="truncate">{f.label}{desc && <span className="ml-1 font-normal text-slate-500">· {desc}</span>}</span></button></DicaDeAcao><span className="mg-filter-pill__icon"><ChevronDown /></span></span>}>
+    <div className="b1ref"><div className="fchip-painel" role="group" aria-label={`Filtrar ${f.label}`}>
+      <button type="button" className="fmi" disabled={!active} onClick={() => { onClear(); setOpen(false); }}><FilterX size={14} /><span className="fval-l">Limpar filtro de “{f.label}”</span></button>
+      <span className="opt-sep" aria-hidden="true" />
+      {ops.length > 0 && <div className="fcond"><SeletorDeOperador valor={draft.op} opcoes={ops} onChange={(op) => setDraft(emptyValue(f, op))} /></div>}
+      {arity === 0 ? null : useList ? <>
+        <label className="cfgb" style={{ margin: "0 8px 6px", height: 28 }}><Search size={14} /><input aria-label={`Pesquisar ${f.label}`} placeholder="Procurar valor…" value={search} onChange={(e) => setSearch(e.target.value)} />{q.isFetching && <Loader2 size={14} className="animate-spin" />}</label>
+        {f.mode === "advanced" && <button type="button" className="pr fvr ftodos" role="checkbox" aria-checked={allSelected} onClick={() => setDraft({ ...draft, value: "", values: allSelected ? [] : values.map((v) => v.value) })}>
+          <span className="fck"><span className={cn("chk", allSelected && "on")}>{allSelected && <Check strokeWidth={3} />}</span></span><span className="pn">(Selecionar Tudo)</span><span className="r" />
+        </button>}
+        <div className="fpop-l">
+          {values.map((v) => <button key={v.value} type="button" className={cn("pr fvr", selected.has(v.value) && "on")} role="checkbox" aria-checked={selected.has(v.value)} onClick={() => f.mode === "simple" ? setDraft({ ...draft, value: v.value, values: selected.has(v.value) ? [] : [v.value] }) : toggle(v.value, !selected.has(v.value))}>
+            <span className="fck"><span className={cn("chk", selected.has(v.value) && "on")}>{selected.has(v.value) && <Check strokeWidth={3} />}</span></span><span className="pn">{v.label}</span><span className="r">{v.count ?? ""}</span>
+          </button>)}
+          {!q.isLoading && values.length === 0 && <span className="dvaz">Nenhum valor</span>}
+        </div>
+      </> : <div className="fcond">
+        {f.kind === "date" && arity === 1 ? <CalendarioDeData valor={draft.value} onChange={(value) => setDraft((d) => ({ ...d, value, values: [] }))}>
+          <input className="fin" type={inputType} aria-label={f.label} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value, values: [] })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} autoFocus />
+        </CalendarioDeData> : <input className="fin" type={inputType} aria-label={arity === 2 ? `${f.label} de` : f.label} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value, values: [] })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} autoFocus />}
+        {arity === 2 && <>{f.kind === "date" ? <CalendarioDePeriodo inicio={draft.value} fim={draft.value2 ?? ""} onInicio={(value) => setDraft((d) => ({ ...d, value, values: [] }))} onFim={(value2) => setDraft((d) => ({ ...d, value2 }))} /> : <span className="fe">e</span>}<input className="fin" type={inputType} aria-label={`${f.label} até`} value={draft.value2 ?? ""} onChange={(e) => setDraft({ ...draft, value2: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} /></>}
+      </div>}
+      <div className="fpop-f"><span className="grow" /><PillBtn tone="gray" onClick={() => setOpen(false)}>Cancelar</PillBtn><PillBtn onClick={apply}>Aplicar</PillBtn></div>
+    </div></div>
+  </B1Popover>;
   return <B1Popover open={isOpen} onOpenChange={setOpen} align="start" className="w-[280px] p-0"
     trigger={<span className={cn("mg-filter-pill", isOpen && "is-open", active && "is-active")}><button type="button" aria-label={`Filtro ${f.label}`} className="mg-filter-pill__trigger"><span className="truncate">{f.label}{desc && <span className="ml-1 font-normal text-slate-500">· {desc}</span>}</span></button><span className="mg-filter-pill__icon"><ChevronDown /></span></span>}>
     <div className="px-3 pt-2.5">
@@ -66,8 +95,10 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
             {!q.isLoading && values.length === 0 && <div className="px-2 py-3 text-center text-[11.5px] text-slate-400">Nenhum valor</div>}
           </div>
         </> : <div className="mt-2 flex gap-1">
-          <RoundInput type={inputType} aria-label={arity === 2 ? `${f.label} de` : f.label} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value, values: [] })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} autoFocus />
-          {arity === 2 && <RoundInput type={inputType} aria-label={`${f.label} até`} value={draft.value2 ?? ""} onChange={(e) => setDraft({ ...draft, value2: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} />}
+          {f.kind === "date" && arity === 1 ? <CalendarioDeData valor={draft.value} onChange={(value) => setDraft((d) => ({ ...d, value, values: [] }))}>
+            <RoundInput type={inputType} aria-label={f.label} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value, values: [] })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} autoFocus />
+          </CalendarioDeData> : <RoundInput type={inputType} aria-label={arity === 2 ? `${f.label} de` : f.label} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value, values: [] })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} autoFocus />}
+          {arity === 2 && <>{f.kind === "date" && <CalendarioDePeriodo inicio={draft.value} fim={draft.value2 ?? ""} onInicio={(value) => setDraft((d) => ({ ...d, value, values: [] }))} onFim={(value2) => setDraft((d) => ({ ...d, value2 }))} />}<RoundInput type={inputType} aria-label={`${f.label} até`} value={draft.value2 ?? ""} onChange={(e) => setDraft({ ...draft, value2: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} /></>}
         </div>}
     </div>
     <div className="flex gap-2 px-3 py-2.5"><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => setOpen(false)}>Cancelar</PillBtn><PillBtn className="flex-1 justify-center" onClick={apply}>OK</PillBtn></div>

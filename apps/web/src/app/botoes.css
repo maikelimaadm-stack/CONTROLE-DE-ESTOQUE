@@ -1,0 +1,69 @@
+/* Ações de todos os módulos: mesmas medidas do botão Filtrar de Produtos.
+ * Campos, linhas de menu, abas e calendários mantêm sua própria geometria.
+ * !important mantém o padrão diante das variantes locais e utilitários de tamanho.
+ */
+:is(.app-button, .tb-btn, .mg-filter-pill__trigger, .itbar .ib, .view-seg button, .mg-nav-btn, .fchip-lim) {
+  box-sizing: border-box;
+  height: 24px !important;
+  min-height: 24px !important;
+  padding-block: 0 !important;
+  font-family: inherit;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  line-height: 1;
+  background: #f1f3f4 !important;
+  color: #475569 !important;
+  border-color: transparent !important;
+}
+:is(.app-button, .tb-btn, .mg-filter-pill__trigger, .itbar .ib, .view-seg button, .mg-nav-btn, .fchip-lim):hover:not(:disabled) {
+  background: #e5e7eb !important;
+  color: #1f2937 !important;
+}
+:is(.app-button, .tb-btn, .mg-filter-pill__trigger, .itbar .ib, .view-seg button, .mg-nav-btn, .fchip-lim):is(:active, .is-active, [aria-pressed="true"], [data-state="open"]) {
+  background: #d1d5db !important;
+  color: #111827 !important;
+  border-color: #9ca3af !important;
+}
+:is(.tb-btn-icon, .itbar .ib, .view-seg button, .mg-nav-btn) {
+  width: 24px !important;
+  min-width: 24px !important;
+  padding: 0 !important;
+}
+:is(.app-button, .tb-btn, .itbar .ib, .view-seg button) svg {
+  width: 14px;
+  height: 14px;
+  color: inherit;
+}
+/* Sem sombras inclusive em hover/foco; o teclado continua com contorno visível. */
+button {
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+:is(.app-button, .tb-btn, .mg-filter-pill__trigger, .itbar .ib, .view-seg button, .mg-nav-btn, .fchip-lim):focus-visible {
+  outline: 2px solid #64748b !important;
+  outline-offset: 2px;
+}
+.view-seg { height: 24px; padding: 0; box-shadow: none; }
+/* Mesmo contraste, tipografia e afastamento das dicas da Central. */
+.dica-de-acao {
+  position: fixed;
+  z-index: 10010;
+  pointer-events: none;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 16px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .22);
+  animation: dica-de-acao-entra 120ms cubic-bezier(.16, 1, .3, 1) both;
+}
+@keyframes dica-de-acao-entra {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dica-de-acao { animation: none; }
+}

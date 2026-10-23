@@ -1,0 +1,138 @@
+/* Estilos do HTML de referência (filtro de cabeçalho e configurador de colunas), escopados em .b1ref */
+.b1ref .chk{width:14px;height:14px;box-sizing:border-box;border-radius:999px;border:1px solid #dde3e9;background:#fff;color:transparent;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background .13s,border-color .13s}
+.b1ref .chk svg{width:8px;height:8px}
+.b1ref .chk:hover{border-color:#b6c2ce}
+.b1ref .chk.on{background:#40de63;border-color:#40de63;color:#fff}
+.b1ref .chk.parte{border-color:#40de63;background:#eafcf0;color:#40de63}
+.b1ref .rm{width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:#94a3b8;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.b1ref .rm:hover{background:#fef2f2;color:#b91c1c}
+.b1ref .tb-btn,.b1ref .rm{transition:background .13s,color .13s,box-shadow .13s}
+.b1ref .tb-btn:active:not(:disabled),.b1ref .rm:active{transform:scale(.97)}
+.b1ref /* ---------- colunas da tabela ---------- */
+.mdl{position:absolute;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.34)}
+.b1ref .mdlc{width:640px;height:520px;max-width:92%;max-height:86%;box-sizing:border-box;display:flex;flex-direction:column;border-radius:16px;background:#fff;box-shadow:0 24px 64px rgba(15,23,42,.26);overflow:hidden}
+.b1ref .mdl-h{flex-shrink:0;height:46px;box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:0 12px 0 18px;border-bottom:1px solid #f1f4f6}
+.b1ref .mdl-t{font-size:13.5px;font-weight:600;color:#0f172a}
+.b1ref .mdl-b{flex-grow:1;min-height:0;overflow:hidden;padding:14px 18px;display:flex;flex-direction:column}
+.b1ref .mdl-f{flex-shrink:0;display:flex;align-items:center;gap:8px;padding:11px 14px;border-top:1px solid #f1f4f6;background:#fbfcfd}
+.b1ref .dcol{display:flex;gap:12px;align-items:stretch;flex-grow:1;min-height:0}
+.b1ref .dbox{flex-grow:1;flex-basis:0;min-width:0;display:flex;flex-direction:column;border:1px solid #eef1f4;border-radius:11px;padding:8px;min-height:0}
+.b1ref .dbox-h{display:flex;align-items:center;gap:7px;font-size:10.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:#8b95a3;padding:2px 4px 6px}
+.b1ref .dbox-l{flex-grow:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
+.b1ref .dlin{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:8px;background:transparent;cursor:grab;transition:background .13s}
+.b1ref .dlin:hover{background:#f4f6f7}
+.b1ref .dlin.on .chk{background:#40de63;border-color:#40de63;color:#fff}
+.b1ref .dlin.on:hover .chk{background:#35cf56;border-color:#35cf56}
+.b1ref .dlin.indo{opacity:.35}
+.b1ref .dlin-l{flex-grow:1;min-width:0;font-size:12.5px;font-weight:500;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.b1ref .gripe{flex-shrink:0;color:#c3cbd4;display:inline-flex}
+.b1ref .dlin:hover .gripe{color:#8b95a3}
+.b1ref /* ===== configurador de colunas (modelo único) ===== */
+.cfgb{flex-shrink:0;height:32px;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:0 11px;margin-bottom:11px;border-radius:999px;border:1px solid #dfe2e7;background:#fff;color:#94a3b8}
+.b1ref .cfgb:focus-within{border-color:rgba(64,222,99,.6);box-shadow:0 0 0 3px rgba(64,222,99,.14)}
+.b1ref .cfgb input{flex-grow:1;min-width:0;border:0;outline:none;background:transparent;font-size:12.5px;color:#111827}
+.b1ref .cfgb input::placeholder{color:#a9b2bd}
+.b1ref .dvaz{display:block;padding:14px 10px;text-align:center;font-size:11.5px;color:#a9b2bd}
+.b1ref .mdl-h .tb-btn{flex-shrink:0}
+.b1ref /* ===== ações rápidas da grade de itens ===== */
+.opt-sep{display:block;height:1px;margin:4px 8px;background:#eef1f4}
+.b1ref .fpop{position:fixed;z-index:45;width:252px;max-height:316px;box-sizing:border-box;display:flex;flex-direction:column;padding:0;text-align:left;font-weight:400}
+.b1ref .fpop-h{flex-shrink:0;display:flex;align-items:baseline;gap:6px;padding:9px 10px 6px;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9aa4b1}
+.b1ref .fpop-h b{font-size:12px;font-weight:700;letter-spacing:0;text-transform:none;color:#0f172a}
+.b1ref .fpop-l{flex-grow:1;min-height:0;overflow:auto;padding:2px 5px 5px}
+.b1ref .fpop-f{flex-shrink:0;display:flex;align-items:center;gap:6px;padding:7px 8px;border-top:1px solid #f1f4f6;background:#fbfcfd}
+.b1ref .fval{display:flex;align-items:center;gap:9px;width:100%;box-sizing:border-box;min-height:27px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:#334155;font-size:12px;cursor:pointer;text-align:left}
+.b1ref .fval:hover{background:#f4f6f7}
+.b1ref .fval.on{color:#0f172a}
+.b1ref .fval-l{flex-grow:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.b1ref .ftodos{margin:0 5px 4px;border-bottom:1px solid #f1f4f6;border-radius:7px 7px 0 0;font-weight:600}
+.b1ref /* ===== filtro de coluna no padrão Excel ===== */
+.fmi{display:flex;align-items:center;gap:9px;width:100%;box-sizing:border-box;min-height:28px;padding:0 10px;border:0;background:transparent;color:#334155;font-size:12px;cursor:pointer;text-align:left}
+.b1ref .fmi:hover{background:#f4f6f7;color:#0f172a}
+.b1ref .fmi .ck{flex-shrink:0;display:inline-flex;color:#15803d}
+.b1ref .fsec{display:block;padding:7px 10px 4px;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9aa4b1}
+.b1ref .fcond{display:flex;align-items:center;gap:7px;padding:0 10px 8px}
+.b1ref .fselb{flex-grow:1;min-width:0;height:28px;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:0 10px 0 12px;border-radius:999px;border:1px solid transparent;background:#f1f3f4;color:#111827;font-size:12px;font-weight:500;cursor:pointer;text-align:left}
+.b1ref .fselb:hover{background:#e8ecef}
+.b1ref .fselb[aria-expanded="true"]{background:#fff;border-color:rgba(64,222,99,.6);box-shadow:0 0 0 3px rgba(64,222,99,.14)}
+.b1ref .fselb-l{flex-grow:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.b1ref .fselb-c{flex-shrink:0;display:inline-flex;color:#5b6b80}
+.b1ref .fsell{margin:0 10px 8px;max-height:176px;overflow:auto;box-sizing:border-box;border:1px solid #eef1f4;border-radius:10px;background:#fff;padding:3px}
+/* Faixa superior de Compras: mesma composição do filtro de cabeçalho, sem posição fixa. */
+.b1ref .fchip-painel{display:flex;flex-direction:column;max-height:min(498px,calc(100dvh - 100px));overflow:auto;padding-top:4px}
+.b1ref .fchip-painel .fpop-l{max-height:208px}
+/* Lista flutuante: não aumenta nem faz rolar o painel de filtro. */
+.b1ref .foperadores{z-index:10001;margin:0;width:var(--radix-select-trigger-width);max-height:min(240px,var(--radix-select-content-available-height));box-shadow:0 8px 24px rgba(16,24,40,.12)}
+.b1ref .foperadores .fopt[data-highlighted]{background:#f4f6f7;color:#0f172a;outline:none}
+.b1ref .fopt{display:flex;align-items:center;gap:7px;width:100%;box-sizing:border-box;min-height:28px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:#334155;font-size:12px;cursor:pointer;text-align:left}
+.b1ref .fopt:hover{background:#f4f6f7;color:#0f172a}
+.b1ref .fopt.on{background:#f1fcf4;color:#15803d;font-weight:600}
+.b1ref .fopt-c{width:14px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;color:#15803d}
+.b1ref .fopt-l{flex-grow:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.b1ref .fin{flex-grow:1;flex-basis:0;min-width:0;height:28px;box-sizing:border-box;padding:0 12px;border-radius:999px;border:1px solid #dfe2e7;background:#fff;color:#111827;font-size:12px;outline:none}
+.b1ref .fin::placeholder{color:#a9b2bd}
+.b1ref .fin:focus{border-color:rgba(64,222,99,.6);box-shadow:0 0 0 3px rgba(64,222,99,.14)}
+.b1ref .fpop{max-height:498px}
+.b1ref /* ===== lista do filtro: mesmo modelo de linha da Central de Vendas (.pr) ===== */
+.pr{display:grid;align-items:center;width:100%;box-sizing:border-box;min-height:30px;height:30px;border:0;padding:0;margin:0;background:transparent;text-align:left;cursor:pointer;font-size:12.5px;color:#111827}
+.b1ref .pr>*{box-sizing:border-box;padding:0 8px;border:0;height:30px;display:flex;align-items:center;min-width:0;overflow:hidden;white-space:nowrap}
+.b1ref .pr>*:first-child{padding-left:12px}
+.b1ref .pr>*:last-child{padding-right:12px}
+.b1ref .pr .r{justify-content:flex-end;font-variant-numeric:tabular-nums;color:#93a0ae;font-size:11px}
+.b1ref .pr .pn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.b1ref .pr:hover{background:#f4f6f7}
+.b1ref .fvr{grid-template-columns:32px minmax(0,1fr) 54px}
+.b1ref .fvr.on .pn{color:#0f172a}
+.b1ref .fvr>*:first-child{padding-left:10px;padding-right:0}
+.b1ref .fck{display:flex;align-items:center;justify-content:flex-start}
+.b1ref .fck .chk{flex-shrink:0}
+.b1ref .fph{display:grid;grid-template-columns:32px minmax(0,1fr) 54px;align-items:center;height:22px;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9aa4b1;border-bottom:1px solid #f1f4f6;margin:0 0 2px}
+.b1ref .fph>*{padding:0 8px}
+.b1ref .fph>*:first-child{padding-left:12px}
+.b1ref .fph>*:last-child{padding-right:12px}
+.b1ref .fph .r{text-align:right;justify-self:end}
+.b1ref .ftodos{border-bottom:1px solid #f1f4f6;font-weight:600}
+.b1ref .fe{flex-shrink:0;font-size:11px;color:#93a0ae;padding:0 1px}
+.b1ref .fcond+.fcond{padding-top:0}
+.b1ref .ltmp{font-size:11.5px;color:#7b8794}
+.b1ref .ltmp b{color:#0f172a;font-weight:700}
+.b1ref .cmenu .fmi.on{background:#f1fcf4;color:#15803d;font-weight:600}
+.b1ref .vpop-l .fe{flex-shrink:0;max-width:78px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.b1ref .gacts .rm:disabled{opacity:.3;cursor:not-allowed}
+.b1ref .gerl .rm:disabled{opacity:.28;cursor:not-allowed}
+.b1ref .fsec2{display:flex;align-items:center;gap:8px;padding:8px 2px 5px;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9aa4b1;border-top:1px solid #f1f4f6;margin-top:4px}
+.b1ref .cacts .rm:disabled{opacity:.28;cursor:not-allowed}
+.b1ref .regra .fselb{flex-grow:0;width:100%}
+.b1ref .regra .fsell{max-height:180px}
+.b1ref .ltvsl .fe{flex-shrink:0;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.b1ref .ltvsl .fopt:disabled{opacity:.45;cursor:not-allowed}
+.b1ref .fpop{background:#fff;border:1px solid #e7eaee;border-radius:12px;box-shadow:0 8px 24px rgba(16,24,40,.12);z-index:60}
+.b1ref .mdl{position:fixed;z-index:80}
+.b1ref .dlin.mira{box-shadow:inset 0 2px #40de63}
+.b1ref .bd{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 6px;border-radius:999px;font-size:10.5px;background:#f1f3f4;color:#64748b}
+.b1ref .bd.t-positive{background:#eafcf0;color:#15803d}
+.b1ref .tb-btn{height:30px;min-height:30px;padding:0 13px;font-size:12.5px;font-weight:600;gap:6px}
+.b1ref .tb-btn.sm{height:26px;min-height:26px;padding:0 11px;font-size:11.5px}
+.b1ref .tb-btn.xs{height:24px;min-height:24px;padding:0 10px;font-size:11px}
+.b1ref .tb-btn.tb-btn-out{background:#f1f3f4;color:#475569;border-color:transparent;box-shadow:0 2px 6px rgba(34,197,94,.30)}
+.b1ref .tb-btn.novo{background:#40de63;color:#fff}
+.b1ref .tb-btn.novo:hover{background:#35cf56}
+.b1ref .fpop{overflow:auto;max-width:calc(100vw - 16px)}
+.b1ref .fcond,.b1ref .fsell,.b1ref .fmi,.b1ref .fsec,.b1ref .fpop-f,.b1ref .ftodos,.b1ref .opt-sep{flex-shrink:0}
+.b1ref .opt-sep{min-height:1px}
+.b1ref .ftodos{width:calc(100% - 10px);margin:0 5px 4px}
+.b1ref .fmi:disabled{opacity:.45;cursor:not-allowed}
+/* O mestre pode encolher até o seu cabeçalho; os dados rolam sem empurrar o divisor. */
+.compras-paineis [data-compras-mestre]{container-type:size;container-name:compras-mestre}
+.compras-paineis [data-compras-mestre] .mg-grid-wrap{flex:1;min-height:40px}
+@container compras-mestre (max-height:200px){
+  .mg-summary,.mg-grid tfoot{display:none}
+}
+.compras-paineis .itpan.cheio{flex:1;min-height:0}
+.compras-paineis .itbar{min-width:0}
+.compras-paineis .itbar-info{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
+.compras-paineis .itbar .grp{flex-shrink:0}
+.compras-paineis .itrolo{display:flex;flex-direction:column;overflow:hidden}
+.compras-paineis .itrolo .mg-grid-wrap{flex:1;min-height:0}
+.compras-paineis .itfoot{overflow:auto}
+.compras-divisor-itens:hover,.compras-divisor-itens[data-arrastando="true"]{background:transparent}

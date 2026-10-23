@@ -36,7 +36,7 @@ export { situacaoCancelavel } from "./cancelar-na-lista";
  * SKEW (web nova, API anterior): a API anterior não tem a porta, e responde 404. A aba então diz que a lista está
  * indisponível nesta versão do servidor — e não mostra uma lista vazia, que afirmaria "não há documentos".
  */
-export function DocumentosDeCompraList({ especie, barra }: { especie: string; barra?: React.ReactNode }) {
+export function DocumentosDeCompraList({ especie, barra, onSelecionar }: { especie: string; barra?: React.ReactNode; /** a seleção da grade, para o painel dos itens da nota (mestre-detalhe) */ onSelecionar?: (rows: Row[]) => void }) {
   const disponivel = usePortaDisponivel(especie);
   const opcoesTop = useOpcoesDeTopDeCompras();
   const { can } = useAuth();
@@ -88,14 +88,13 @@ export function DocumentosDeCompraList({ especie, barra }: { especie: string; ba
       text: (r) => enumLabel("situacao_documento_compra", r["situacao"])
     }
   ];
-  // `colSpan` do rodapé DERIVADO da lista de colunas (mesma conta da lista de vendas).
-  const indiceDoTotal = colunas.findIndex((c) => c.key === "valor_total");
-  const depoisDoTotal = colunas.length - indiceDoTotal - 1;
+
 
   return <>
-    <DocList key={especie} title="Documentos de compra" endpoint="/api/compras/documentos" base="/compras" entity="documentos_compra"
+    <DocList referenceHeaders key={especie} title="Documentos de compra" endpoint="/api/compras/documentos" base="/compras" entity="documentos_compra"
       // A rota do detalhe sai da ESPÉCIE DA LINHA (o que o servidor classificou), nunca do filtro ativo.
       rowHref={(r) => rotaDoDocumento(r)}
+      onSelectionChange={onSelecionar}
       canCreate={false} canCancel={false} extraActions={barra}
       defaultFilters={especie ? { especie } : undefined}
       filters={[
@@ -113,7 +112,8 @@ export function DocumentosDeCompraList({ especie, barra }: { especie: string; ba
         if (!alvo) return [];
         return [{ label: `Cancelar ${alvo.especieMinuscula}`, danger: true, onClick: () => setCancelando(alvo) }];
       }}
-      totals={(t) => <tr><td colSpan={indiceDoTotal} className="px-2 py-1">Total (filtro)</td><td className="num">{brl(t["valor_total"] ?? t["total"] ?? "0")}</td>{Array.from({ length: depoisDoTotal }, (_, i) => <td key={i} />)}</tr>} />
+      // "Total (filtro)" é a linha de rodapé da grade, sob a coluna Total (como em Vendas e no HTML de referência).
+      totals={(t) => <tr><td colSpan={10} className="px-2 py-1">Total (filtro)</td><td className="num">{brl(t["valor_total"] ?? t["total"] ?? "0")}</td><td /></tr>} />
     <DialogoCancelarDocumento prefixoTestid={PREFIXO_CENTRAL_COMPRAS} aberto={cancelando !== null}
       onFechar={() => { if (!cancelarM.isPending) setCancelando(null); }}
       especie={cancelando?.especieMinuscula ?? ""} codigo={cancelando?.codigo ?? ""}

@@ -1,0 +1,37 @@
+/* Dimensões e cores vêm do padrão global de ações (botoes.css). */
+.portal {
+  --mg-btn-h: 24px;
+  --portal-espaco: 6px;
+  --mg-toolbar-h: 42px;
+}
+.contexto > button,
+.contexto > span > button {
+  flex-shrink: 0;
+  gap: var(--portal-espaco);
+}
+.contexto > button,
+.contexto > span > button:first-child { padding-inline: 11px; }
+.contexto > span > button:last-child {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+}
+.contexto > span:has(> button) {
+  height: 24px;
+  margin-left: 0;
+  background: #f1f3f4;
+  box-shadow: none;
+}
+.contexto,
+.portal :is(:global(.mg-toolbar), :global(.mg-toolbar > .ml-auto), :global(.mg-rail), :global(.mg-pills-rail__content), :global(.mg-pills-rail__content > .overflow-x-auto), :global(.itbar .grp), :global(.view-seg)) {
+  gap: var(--portal-espaco);
+}
+.portal :global(.mg-toolbar) { height: auto; }
+.portal :global(.view-seg) {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.portal :global(.view-seg button),
+.contexto > button { border-radius: 999px; }

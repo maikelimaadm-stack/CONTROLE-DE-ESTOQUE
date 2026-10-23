@@ -18,6 +18,7 @@
 }
 
 .tipo {
+  composes: app-button from global;
   height: 28px;
   box-sizing: border-box;
   display: inline-flex;
@@ -50,9 +51,10 @@
   box-sizing: border-box;
   margin-left: 2px;
   border-radius: 999px;
-  background: #40de63;
+  background: #f1f3f4;
 }
 .novo {
+  composes: app-button from global;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -68,6 +70,7 @@
 }
 .novo svg { width: 14px; height: 14px; }
 .abrirMenu {
+  composes: app-button from global;
   width: 28px;
   display: flex;
   align-items: center;

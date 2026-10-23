@@ -487,113 +487,12 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .painelPesquisa :global(.cmd-panel__empty) { padding: 18px 12px; text-align: center; font-size: 12px; color: #64748b; }
 .painelPesquisa :global(.cmd-panel__footer) { border-top: 1px solid rgba(15, 23, 42, .07); background: transparent; }
 
-/* ═════════════ calendário do desenho (painel do MgDatePicker) ═════════════ */
-/* 240px de ÁREA ÚTIL (a caixa do desenho não declara box-sizing: 240 + 2×10 + 2×1 = 262) */
-.calendario {
-  width: 240px;
-  box-sizing: content-box;
-  padding: 8px 10px;
-  line-height: normal;
-  border-radius: 12px;
-  overflow: hidden;
-  z-index: 10001;
-  outline: none;
-  background: rgba(255, 255, 255, .88);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
-  backdrop-filter: blur(22px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, .65);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, .12), inset 0 1px 0 rgba(255, 255, 255, .85);
-  animation: subir 230ms cubic-bezier(.16, 1, .3, 1) backwards;
-}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .calendario { background: rgba(255, 255, 255, .97); }
-}
-.calCabecalho { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 0 4px; }
-.calTitulo {
-  border: 0;
-  background: transparent;
-  padding: 2px 6px;
-  margin-left: -6px;
-  border-radius: 7px;
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #1e293b;
-  cursor: pointer;
-  text-align: left;
-  font-variant-numeric: tabular-nums;
-}
-.calTitulo::first-letter { text-transform: uppercase; }
-.calTitulo:hover:not(:disabled) { background: rgba(15, 23, 42, .06); }
-.calTitulo:disabled { cursor: default; }
-.calSetas { display: inline-flex; flex-direction: column; flex-shrink: 0; }
-.calSeta { width: 22px; height: 14px; border: 0; border-radius: 5px; background: transparent; color: #475569; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
-.calSeta:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
-.calSeta svg { width: 13px; height: 13px; flex-shrink: 0; }
-.calDias { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
-.calSemana { height: 18px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #a3adb9; }
-.calDia {
-  width: 24px;
-  height: 24px;
-  margin: 0 auto;
-  border: 1.5px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  font-size: 12px;
-  color: #1e293b;
-  cursor: pointer;
-  padding: 0;
-  font-variant-numeric: tabular-nums;
-  box-sizing: border-box;
-}
-.calGrade { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; height: 174px; grid-auto-rows: 1fr; }
-.calCelula {
-  width: 42px;
-  height: 42px;
-  margin: 0 auto;
-  border: 1.5px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  font-size: 12px;
-  color: #1e293b;
-  cursor: pointer;
-  padding: 0;
-  box-sizing: border-box;
-  font-variant-numeric: tabular-nums;
-  text-transform: capitalize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.calDia:hover,
-.calCelula:hover { background: rgba(15, 23, 42, .06); }
-.calDia[data-fora],
-.calCelula[data-fora] { color: #c3cbd5; }
-.calDia[data-fora]:hover,
-.calCelula[data-fora]:hover { color: #64748b; }
-.calDia[data-hoje],
-.calCelula[data-hoje] { font-weight: 700; color: #40de63; background: transparent; border-color: #40de63; }
-.calDia[data-hoje]:hover,
-.calCelula[data-hoje]:hover { background: rgba(64, 222, 99, .12); }
-.calDia[aria-pressed="true"],
-.calDia[aria-pressed="true"]:hover,
-.calCelula[aria-pressed="true"],
-.calCelula[aria-pressed="true"]:hover { background: #40de63; border-color: #40de63; color: #fff; font-weight: 700; }
-.calRodape { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(15, 23, 42, .07); }
-.calLink { border: 0; background: transparent; color: #15803d; font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
-.calLink:hover { background: #ecfdf3; }
-.calDia:focus-visible,
-.calCelula:focus-visible,
-.calSeta:focus-visible,
-.calTitulo:focus-visible,
-.calLink:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
 
 @keyframes subir { from { opacity: 0; transform: translateY(-7px) scale(.985); } to { opacity: 1; transform: none; } }
 @keyframes aparecerErro { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
   :global(.cmd-panel).painelPesquisa,
-  .calendario,
   .erro { animation: none; }
   .rotulo, .caixa, .caixa .controle, .icone, .chave, .chaveBotao, .painelPesquisa :global(.cmd-option) { transition: none; }
   .chave:active:not(:disabled) .chaveBotao { transform: none; }

@@ -10,13 +10,17 @@ import { SeletorDeTipoDeDocumento, TODOS_OS_TIPOS } from "@/features/sales/selet
 import { NovoDocumentoPorTop } from "@/features/sales/lancador-unificado";
 import type { LinhaDeLancamento } from "@/features/sales/launcher-operacoes";
 import { DocumentosDeCompraList } from "@/features/compras/documentos-compra-list";
+import { ItensDaNota } from "@/features/compras/itens-da-nota";
+import { ALTURA_PADRAO_DOS_ITENS, DivisorEntreTabelas } from "@/features/compras/divisor-entre-tabelas";
+import type { Row } from "@/features/docs/shared";
 import { useTopsDeCompras, variantesDeCompra } from "@/features/compras/variantes";
 import { useFinalizacaoEOrcamento, type EstadoDaCapacidade } from "@/features/compras/pedido-e-orcamento";
 import { useImportacaoXml } from "@/features/compras/importacao/capacidade";
 import { DialogoImportarXml } from "@/features/compras/importacao/enviar-xml";
-import { Button } from "@/components/ui";
+import { Button, DicaDeAcao } from "@/components/ui";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import estilos from "@/features/sales/portal-vendas.module.css";
+import botoes from "@/features/compras/portal-compras.module.css";
 
 /**
  * PORTAL DE COMPRAS (COMPRAS-01, decisão 267): Documentos (primeira e padrão) + Visão Geral + Processos.
@@ -62,7 +66,7 @@ function ImportarXml() {
   };
   if (!pode) return null;
   return <>
-    <Button size="sm" variant="outline" data-testid="compras-importar-xml" onClick={() => mudarUrl(true)}>Importar XML</Button>
+    <DicaDeAcao texto="Importar documento de compra pelo arquivo XML"><Button size="sm" variant="outline" data-testid="compras-importar-xml" onClick={() => mudarUrl(true)}>Importar XML</Button></DicaDeAcao>
     <DialogoImportarXml aberto={aberto} onFechar={() => mudarUrl(false)} solicitacaoId={aberto ? sp.get("solicitacao_id") || null : null} />
   </>;
 }
@@ -82,13 +86,30 @@ function Documentos() {
   const opcoes = [...visiveis].reverse().map((v) => ({ value: v.variante, label: tr(v.chaveI18n) }));
   const rotuloDoTipo = opcoes.find((o) => o.value === atual)?.label ?? TODOS_OS_TIPOS;
   const focarTipo = React.useRef(false);
-  const barra = <span className={estilos.contexto} role="group" aria-label="Contexto operacional">
-    <SeletorDeTipoDeDocumento prefixo="compras" valor={atual} opcoes={opcoes} focarAoMontar={focarTipo} onChange={(v) => { focarTipo.current = true; setEspecie(v); }} />
-    <NovoDocumentoPorTop variante={atual} rotuloDoTipo={rotuloDoTipo} todosOsGrupos={grupos.filter((g) => g.variante.variante !== "orcamento")} prefixo="compras" rota={rotaDeLancamentoDeCompra} />
+  const barra = <span className={`${estilos.contexto} ${botoes.contexto}`} role="group" aria-label="Contexto operacional">
+    <SeletorDeTipoDeDocumento dicasPadronizadas prefixo="compras" valor={atual} opcoes={opcoes} focarAoMontar={focarTipo} onChange={(v) => { focarTipo.current = true; setEspecie(v); }} />
+    <NovoDocumentoPorTop dicasPadronizadas variante={atual} rotuloDoTipo={rotuloDoTipo} todosOsGrupos={grupos.filter((g) => g.variante.variante !== "orcamento")} prefixo="compras" rota={rotaDeLancamentoDeCompra} />
     <ImportarXml />
   </span>;
-  return <div data-testid="compras-documentos" data-especie={atual} className="flex min-h-0 flex-1 flex-col">
-    <DocumentosDeCompraList especie={atual} barra={barra} />
+  // MESTRE-DETALHE: o documento selecionado na grade abre os PRODUTOS dele no painel de baixo (sem sair da lista).
+  // A seleção é da grade (um clique); o duplo clique continua abrindo a consulta. Trocar o Tipo recorta a lista e
+  // não há por que manter selecionado um documento que saiu dela.
+  const [selecionado, setSelecionado] = React.useState<Row | null>(null);
+  const aoSelecionar = React.useCallback((rows: Row[]) => { setSelecionado(rows.length === 1 ? rows[0]! : null); }, []);
+  React.useEffect(() => { setSelecionado(null); }, [atual]);
+  // A DIVISÃO entre as duas tabelas é do usuário: o divisor arrasta a altura do painel de itens (estado de tela).
+  const [alturaDosItens, setAlturaDosItens] = React.useState(ALTURA_PADRAO_DOS_ITENS);
+  const [itensRecolhidos, setItensRecolhidos] = React.useState(false);
+  const [maximizado, setMaximizado] = React.useState(false);
+  const dividir = (altura: number) => { setAlturaDosItens(altura); setItensRecolhidos(altura <= 34); };
+  const recolher = () => { setMaximizado(false); setItensRecolhidos((v) => !v); if (alturaDosItens <= 34) setAlturaDosItens(ALTURA_PADRAO_DOS_ITENS); };
+  return <div data-testid="compras-documentos" data-especie={atual} className={`${botoes.portal} compras-paineis flex min-h-0 flex-1 flex-col overflow-hidden`}>
+    <div data-compras-mestre hidden={maximizado} className={maximizado ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
+      <DocumentosDeCompraList especie={atual} barra={barra} onSelecionar={aoSelecionar} />
+    </div>
+    {!maximizado && <DivisorEntreTabelas valor={itensRecolhidos ? 34 : alturaDosItens} onChange={dividir} onRecolher={recolher} />}
+    <ItensDaNota documento={selecionado} altura={alturaDosItens} recolhido={itensRecolhidos} onRecolher={recolher}
+      maximizado={maximizado} onMaximizar={() => { setMaximizado((v) => !v); setItensRecolhidos(false); }} />
   </div>;
 }
 

@@ -3,6 +3,7 @@ import * as React from "react";
 import * as MenuP from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DicaDeAcao } from "@/components/ui";
 import estilos from "./portal-vendas.module.css";
 
 /**
@@ -26,7 +27,8 @@ const TODOS = "all";
 
 export interface OpcaoDeTipo { value: string; label: string }
 
-export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMontar, prefixo = "vendas" }: {
+export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMontar, prefixo = "vendas", dicasPadronizadas = false }: {
+  dicasPadronizadas?: boolean;
   /** A variante ativa, ou "" para todos os tipos. */
   valor: string;
   /** Os tipos que o usuário pode LER, já rotulados. "Todos os tipos" é acrescentado aqui. */
@@ -54,14 +56,14 @@ export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMonta
   // O nome acessível é o TEXTO VISÍVEL ("Tipo Venda"), com o espaço escrito: um rótulo que o leitor de tela
   // lê diferente do que a tela mostra quebra quem navega por voz ("clicar em Tipo Venda").
   return <MenuP.Root modal={false}>
-    <MenuP.Trigger asChild>
-      <button ref={gatilho} type="button" className={estilos.tipo} title="Tipo de documento"
+    <DicaDeAcao texto={dicasPadronizadas ? "Tipo de documento" : undefined}><MenuP.Trigger asChild>
+      <button ref={gatilho} type="button" className={estilos.tipo} title={dicasPadronizadas ? undefined : "Tipo de documento"}
         data-testid={`${prefixo}-tipo`} data-valor={valor || TODOS}>
         <span className={estilos.tipoPrefixo}>Tipo</span>{" "}
         <span className={estilos.tipoValor}>{atual}</span>
         <ChevronDown className={estilos.seta11} strokeWidth={2.4} aria-hidden />
       </button>
-    </MenuP.Trigger>
+    </MenuP.Trigger></DicaDeAcao>
     <MenuP.Portal>
       <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuTipo)} aria-label="Tipo de documento" data-testid={`${prefixo}-tipo-opcoes`}>
         <MenuP.RadioGroup value={valor || TODOS} onValueChange={(v) => { if (v !== (valor || TODOS)) onChange(v === TODOS ? "" : v); }}>
