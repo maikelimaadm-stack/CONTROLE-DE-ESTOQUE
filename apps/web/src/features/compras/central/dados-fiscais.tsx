@@ -129,18 +129,27 @@ function LinhaDoRateio({
         }
       : {}
   );
+  /** Mesmo fieldset da trava do layout / TOP (LANC-T2): `display: contents`, sem estilo novo. */
+  const envolver = (c: "categoria_financeira_id" | "centro_custo_id", campo: React.ReactElement) => {
+    if (!unica || !e.travado(c)) return campo;
+    return <fieldset key={c} disabled data-editavel="false"
+      data-travado-pela-top={e.travadoPelaTop(c) ? "true" : undefined}
+      data-travado-na-edicao={e.travadoNaEdicao(c) ? "true" : undefined}
+      data-motivo={e.motivoNaEdicao(c) ?? undefined}
+      style={{ display: "contents" }}>{campo}</fieldset>;
+  };
   return <div data-testid={`compras-rateio-linha-${k}`} className="space-y-1">
     <ColunaDeCampos>
-      <CampoDaCentral rotulo="Natureza Financeira" obrigatorio erro={erroEm("categoria_financeira_id")} icone="pesquisa" preenchido={Boolean(l.categoriaId)}
+      {envolver("categoria_financeira_id", <CampoDaCentral rotulo="Natureza Financeira" obrigatorio erro={erroEm("categoria_financeira_id")} icone="pesquisa" preenchido={Boolean(l.categoriaId)}
         testId={unica ? "compras-classificacao-natureza" : `compras-rateio-linha-${k}-natureza`} {...dc("categoria_financeira_id")}>
         <RefSelect resource="financial_categories" value={l.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa}
           onChange={(v) => onMudar({ categoriaId: v ?? "" })} labelHint={unica ? e.dica("categoria_financeira_id") : undefined} />
-      </CampoDaCentral>
-      <CampoDaCentral rotulo="Centro de Resultado" obrigatorio erro={erroEm("centro_custo_id")} icone="pesquisa" preenchido={Boolean(l.centroId)}
+      </CampoDaCentral>)}
+      {envolver("centro_custo_id", <CampoDaCentral rotulo="Centro de Resultado" obrigatorio erro={erroEm("centro_custo_id")} icone="pesquisa" preenchido={Boolean(l.centroId)}
         testId={unica ? "compras-classificacao-centro" : `compras-rateio-linha-${k}-centro`} {...dc("centro_custo_id")}>
         <RefSelect resource="cost_centers" value={l.centroId} filter={{ kind: "analytic" }}
           onChange={(v) => onMudar({ centroId: v ?? "" })} labelHint={unica ? e.dica("centro_custo_id") : undefined} />
-      </CampoDaCentral>
+      </CampoDaCentral>)}
       <CampoDaCentral rotulo="Conta Contábil" icone="pesquisa" preenchido={Boolean(l.contaId)}
         testId={`compras-rateio-linha-${k}-conta`}>
         <RefSelect resource="chart_accounts" value={l.contaId} onChange={(v) => onMudar({ contaId: v ?? "" })} />

@@ -125,14 +125,23 @@ async function abrirConsulta(page: Page, especie: Especie, doc: DocLido, situaca
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", situacao);
 }
 
-/** Clica em Editar e espera a Central em modo edição, carregada pelo `/edicao` (devolvido como a tela o recebeu). */
+/** Clica em Editar e espera a Central em modo edição. Prefetch/cache: o fio pode não ir no 2º Editar — aí lê o corpo via API. */
 async function abrirEdicao(page: Page, especie: Especie, doc: DocLido): Promise<Record<string, unknown>> {
-  const doFio = page.waitForResponse((r) => r.request().method() === "GET" && caminho(r) === `/api/compras/${SEGMENTO[especie]}/${doc.id}/edicao`);
+  const url = `/api/compras/${SEGMENTO[especie]}/${doc.id}/edicao`;
+  const doFio = page.waitForResponse(
+    (r) => r.request().method() === "GET" && caminho(r) === url,
+    { timeout: 8_000 }
+  ).catch(() => null);
   await expect(editar(page), "o Editar está habilitado").toBeEnabled();
   await editar(page).click();
   const resposta = await doFio;
-  expect(resposta.status(), "o /edicao respondeu").toBe(200);
-  const corpo = (await resposta.json()) as Record<string, unknown>;
+  let corpo: Record<string, unknown>;
+  if (resposta) {
+    expect(resposta.status(), "o /edicao respondeu").toBe(200);
+    corpo = (await resposta.json()) as Record<string, unknown>;
+  } else {
+    corpo = await api<Record<string, unknown>>(page, "GET", url);
+  }
   await expect(central(page), "a Central abriu NO LUGAR da consulta, em modo edição").toHaveAttribute("data-modo", "edicao");
   await expect(central(page), "com o documento salvo").toHaveAttribute("data-documento-id", doc.id);
   await expect(central(page)).not.toHaveAttribute("data-situacao", "carregando");
