@@ -467,7 +467,7 @@ export interface PropsDosItensSalvos {
 export interface PropsDeConfigurarColunas<K extends string> {
   prefixoTestid: string;
   titulo: string; subtitulo: string; rotulos: Record<K, string>; lista: readonly Preferencia<K>[];
-  onLista: (l: Preferencia<K>[]) => void; onRestaurar: () => void; ambos: boolean; onAmbos: () => void;
+  onLista: (l: Preferencia<K>[]) => void; onRestaurar: () => void;
 }
 
 /* ─────────────── M9 — painel.tsx (+ painel.module.css) ─────────────── */

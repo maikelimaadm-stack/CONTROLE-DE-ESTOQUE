@@ -20,7 +20,7 @@ export type { AvisoDosItens, ChaveCampoSalvo, ChaveColunaSalva, ChaveDaColunaExt
  *
  * Barra de 36px: [Ampliar] [Adicionar produto (desabilitado, "Somente leitura")] … [Grade | Formulário]
  * [Configurar colunas]. Grade sem seleção, sem edição, sem lixeira; rodapé com "Itens (N)" e o subtotal DO SERVIDOR.
- * Grade | Formulário, "Mostrar grade e formulário" e Configurar colunas são ESTADO DESTA TELA (`useState`).
+ * Grade | Formulário e Configurar colunas são ESTADO DESTA TELA (`useState`).
  *
  * As colunas são UMA lista só: `colgroup`, cabeçalho, linhas, largura mínima e o `colSpan` da linha vazia leem a
  * MESMA lista. A ordem padrão vem do adaptador (`colunas.leitura`); as opcionais entram pela sua marca.
@@ -185,7 +185,6 @@ export function ItensSalvos({
   }, [leitura, formularioPelasColunas, mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado, casasDaQuantidade, rotulos, colunasExtras]);
 
   const [visao, setVisao] = React.useState<Visao>("grade");
-  const [ambos, setAmbos] = React.useState(false);
   const [prefColunas, setPrefColunas] = React.useState<Preferencia<ChaveDaGrade>[] | null>(null);
   const [prefCampos, setPrefCampos] = React.useState<Preferencia<ChaveDoFormulario>[] | null>(null);
   const [atual, setAtual] = React.useState(0);
@@ -197,7 +196,7 @@ export function ItensSalvos({
   // largura mínima DERIVADA das colunas visíveis (a elástica conta o seu mínimo), nunca contada à mão
   const larguraMinima = visiveis.reduce((a, c) => a + c.largura, 0);
 
-  const mostraGrade = visao === "grade" || ambos;
+  const mostraGrade = visao === "grade";
   const mostraFormulario = visao === "formulario";
   const configDoFormulario = visao === "formulario";
   const i = Math.min(atual, Math.max(0, itens.length - 1));
@@ -229,28 +228,25 @@ export function ItensSalvos({
     </>}
   </div>;
 
-  const escolherVisao = (v: Visao) => { setVisao(v); if (v === "grade") setAmbos(false); };
-  const alternarAmbos = () => { const novo = !ambos; setAmbos(novo); if (novo) setVisao("formulario"); };
-
   return <>
     <div className={grade.barra} role="toolbar" aria-label="Itens">
       <BotaoAmpliar regiao="itens" />
       <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar produto" data-dica="Somente leitura" disabled><Plus aria-hidden /></button>
       <span className={grade.espaco} />
       <div className={grade.segmento} role="group" aria-label="Visualização dos itens">
-        <button type="button" aria-pressed={visao === "grade"} aria-label="Grade" data-dica="Grade" onClick={() => escolherVisao("grade")}><Grid3x3 aria-hidden /></button>
-        <button type="button" aria-pressed={visao === "formulario"} aria-label="Formulário" data-dica="Formulário" data-visao="formulario" onClick={() => escolherVisao("formulario")}><FileText aria-hidden /></button>
+        <button type="button" aria-pressed={visao === "grade"} aria-label="Grade" data-dica="Grade" onClick={() => setVisao("grade")}><Grid3x3 aria-hidden /></button>
+        <button type="button" aria-pressed={visao === "formulario"} aria-label="Formulário" data-dica="Formulário" data-visao="formulario" onClick={() => setVisao("formulario")}><FileText aria-hidden /></button>
       </div>
       {configDoFormulario
         ? <ConfigurarColunas<ChaveDoFormulario> prefixoTestid={prefixoTestid} titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem"
             rotulos={Object.fromEntries(campos.map((c) => [c.chave, c.rotulo])) as Record<ChaveDoFormulario, string>}
-            lista={listaCampos} onLista={setPrefCampos} onRestaurar={() => setPrefCampos(null)} ambos={ambos} onAmbos={alternarAmbos} />
+            lista={listaCampos} onLista={setPrefCampos} onRestaurar={() => setPrefCampos(null)} />
         : <ConfigurarColunas<ChaveDaGrade> prefixoTestid={prefixoTestid} titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem"
             rotulos={Object.fromEntries(colunas.map((c) => [c.chave, c.rotulo])) as Record<ChaveDaGrade, string>}
-            lista={listaColunas} onLista={setPrefColunas} onRestaurar={() => setPrefColunas(null)} ambos={ambos} onAmbos={alternarAmbos} />}
+            lista={listaColunas} onLista={setPrefColunas} onRestaurar={() => setPrefColunas(null)} />}
     </div>
     {avisos.map((a) => <p key={a.testId} className={grade.aviso} data-testid={a.testId}>{a.conteudo}</p>)}
-    <div className={grade.corpo} data-visao={ambos ? "ambos" : visao} data-testid={`${prefixoTestid}-itens-corpo`}>
+    <div className={grade.corpo} data-visao={visao} data-testid={`${prefixoTestid}-itens-corpo`}>
       {mostraGrade && tabela}
       {mostraFormulario && formulario}
     </div>

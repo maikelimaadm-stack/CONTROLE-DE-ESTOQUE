@@ -1265,17 +1265,11 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   await expect(contagem).toHaveText("(2)");
   await expect(pontoDeErro, "sem item pendente, sem ponto").toHaveCount(0);
 
-  // "MOSTRAR GRADE E FORMULÁRIO" mora em Configurar colunas; decisão 340 — aplica no Pronto
-  await page.getByTestId("central-vendas-configurar").click();
-  const cfgAmbos = page.getByTestId("central-vendas-configuracao");
-  const ambos = cfgAmbos.getByRole("checkbox", { name: "Mostrar grade e formulário" });
-  await expect(ambos).toHaveAttribute("aria-checked", "false");
-  await ambos.click();
-  await expect(ambos).toHaveAttribute("aria-checked", "true");
-  await cfgAmbos.getByRole("button", { name: "Pronto" }).click();
-  await expect(page.getByTestId("central-vendas-grade"), "grade e formulário juntos").toBeVisible();
+  // decisão 341: só Grade OU Formulário — nunca os dois juntos
   await expect(page.getByTestId("central-vendas-item-form")).toBeVisible();
+  await expect(page.getByTestId("central-vendas-grade")).toHaveCount(0);
   await barra.getByRole("button", { name: "Grade", exact: true }).click();
+  await expect(page.getByTestId("central-vendas-grade")).toBeVisible();
   await expect(page.getByTestId("central-vendas-item-form"), "Grade sozinha").toHaveCount(0);
 
   // O POST: as MESMAS 20 chaves do W4, dois itens com as chaves de sempre — e NADA do item removido (a quantidade 7)

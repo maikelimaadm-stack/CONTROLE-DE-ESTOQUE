@@ -26,7 +26,7 @@ import { test, expect, criarCadastro, referenciasDoSeed } from "./central-compra
  * │ operação) nos dois. Só as asserções de APRESENTAÇÃO mudaram (W2, W4, W6, W11, W18–W27, W30); as │
  * │ de contrato continuam as mesmas. O registro linha a linha está no relatório da fatia.            │
  * │ Fase B: mudou a APRESENTAÇÃO dos itens da criação (Adicionar produto, marca pelo círculo,        │
- * │ Remover item na barra, "Mostrar grade e formulário" em Configurar colunas) e, no W4, Natureza e  │
+ * │ Remover item na barra; Grade|Formulário exclusivos — decisão 341) e, no W4, Natureza e           │
  * │ Centro de resultado viraram pendência de clique. W4/W5/W10/W17/W29 provam o MESMO contrato.      │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
@@ -535,17 +535,6 @@ async function marcarLinha(page: Page, i: number) {
   await expect(linha, `a linha ${i + 1} está marcada`).toHaveAttribute("aria-selected", "true");
 }
 
-/** Fase B: "Grade e formulário" mora em Configurar colunas; decisão 340 — aplica no Pronto. */
-async function mostrarGradeEFormulario(page: Page) {
-  await page.getByTestId("central-vendas-configurar").click();
-  const cfg = page.getByTestId("central-vendas-configuracao");
-  const opcao = cfg.getByRole("checkbox", { name: "Mostrar grade e formulário" });
-  if ((await opcao.getAttribute("aria-checked")) !== "true") await opcao.click();
-  await expect(opcao).toHaveAttribute("aria-checked", "true");
-  await cfg.getByRole("button", { name: "Pronto" }).click();
-  await expect(cfg).toHaveCount(0);
-}
-
 /** Adiciona um item e escolhe o N-ésimo produto REAL pela pesquisa ancorada na célula. */
 async function adicionarItemComProduto(page: Page, n = 0) {
   const antes = await page.getByTestId("central-vendas-linha").count();
@@ -563,7 +552,7 @@ async function adicionarItemComProduto(page: Page, n = 0) {
   return rotulo;
 }
 
-test("W13 — três visões do MESMO items: Grade, Formulário e Mostrar grade e formulário; trocar não perde nada", async ({ page }) => {
+test("W13 — Grade OU Formulário do MESMO items; trocar não perde nada (decisão 341: sem os dois juntos)", async ({ page }) => {
   await login(page);
   await abrirWorkspace(page);
   const p1 = await adicionarItemComProduto(page, 0);
@@ -586,18 +575,16 @@ test("W13 — três visões do MESMO items: Grade, Formulário e Mostrar grade e
 
   // de volta à grade: a quantidade digitada no formulário está na linha 2; nada foi perdido
   await page.getByRole("button", { name: "Grade", exact: true }).click();
+  await expect(page.getByTestId("central-vendas-item-form"), "Grade esconde o formulário").toHaveCount(0);
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
   // a coluna 6 (índice 5) é Quantidade: o NÚMERO é o que foi digitado; a unidade do produto vem ao lado, à parte
   await expect(linhaDaGrade(page, 1).locator("td").nth(5).getByTestId("central-vendas-quantidade")).toHaveText("7");
 
-  // Grade e formulário (Fase B: a opção de Configurar colunas): as duas ao mesmo tempo, sobre o mesmo item marcado
   await marcarLinha(page, 1);
-  await mostrarGradeEFormulario(page);
-  await marcarLinha(page, 1);
-  await expect(page.getByTestId("central-vendas-grade")).toBeVisible();
-  await expect(page.getByTestId("central-vendas-item-form")).toBeVisible();
   await linhaDaGrade(page, 1).getByLabel("Quantidade").fill("9");
-  await expect(page.getByTestId("central-vendas-item-form").getByLabel("Quantidade"), "a grade e o formulário são o MESMO estado").toHaveValue("9");
+  await page.getByRole("button", { name: "Formulário", exact: true }).click();
+  await expect(page.getByTestId("central-vendas-grade")).toHaveCount(0);
+  await expect(page.getByTestId("central-vendas-item-form").getByLabel("Quantidade"), "o formulário lê o MESMO estado da grade").toHaveValue("9");
 });
 
 test("W14 — seleção de linha: círculo, teclado (↑ ↓) e nenhuma seleção órfã ao remover", async ({ page }) => {
@@ -812,8 +799,6 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await marcarLinha(page, 0);
     await page.getByRole("button", { name: "Formulário", exact: true }).click();
     await foto("items-form");
-    await mostrarGradeEFormulario(page);
-    await foto("items-split");
     await page.getByRole("button", { name: "Grade", exact: true }).click();
     await page.getByTestId("central-vendas-recolher").click();
     await page.mouse.move(5, h - 5);
@@ -943,10 +928,10 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   const cfg = page.getByTestId("central-vendas-configuracao");
   await expect(cfg).toBeVisible();
   await expect(cfg).toContainText("Colunas da grade");
-  // decisão 340: duas listas + "Mostrar grade e formulário"; grade só muda no Pronto
+  // decisão 340/341: duas listas; sem "Mostrar grade e formulário"; grade só muda no Pronto
   await expect(cfg.getByText("Disponíveis", { exact: true })).toBeVisible();
   await expect(cfg.getByText("Na tabela", { exact: true })).toBeVisible();
-  await expect(cfg.getByRole("checkbox", { name: "Mostrar grade e formulário" })).toHaveCount(1);
+  await expect(cfg.getByRole("checkbox", { name: "Mostrar grade e formulário" })).toHaveCount(0);
   await expect(cfg.getByTestId("central-vendas-na-tabela").locator("[data-coluna]")).toHaveCount(ROTULOS_DA_GRADE.length);
 
   // esconder Quantidade no rascunho e aplicar no Pronto
@@ -1341,7 +1326,6 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
   await cfgEstoque.getByTestId("central-vendas-disponiveis").getByLabel("Estoque", { exact: true }).click();
   await cfgEstoque.getByRole("button", { name: "Pronto" }).click();
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
-  await mostrarGradeEFormulario(page);                              // Fase B: a opção de Configurar colunas
   await page.getByRole("button", { name: "Grade", exact: true }).click();
   await page.waitForTimeout(500);
   await marcarLinha(page, 0);                                       // os campos moram na linha MARCADA (Fase B)

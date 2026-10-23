@@ -10,11 +10,11 @@ import type { Preferencia, PropsDeConfigurarColunas } from "./contrato";
 export type { Preferencia, PropsDeConfigurarColunas } from "./contrato";
 
 /**
- * Configurar colunas/campos do lançamento — MESMO diálogo da tabela principal (decisão 340):
+ * Configurar colunas/campos do lançamento — mesmo diálogo da tabela principal (decisão 340):
  * Disponíveis × Na tabela, rascunho até Pronto, Restaurar antes do Fechar, ESC/fora não fecham.
- * Mantém "Mostrar grade e formulário".
+ * Visão Grade|Formulário é só o segmento da barra (decisão 341: sem "os dois juntos").
  */
-export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, subtitulo, rotulos, lista, onLista, onRestaurar, ambos, onAmbos }: PropsDeConfigurarColunas<K>) {
+export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, subtitulo, rotulos, lista, onLista, onRestaurar }: PropsDeConfigurarColunas<K>) {
   const [aberta, setAberta] = React.useState(false);
   const ordemInicial = React.useMemo(() => lista.map((c) => c.chave), [lista]);
   const ocultasIniciais = React.useMemo(() => new Set(lista.filter((c) => !c.visivel).map((c) => c.chave)), [lista]);
@@ -23,19 +23,17 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, sub
   const [alvo, setAlvo] = React.useState<K | null>(null);
   const [draftOrdem, setDraftOrdem] = React.useState<K[]>(() => ordemInicial);
   const [draftOcultas, setDraftOcultas] = React.useState(() => new Set(ocultasIniciais));
-  const [draftAmbos, setDraftAmbos] = React.useState(ambos);
   const [aplicarPadrao, setAplicarPadrao] = React.useState(false);
 
   React.useEffect(() => {
     if (!aberta) return;
     setDraftOrdem(ordemInicial);
     setDraftOcultas(new Set(ocultasIniciais));
-    setDraftAmbos(ambos);
     setBusca("");
     setAplicarPadrao(false);
     setArrastada(null);
     setAlvo(null);
-  }, [aberta, ordemInicial, ocultasIniciais, ambos]);
+  }, [aberta, ordemInicial, ocultasIniciais]);
 
   const itens = draftOrdem.map((chave) => ({ chave, label: rotulos[chave] ?? chave }));
   const livres = itens.filter((c) => draftOcultas.has(c.chave));
@@ -64,18 +62,14 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, sub
   const restaurarRascunho = () => {
     setDraftOcultas(new Set());
     setDraftOrdem(ordemInicial);
-    setDraftAmbos(false);
     setAplicarPadrao(true);
   };
 
   const salvar = () => {
-    if (aplicarPadrao) {
-      onRestaurar();
-      if (ambos) onAmbos();
-    } else {
+    if (aplicarPadrao) onRestaurar();
+    else {
       const nova: Preferencia<K>[] = draftOrdem.map((chave) => ({ chave, visivel: !draftOcultas.has(chave) }));
       onLista(nova);
-      if (draftAmbos !== ambos) onAmbos();
     }
     setAberta(false);
   };
@@ -127,11 +121,6 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, sub
         <div className="dcol" style={{ minHeight: 320 }}>
           <div className="dbox"><span className="dbox-h">Disponíveis<span className="bd t-plain">{livres.length}</span></span>{listaUi(livres, false, busca ? "Nenhuma coluna com esse texto." : "Todas as colunas estão na tabela.")}</div>
           <div className="dbox"><span className="dbox-h">Na tabela<span className="bd t-positive">{usadas.length}</span></span>{listaUi(usadas, true, "Nenhuma coluna com esse texto.")}</div>
-        </div>
-        <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3">
-          <button type="button" role="checkbox" aria-checked={draftAmbos} aria-label="Mostrar grade e formulário" className={grade.caixa}
-            onClick={() => { setAplicarPadrao(false); setDraftAmbos((v) => !v); }}>{draftAmbos && <Check aria-hidden strokeWidth={2} />}</button>
-          <span className="text-[12.5px] text-slate-800">Mostrar grade e formulário</span>
         </div>
       </div>
     </Dialog>}

@@ -113,9 +113,8 @@
   color: #64748b;
 }
 
-/* ═════════════ corpo: grade, formulário, ou os dois lado a lado ═════════════ */
+/* ═════════════ corpo: grade OU formulário (decisão 341 — nunca os dois juntos) ═════════════ */
 .corpo { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; animation: aparece var(--mi) var(--ez-io) backwards; }
-.corpo[data-visao="ambos"] { display: grid; grid-template-columns: minmax(0, 1fr) 316px; }
 .rolagem { flex: 1 1 auto; min-height: 0; min-width: 0; overflow: auto; }
 
 /* a grade do desenho: cabeçalho de 28px e linha de 23px, cada uma com a borda de 1px embaixo */
@@ -195,8 +194,6 @@
 
 /* ═════════════ formulário do item ═════════════ */
 .form { flex-grow: 1; min-height: 0; overflow: auto; }
-.corpo[data-visao="ambos"] .form { order: 2; border-left: 1px solid #eef1f4; background: #fcfdfd; }
-.corpo[data-visao="ambos"] > :not(.form) { order: 1; }
 .formNav { display: flex; align-items: center; gap: 6px; height: 38px; box-sizing: content-box; flex-shrink: 0; padding: 0 12px 0 14px; line-height: normal; }
 .formNavTitulo { font-size: 12.5px; font-weight: 600; color: #1e293b; }
 .formCampos { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 520px; box-sizing: content-box; padding: 0 14px 14px; }
@@ -225,8 +222,6 @@
 .configTitulo { font-size: 12.5px; font-weight: 600; color: #1e293b; }
 .configSub { font-size: 11px; color: #94a3b8; }
 .configLista { max-height: 320px; box-sizing: content-box; overflow: auto; padding: 4px 0; }
-/* "Mostrar grade e formulário": a opção de visualização, abaixo da lista, no mesmo desenho de linha */
-.configVisao { padding: 4px 0; border-top: 1px solid rgba(15, 23, 42, .08); }
 .configLinha {
   display: flex;
   align-items: center;

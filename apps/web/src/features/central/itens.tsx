@@ -229,7 +229,6 @@ export function ItensDaCentral({
   }, [chavesDoLayout]);
 
   const [visao, setVisao] = React.useState<Visao>("grade");
-  const [ambos, setAmbos] = React.useState(false);
   /** A linha marcada (uma por vez) — -1: nenhuma. */
   const [selecionado, setSelecionado] = React.useState<number>(-1);
   const [pesquisa, setPesquisa] = React.useState<{ linha: number; campo: "product_id" | "warehouse_id"; ancora: HTMLElement | null; modo: "flutuante" | "fluxo" } | null>(null);
@@ -264,7 +263,7 @@ export function ItensDaCentral({
   const sel = selecionado >= items.length ? items.length - 1 : selecionado;
   React.useEffect(() => { if (sel !== selecionado) setSelecionado(sel); }, [sel, selecionado]);
 
-  const mostraGrade = visao === "grade" || ambos;
+  const mostraGrade = visao === "grade";
   const mostraFormulario = visao === "formulario";
   const atual = sel >= 0 ? sel : items.length ? 0 : -1;
   const corrente = mostraFormulario ? atual : sel;
@@ -510,11 +509,7 @@ export function ItensDaCentral({
   const mostrarFormulario = () => { if (sel < 0 && items.length) setSelecionado(0); };
   const escolherVisao = (v: Visao) => {
     setVisao(v); setPesquisa(null);
-    if (v === "grade") setAmbos(false); else mostrarFormulario();
-  };
-  const alternarAmbos = () => {
-    const novo = !ambos; setAmbos(novo); setPesquisa(null);
-    if (novo) { setVisao("formulario"); mostrarFormulario(); }
+    if (v === "formulario") mostrarFormulario();
   };
 
   return <>
@@ -533,12 +528,12 @@ export function ItensDaCentral({
       {configDoFormulario
         ? <ConfigurarColunas<ChaveCampoDoItem> prefixoTestid={prefixoTestid} titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem"
             rotulos={Object.fromEntries(chavesCampos.map((k) => [k, rotuloCampo(k)])) as Record<ChaveCampoDoItem, string>}
-            lista={campos} onLista={setCampos} onRestaurar={() => setCampos(camposPadrao())} ambos={ambos} onAmbos={alternarAmbos} />
+            lista={campos} onLista={setCampos} onRestaurar={() => setCampos(camposPadrao())} />
         : <ConfigurarColunas<ChaveColunaDoItem> prefixoTestid={prefixoTestid} titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem"
             rotulos={Object.fromEntries(chavesColunas.map((k) => [k, rotuloColuna(k)])) as Record<ChaveColunaDoItem, string>}
-            lista={colunas} onLista={setColunas} onRestaurar={() => setColunas(colunasPadrao())} ambos={ambos} onAmbos={alternarAmbos} />}
+            lista={colunas} onLista={setColunas} onRestaurar={() => setColunas(colunasPadrao())} />}
     </div>
-    <div className={grade.corpo} data-visao={ambos ? "ambos" : visao} data-testid={tid("itens-corpo")}>
+    <div className={grade.corpo} data-visao={visao} data-testid={tid("itens-corpo")}>
       {mostraGrade && tabela}
       {mostraFormulario && formulario}
       {efeitosDoEstoque}
