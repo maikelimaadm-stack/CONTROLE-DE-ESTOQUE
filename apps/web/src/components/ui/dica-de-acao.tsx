@@ -23,7 +23,8 @@ export function DicaDeAcao({ texto, children }: { texto?: string; children: Reac
   const fechar = () => { limpar(); setPos(null); };
   const abrir = (el: HTMLButtonElement) => {
     limpar();
-    if (!texto || el.disabled || el.getAttribute("aria-expanded") === "true") return;
+    const menuAberto = el.getAttribute("aria-haspopup") && el.getAttribute("aria-haspopup") !== "false" && el.getAttribute("aria-expanded") === "true";
+    if (!texto || el.disabled || menuAberto) return;
     timer.current = setTimeout(() => {
       const b = el.getBoundingClientRect();
       ancora.current = b;

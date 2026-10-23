@@ -86,7 +86,6 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
     <div className="pop fpop" role="menu" aria-label={`Filtrar coluna ${rotulo}`} style={pos}>
       <button type="button" className="fmi" disabled={!atual} onClick={() => onAplicar(null)}><FilterX size={14} /><span className="fval-l">Limpar filtro de “{rotulo}”</span></button>
       <span className="opt-sep" aria-hidden="true" />
-      <span className="fsec">{tipo === "num" ? "Filtros de número" : tipo === "data" ? "Filtros de data" : "Filtros de texto"}</span>
       <div className="fcond">
         <Select.Root value={op || "sem"} onValueChange={(v) => setOp(v === "sem" ? "" : v)}>
           <Select.Trigger className="fselb" aria-label="Condição">
