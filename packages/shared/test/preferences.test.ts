@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { normalizeListPreferences, applyColumnPreferences, normalizeFormLayout, buildDefaultFormLayout, parseFilterKey, filterKey, relativeDateRange, filterKindOf, isValidOperator, decodeRange, encodeRange, MAX_FIELDS_PER_ROW } from "../src/preferences.js";
+import { normalizeListPreferences, normalizeItensPreferences, preferenciasDeLista, applyColumnPreferences, normalizeFormLayout, buildDefaultFormLayout, parseFilterKey, filterKey, relativeDateRange, filterKindOf, isValidOperator, decodeRange, encodeRange, MAX_FIELDS_PER_ROW } from "../src/preferences.js";
 
 describe("preferências de listagem", () => {
   it("descarta colunas/filtros desconhecidos e valores inválidos", () => {
-    const p = normalizeListPreferences({ columns: { visible: ["a", "zz", "a"], order: ["b", "a"], widths: { a: 120, b: 10, zz: 300 } }, sort: { key: "zz", dir: "asc" }, pageSize: 33, view: { mode: "cards", cardsPerRow: 9 }, filters: { visible: ["f1", "nope"], operators: { f1: "between", f2: "contains" }, saved: [{ name: "Ativos", values: { status: "active", "bad key": "x" } }, { name: "Ativos", values: {} }] } }, { columns: ["a", "b"], filters: ["f1", "f2"], filterKinds: { f1: "number", f2: "date" } });
+    const p = normalizeListPreferences({ columns: { visible: ["a", "zz", "a"], order: ["b", "a"], widths: { a: 120, b: 10, zz: 300 }, autoFit: ["a", "zz"] }, sort: { key: "zz", dir: "asc" }, pageSize: 33, view: { mode: "cards", cardsPerRow: 9 }, filters: { visible: ["f1", "nope"], operators: { f1: "between", f2: "contains" }, saved: [{ name: "Ativos", values: { status: "active", "bad key": "x" } }, { name: "Ativos", values: {} }] } }, { columns: ["a", "b"], filters: ["f1", "f2"], filterKinds: { f1: "number", f2: "date" } });
     expect(p.columns.visible).toEqual(["a"]); expect(p.columns.order).toEqual(["b", "a"]); expect(p.columns.widths).toEqual({ a: 120 });
+    expect(p.columns.autoFit).toEqual(["a"]);
     expect(p.sort).toBeUndefined(); expect(p.pageSize).toBeUndefined(); expect(p.view.mode).toBe("cards"); expect(p.view.cardsPerRow).toBeUndefined();
     expect(p.filters.visible).toEqual(["f1"]); expect(p.filters.operators).toEqual({ f1: "between" }); expect(p.filters.saved).toEqual([{ name: "Ativos", values: { status: "active" } }]);
   });
@@ -12,6 +13,27 @@ describe("preferências de listagem", () => {
     const cols = [{ key: "a" }, { key: "b" }, { key: "c" }];
     expect(applyColumnPreferences(cols, { order: ["c"] }).map((c) => c.key)).toEqual(["c", "a", "b"]);
     expect(applyColumnPreferences(cols, { visible: ["b", "a"], order: ["b"] }).map((c) => c.key)).toEqual(["b", "a"]);
+  });
+});
+
+describe("preferências da grade de itens", () => {
+  it("normaliza visão, colunas (autoFit/freeze/largura) e campos", () => {
+    const p = normalizeItensPreferences({
+      visao: "formulario",
+      columns: { visible: ["produto", "x"], order: ["produto", "qtd"], widths: { produto: 200, qtd: 20 }, frozen: 2, autoFit: ["produto", "x"] },
+      fields: { visible: ["produto"], order: ["produto", "ghost"] }
+    }, { columns: ["produto", "qtd"], fields: ["produto", "unidade"] });
+    expect(p.visao).toBe("formulario");
+    expect(p.columns).toMatchObject({ visible: ["produto"], order: ["produto", "qtd"], widths: { produto: 200 }, frozen: 2, autoFit: ["produto"] });
+    expect(p.fields).toEqual({ visible: ["produto"], order: ["produto"] });
+  });
+  it("chave nova (fora de order) entra à vista; ocultas do order ficam ocultas", () => {
+    const lista = preferenciasDeLista(["a", "b", "lote"], { order: ["a", "b"], visible: ["a"] });
+    expect(lista).toEqual([
+      { chave: "a", visivel: true },
+      { chave: "b", visivel: false },
+      { chave: "lote", visivel: true }
+    ]);
   });
 });
 

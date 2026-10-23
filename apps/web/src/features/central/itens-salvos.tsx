@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { ChevronLeft, ChevronRight, FileText, Grid3x3, Plus } from "lucide-react";
+import { preferenciasDeLista, type ItensPreferences } from "@agro/shared";
 import { cn, brl, num, numeroBR, pct } from "@/lib/utils";
 import { StockCell, type Row } from "@/features/docs/shared";
 import { ehDecimalDaApi } from "@/features/stock/reserva-estoque";
@@ -9,6 +10,7 @@ import grade from "./grade.module.css";
 import { CampoLeitura } from "./campo";
 import { BotaoAmpliar } from "./moldura";
 import { ConfigurarColunas } from "./configurar-colunas";
+import { useItensPrefs, blocoDeLista } from "./itens-prefs";
 import type {
   AdornoDoCampo, ChaveCampoSalvo, ChaveColunaSalva, ChaveDaColunaExtra, ColunaExtraDoItemSalvo, Preferencia, PropsDosItensSalvos, Visao
 } from "./contrato";
@@ -20,7 +22,7 @@ export type { AvisoDosItens, ChaveCampoSalvo, ChaveColunaSalva, ChaveDaColunaExt
  *
  * Barra de 36px: [Ampliar] [Adicionar produto (desabilitado, "Somente leitura")] … [Grade | Formulário]
  * [Configurar colunas]. Grade sem seleção, sem edição, sem lixeira; rodapé com "Itens (N)" e o subtotal DO SERVIDOR.
- * Grade | Formulário e Configurar colunas são ESTADO DESTA TELA (`useState`).
+ * Grade | Formulário e Configurar colunas: preferência por usuário (mesma chave da criação — decisão 351).
  *
  * As colunas são UMA lista só: `colgroup`, cabeçalho, linhas, largura mínima e o `colSpan` da linha vazia leem a
  * MESMA lista. A ordem padrão vem do adaptador (`colunas.leitura`); as opcionais entram pela sua marca.
@@ -141,17 +143,6 @@ const comRotulo = (rotulos: Readonly<Partial<Record<string, string>>>) => <T ext
 };
 
 /**
- * A preferência sobre o que existe AGORA: sem preferência (null) vale a ordem padrão; com ela, o que sumiu sai e o que
- * apareceu entra no fim, à vista.
- */
-function aplicarPreferencia<K extends string>(prefs: readonly Preferencia<K>[] | null, disponiveis: readonly K[]): Preferencia<K>[] {
-  if (!prefs) return disponiveis.map((chave) => ({ chave, visivel: true }));
-  const mantidas = prefs.filter((p) => disponiveis.includes(p.chave));
-  const novas = disponiveis.filter((k) => !prefs.some((p) => p.chave === k)).map((chave) => ({ chave, visivel: true }));
-  return [...mantidas, ...novas];
-}
-
-/**
  * `colunas.leitura`: a ordem padrão da espécie. `mostrarLote`: Lote e Validade gravados (desligado por padrão).
  * `mostrarSaldo`: a parte gerada (`rotuloDoGerado`, padrão "Faturado") e o Saldo, do servidor. `mostrarReservado`: Reservado, do servidor.
  * `casasDaQuantidade`: casas da quantidade, da parte gerada e do saldo, na grade e no formulário (padrão 2; a compra, 4).
@@ -184,15 +175,27 @@ export function ItensSalvos({
     ];
   }, [leitura, formularioPelasColunas, mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado, casasDaQuantidade, rotulos, colunasExtras]);
 
-  const [visao, setVisao] = React.useState<Visao>("grade");
-  const [prefColunas, setPrefColunas] = React.useState<Preferencia<ChaveDaGrade>[] | null>(null);
-  const [prefCampos, setPrefCampos] = React.useState<Preferencia<ChaveDoFormulario>[] | null>(null);
+  const chavesCol = React.useMemo(() => colunas.map((c) => c.chave), [colunas]);
+  const chavesCam = React.useMemo(() => campos.map((c) => c.chave), [campos]);
+  const p = useItensPrefs(prefixoTestid, "itens", chavesCol, chavesCam);
+  const prefs = p.prefs;
+  const updCols = (fn: (c: ItensPreferences["columns"]) => ItensPreferences["columns"]) => p.update((x) => ({ ...x, columns: fn(x.columns) }));
+  const updFields = (fn: (f: ItensPreferences["fields"]) => ItensPreferences["fields"]) => p.update((x) => ({ ...x, fields: fn(x.fields) }));
+
+  const visao: Visao = prefs.visao === "formulario" ? "formulario" : "grade";
+  const setVisao = (v: Visao) => p.update((x) => ({ ...x, visao: v }));
   const [atual, setAtual] = React.useState(0);
 
-  const listaColunas = aplicarPreferencia(prefColunas, colunas.map((c) => c.chave));
-  const listaCampos = aplicarPreferencia(prefCampos, campos.map((c) => c.chave));
-  const visiveis = listaColunas.filter((p) => p.visivel).map((p) => colunas.find((c) => c.chave === p.chave)!);
-  const camposVisiveis = listaCampos.filter((p) => p.visivel).map((p) => campos.find((c) => c.chave === p.chave)!);
+  const listaColunas = React.useMemo(
+    () => preferenciasDeLista(chavesCol, prefs.columns) as Preferencia<ChaveDaGrade>[],
+    [chavesCol, prefs.columns]
+  );
+  const listaCampos = React.useMemo(
+    () => preferenciasDeLista(chavesCam, prefs.fields) as Preferencia<ChaveDoFormulario>[],
+    [chavesCam, prefs.fields]
+  );
+  const visiveis = listaColunas.filter((pr) => pr.visivel).map((pr) => colunas.find((c) => c.chave === pr.chave)!);
+  const camposVisiveis = listaCampos.filter((pr) => pr.visivel).map((pr) => campos.find((c) => c.chave === pr.chave)!);
   // largura mínima DERIVADA das colunas visíveis (a elástica conta o seu mínimo), nunca contada à mão
   const larguraMinima = visiveis.reduce((a, c) => a + c.largura, 0);
 
@@ -240,10 +243,14 @@ export function ItensSalvos({
       {configDoFormulario
         ? <ConfigurarColunas<ChaveDoFormulario> prefixoTestid={prefixoTestid} titulo="Visualização do formulário"
             rotulos={Object.fromEntries(campos.map((c) => [c.chave, c.rotulo])) as Record<ChaveDoFormulario, string>}
-            lista={listaCampos} onLista={setPrefCampos} onRestaurar={() => setPrefCampos(null)} />
+            lista={listaCampos}
+            onLista={(lista) => updFields(() => blocoDeLista(lista))}
+            onRestaurar={() => updFields(() => ({}))} />
         : <ConfigurarColunas<ChaveDaGrade> prefixoTestid={prefixoTestid} titulo="Colunas da grade"
             rotulos={Object.fromEntries(colunas.map((c) => [c.chave, c.rotulo])) as Record<ChaveDaGrade, string>}
-            lista={listaColunas} onLista={setPrefColunas} onRestaurar={() => setPrefColunas(null)} />}
+            lista={listaColunas}
+            onLista={(lista) => updCols((c) => ({ ...c, ...blocoDeLista(lista) }))}
+            onRestaurar={() => updCols(() => ({}))} />}
     </div>
     {avisos.map((a) => <p key={a.testId} className={grade.aviso} data-testid={a.testId}>{a.conteudo}</p>)}
     <div className={grade.corpo} data-visao={visao} data-testid={`${prefixoTestid}-itens-corpo`}>

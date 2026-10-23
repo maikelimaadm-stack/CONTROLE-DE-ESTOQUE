@@ -3,6 +3,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Copy, EyeOff, FileText, Grid3x3, Lock, MoreVertical, PanelLeft, Plus, Scaling, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
+import { preferenciasDeLista, type ItensPreferences } from "@agro/shared";
 import { cn, brl, num, dateBR } from "@/lib/utils";
 import { CHROME_ICONE_NA_CELULA, fonteDaCelula, medirLarguraColuna } from "@/lib/largura-coluna";
 import { api } from "@/lib/api";
@@ -16,6 +17,7 @@ import { CampoDaCentral } from "./campo";
 import { ConfigurarColunas } from "./configurar-colunas";
 import { BotaoAmpliar } from "./moldura";
 import { recomputarDescontoAposBruto, sincronizarDesconto } from "./desconto-da-linha";
+import { useItensPrefs, blocoDeLista } from "./itens-prefs";
 import estilos from "./moldura.module.css";
 import grade from "./grade.module.css";
 import { maximoDaQuantidade, type ChaveCampoDoItem, type ChaveColunaDoItem, type LayoutDosItens, type OpcaoReal, type Preferencia, type PropsDosItens,
@@ -27,9 +29,10 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * ITENS DA CENTRAL — o MOTOR (VISUAL-UX-04): duas VISÕES (e as duas juntas) do MESMO `items`.
  *
  * Cópia fiel da grade/formulário da criação (VISUAL-UX-01 R1, VISUAL-UX-02): fonte única (`items`/`onChange` da
- * página, nenhuma cópia), marcação pela linha (sem checkbox), Duplicar/Remover sempre visíveis, Configurar colunas sem persistência,
- * unidade do produto só para exibir e `efeitosDoEstoque` sempre montado (o custo médio do unitário vazio não depende da
- * coluna Estoque estar à vista; `custoMedioNoUnitario={false}` desliga só a escrita, e a leitura continua).
+ * página, nenhuma cópia), marcação pela linha (sem checkbox), Duplicar/Remover sempre visíveis, Configurar colunas
+ * com preferência por usuário (decisão 351), unidade do produto só para exibir e `efeitosDoEstoque` sempre montado
+ * (o custo médio do unitário vazio não depende da coluna Estoque estar à vista; `custoMedioNoUnitario={false}`
+ * desliga só a escrita, e a leitura continua).
  *
  * O que é da ESPÉCIE chega por props: o prefixo dos testids, as colunas do sistema e o mapa catálogo → coluna. Os
  * recursos novos — lote/validade por linha (`lote`), armazém permitido por item (`armazemPorItem`), armazém forçado
@@ -102,7 +105,6 @@ const CHAVE_DO_ITEM: Partial<Record<ChaveColunaDoItem, string>> = {
   descontoPercentual: "discount_percent", lote: "provider_lot", validade: "expiration_date"
 };
 
-const padrao = <K extends string>(chaves: readonly K[]): Preferencia<K>[] => chaves.map((chave) => ({ chave, visivel: true }));
 const ehChaveColuna = (k: string): k is ChaveColunaDoItem => k in COLUNAS;
 
 /** Rótulo de um registro já escolhido: o que a pesquisa devolveu, ou o próprio registro (como o `RefSelect` faz). */
@@ -232,34 +234,51 @@ export function ItensDaCentral({
     return lista;
   }, [chavesDoLayout]);
 
-  const [visao, setVisao] = React.useState<Visao>("grade");
+  const chavesDisponiveisColunas = React.useMemo(
+    () => (layout ? chavesDoLayout(layout) : chavesColunas),
+    [layout, chavesDoLayout, chavesColunas]
+  );
+  const chavesDisponiveisCampos = React.useMemo(
+    () => (layout ? camposDoLayout(layout) : chavesCampos),
+    [layout, camposDoLayout, chavesCampos]
+  );
+  const p = useItensPrefs(prefixoTestid, "itens", chavesDisponiveisColunas, chavesDisponiveisCampos);
+  const prefs = p.prefs;
+  const updCols = (fn: (c: ItensPreferences["columns"]) => ItensPreferences["columns"]) => p.update((x) => ({ ...x, columns: fn(x.columns) }));
+  const updFields = (fn: (f: ItensPreferences["fields"]) => ItensPreferences["fields"]) => p.update((x) => ({ ...x, fields: fn(x.fields) }));
+
+  const visao: Visao = prefs.visao === "formulario" ? "formulario" : "grade";
+  const setVisao = (v: Visao) => p.update((x) => ({ ...x, visao: v }));
   /** A linha marcada (uma por vez) — -1: nenhuma. */
   const [selecionado, setSelecionado] = React.useState<number>(-1);
   const [pesquisa, setPesquisa] = React.useState<{ linha: number; campo: "product_id" | "warehouse_id"; ancora: HTMLElement | null; modo: "flutuante" | "fluxo" } | null>(null);
   /** Rótulos das escolhas feitas nesta sessão — só apresentação, nunca entra no payload. */
   const [conhecidos, setConhecidos] = React.useState<Record<string, OpcaoReal>>({});
-  /** Larguras redimensionadas na sessão (decisão 347) — sem persistência. */
-  const [larguras, setLarguras] = React.useState<Partial<Record<ChaveColunaDoItem, number>>>({});
+  const larguras = (prefs.columns.widths ?? {}) as Partial<Record<ChaveColunaDoItem, number>>;
   /** Prefixo congelado: N = primeiras N colunas sticky (congelar a 3ª congela 1+2+3). */
-  const [congeladas, setCongeladas] = React.useState(0);
-  /** Auto ajustar ligado por coluna até desativar ou redimensionar à mão. */
-  const [autoFitKeys, setAutoFitKeys] = React.useState<Set<ChaveColunaDoItem>>(() => new Set());
+  const setCongeladas = (n: number | ((prev: number) => number)) => {
+    const atual = prefs.columns.frozen ?? 0;
+    const next = typeof n === "function" ? n(atual) : n;
+    updCols((c) => ({ ...c, frozen: Math.max(0, next) }));
+  };
+  /** Auto ajustar — preferência do usuário até desativar ou redimensionar à mão. */
+  const autoFitKeys = React.useMemo(() => new Set((prefs.columns.autoFit ?? []) as ChaveColunaDoItem[]), [prefs.columns.autoFit]);
   const [menuColuna, setMenuColuna] = React.useState<ChaveColunaDoItem | null>(null);
   const raizItens = React.useRef<HTMLDivElement | null>(null);
   const colsRef = React.useRef<Partial<Record<ChaveColunaDoItem, HTMLTableColElement | null>>>({});
   const tabelaRef = React.useRef<HTMLTableElement | null>(null);
-  const colunasPadrao = React.useCallback(() => (layout ? padrao(chavesDoLayout(layout)) : padrao(chavesColunas)), [layout, chavesDoLayout, chavesColunas]);
-  const camposPadrao = React.useCallback(() => (layout ? padrao(camposDoLayout(layout)) : padrao(chavesCampos)), [layout, camposDoLayout, chavesCampos]);
-  const [colunas, setColunas] = React.useState<Preferencia<ChaveColunaDoItem>[]>(colunasPadrao);
-  const [campos, setCampos] = React.useState<Preferencia<ChaveCampoDoItem>[]>(camposPadrao);
-  const layoutAplicado = React.useRef<LayoutDosItens | null | undefined>(undefined);
-  React.useEffect(() => {
-    if (layoutAplicado.current === layout) return;
-    const primeiro = layoutAplicado.current === undefined;
-    layoutAplicado.current = layout;
-    if (primeiro && !layout) return;
-    setColunas(colunasPadrao()); setCampos(camposPadrao());
-  }, [layout, colunasPadrao, camposPadrao]);
+  const colunas = React.useMemo(
+    () => preferenciasDeLista(chavesDisponiveisColunas, prefs.columns) as Preferencia<ChaveColunaDoItem>[],
+    [chavesDisponiveisColunas, prefs.columns]
+  );
+  const campos = React.useMemo(
+    () => preferenciasDeLista(chavesDisponiveisCampos, prefs.fields) as Preferencia<ChaveCampoDoItem>[],
+    [chavesDisponiveisCampos, prefs.fields]
+  );
+  const setColunas = (lista: Preferencia<ChaveColunaDoItem>[]) => updCols((c) => ({ ...c, ...blocoDeLista(lista) }));
+  const setCampos = (lista: Preferencia<ChaveCampoDoItem>[]) => updFields(() => blocoDeLista(lista));
+  const restaurarColunas = () => updCols(() => ({}));
+  const restaurarCampos = () => updFields(() => ({}));
   const doLayout = React.useMemo(() => (layout ? new Map(colunasDoLayout(layout).map((c) => [c.chave, c])) : null), [layout, colunasDoLayout]);
   /** As colunas que o layout permite (as dele, mais as ligadas que ele não conhece). */
   const permitidas = React.useMemo(() => (layout ? new Set(chavesDoLayout(layout)) : null), [layout, chavesDoLayout]);
@@ -373,6 +392,7 @@ export function ItensDaCentral({
     () => colunas.filter((c) => c.visivel && ligada(c.chave) && (!permitidas || permitidas.has(c.chave))).map((c) => c.chave),
     [colunas, ligada, permitidas]
   );
+  const congeladas = Math.min(prefs.columns.frozen ?? 0, colunasVisiveis.length);
   const larguraDe = (k: ChaveColunaDoItem) => larguras[k] ?? COLUNAS[k].largura;
   const larguraMinima = colunasVisiveis.reduce((a, k) => a + larguraDe(k), 0);
 
@@ -406,8 +426,11 @@ export function ItensDaCentral({
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
       const w = Math.max(LARGURA_MIN_COLUNA, Math.round(w0 + ev.clientX - x0));
-      setAutoFitKeys((s) => { if (!s.has(k)) return s; const n = new Set(s); n.delete(k); return n; });
-      setLarguras((m) => ({ ...m, [k]: w }));
+      updCols((c) => ({
+        ...c,
+        widths: { ...(c.widths ?? {}), [k]: w },
+        autoFit: (c.autoFit ?? []).filter((x) => x !== k)
+      }));
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
@@ -539,17 +562,25 @@ export function ItensDaCentral({
       }
       table.style.width = table.style.minWidth = `${soma}px`;
     }
-    setLarguras((m) => (m[k] === w ? m : { ...m, [k]: w }));
+    updCols((c) => (c.widths?.[k] === w ? c : { ...c, widths: { ...(c.widths ?? {}), [k]: w } }));
   };
 
   /** Menu: liga = mede + marca; desliga = só tira o estado. */
   const aplicarAutoAjuste = (k: ChaveColunaDoItem, jaLigado: boolean) => {
     if (jaLigado) {
-      setAutoFitKeys((s) => { const n = new Set(s); n.delete(k); return n; });
+      updCols((c) => ({ ...c, autoFit: (c.autoFit ?? []).filter((x) => x !== k) }));
       return;
     }
-    gravarLargura(k, larguraPorConteudo(k, true));
-    setAutoFitKeys((s) => { const n = new Set(s); n.add(k); return n; });
+    const w = larguraPorConteudo(k, true);
+    const px = `${w}px`;
+    const col = colsRef.current[k];
+    if (col) col.style.width = col.style.minWidth = col.style.maxWidth = px;
+    const th = tabelaRef.current?.tHead?.rows[0]?.cells[colunasVisiveis.indexOf(k)] as HTMLElement | undefined;
+    if (th) th.style.width = th.style.minWidth = th.style.maxWidth = px;
+    updCols((c) => {
+      const autoFit = [...new Set([...(c.autoFit ?? []), k])];
+      return { ...c, widths: { ...(c.widths ?? {}), [k]: w }, autoFit };
+    });
   };
 
   /** Duplo clique na alça: só ajusta a largura uma vez — NÃO liga o modo auto ajustar. */
@@ -569,19 +600,16 @@ export function ItensDaCentral({
   }, [autoFitKeys, items, conhecidos, colunasVisiveis]);
 
   const ocultarColuna = (k: ChaveColunaDoItem) => {
-    setColunas((cs) => {
-      const visiveisAgora = cs.filter((c) => c.visivel && ligada(c.chave) && (!permitidas || permitidas.has(c.chave)));
-      if (visiveisAgora.length <= 1) return cs;
-      const idx = colunasVisiveis.indexOf(k);
-      setCongeladas((n) => (idx >= 0 && idx < n ? n - 1 : n));
-      setAutoFitKeys((s) => { if (!s.has(k)) return s; const n = new Set(s); n.delete(k); return n; });
-      return cs.map((c) => (c.chave === k ? { ...c, visivel: false } : c));
-    });
+    if (colunasVisiveis.length <= 1) return;
+    const idx = colunasVisiveis.indexOf(k);
+    const lista = colunas.map((c) => (c.chave === k ? { ...c, visivel: false } : c));
+    updCols((c) => ({
+      ...c,
+      ...blocoDeLista(lista),
+      frozen: idx >= 0 && idx < (c.frozen ?? 0) ? (c.frozen ?? 0) - 1 : c.frozen,
+      autoFit: (c.autoFit ?? []).filter((x) => x !== k)
+    }));
   };
-
-  React.useEffect(() => {
-    if (congeladas > colunasVisiveis.length) setCongeladas(colunasVisiveis.length);
-  }, [congeladas, colunasVisiveis.length]);
 
   const leftsCongeladas = React.useMemo(() => {
     const out: Partial<Record<ChaveColunaDoItem, number>> = {};
@@ -772,10 +800,10 @@ export function ItensDaCentral({
       {configDoFormulario
         ? <ConfigurarColunas<ChaveCampoDoItem> prefixoTestid={prefixoTestid} titulo="Visualização do formulário"
             rotulos={Object.fromEntries(chavesCampos.map((k) => [k, rotuloCampo(k)])) as Record<ChaveCampoDoItem, string>}
-            lista={campos} onLista={setCampos} onRestaurar={() => setCampos(camposPadrao())} />
+            lista={campos} onLista={setCampos} onRestaurar={restaurarCampos} />
         : <ConfigurarColunas<ChaveColunaDoItem> prefixoTestid={prefixoTestid} titulo="Colunas da grade"
             rotulos={Object.fromEntries(chavesColunas.map((k) => [k, rotuloColuna(k)])) as Record<ChaveColunaDoItem, string>}
-            lista={colunas} onLista={setColunas} onRestaurar={() => setColunas(colunasPadrao())} />}
+            lista={colunas} onLista={setColunas} onRestaurar={restaurarColunas} />}
     </div>
     <div className={grade.corpo} data-visao={visao} data-testid={tid("itens-corpo")}>
       {mostraGrade && tabela}

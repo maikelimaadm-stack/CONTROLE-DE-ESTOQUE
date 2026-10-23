@@ -95,7 +95,7 @@ export function relativeDateRange(op: string, today: string): [string, string] |
 export interface SavedFilter { name: string; values: Record<string, string> }
 export interface ListPreferences {
   version: number;
-  columns: { visible?: string[]; order?: string[]; widths?: Record<string, number>; frozen?: number };
+  columns: { visible?: string[]; order?: string[]; widths?: Record<string, number>; frozen?: number; /** chaves com auto ajustar ligado */ autoFit?: string[] };
   sort?: { key: string; dir: "asc" | "desc" };
   pageSize?: number;
   view: { mode: "table" | "cards"; cardFields?: string[]; cardsPerRow?: 1 | 2 | 3 | 4; density?: "compact" | "normal" };
@@ -126,11 +126,7 @@ export function defaultListPreferences(): ListPreferences { return { version: LI
 export function normalizeListPreferences(raw: unknown, known: ListKnown = {}): ListPreferences {
   const d = defaultListPreferences();
   if (!isObj(raw)) return d;
-  const cols = isObj(raw["columns"]) ? raw["columns"] : {};
-  d.columns.visible = strList(cols["visible"], known.columns);
-  d.columns.order = strList(cols["order"], known.columns);
-  if (isObj(cols["widths"])) { const w: Record<string, number> = {}; for (const [k, v] of Object.entries(cols["widths"])) if (typeof v === "number" && v >= 40 && v <= 1200 && (!known.columns || known.columns.includes(k))) w[k] = Math.round(v); d.columns.widths = w; }
-  if (typeof cols["frozen"] === "number" && cols["frozen"] >= 0) d.columns.frozen = Math.min(30, Math.round(cols["frozen"]));
+  d.columns = normalizeColumnBlock(isObj(raw["columns"]) ? raw["columns"] : {}, known.columns);
   const sort = raw["sort"];
   if (isObj(sort) && typeof sort["key"] === "string" && (sort["dir"] === "asc" || sort["dir"] === "desc") && (!known.columns || known.columns.includes(sort["key"]))) d.sort = { key: sort["key"], dir: sort["dir"] };
   if (typeof raw["pageSize"] === "number" && (LIST_PAGE_SIZES as readonly number[]).includes(raw["pageSize"])) d.pageSize = raw["pageSize"];
@@ -160,6 +156,70 @@ export function applyColumnPreferences<T extends { key: string }>(columns: T[], 
   if (!prefs.order?.length) return visible;
   const rank = new Map(prefs.order.map((k, i) => [k, i]));
   return [...visible].sort((a, b) => (rank.get(a.key) ?? 1e6) - (rank.get(b.key) ?? 1e6));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Preferências da grade/formulário de itens (Central + painel do Portal)
+// ---------------------------------------------------------------------------------------------------------------
+export const ITENS_PREFERENCES_VERSION = 1;
+/** Documento por usuário: visão, colunas (largura/freeze/autoFit) e campos do formulário. */
+export interface ItensPreferences {
+  version: number;
+  visao?: "grade" | "formulario";
+  columns: { visible?: string[]; order?: string[]; widths?: Record<string, number>; frozen?: number; autoFit?: string[] };
+  fields: { visible?: string[]; order?: string[] };
+  meta?: { revision?: number; updatedAt?: string };
+}
+export interface ItensKnown { columns?: string[]; fields?: string[] }
+export function defaultItensPreferences(): ItensPreferences {
+  return { version: ITENS_PREFERENCES_VERSION, columns: {}, fields: {} };
+}
+
+function normalizeColumnBlock(cols: Record<string, unknown>, known?: string[]): ItensPreferences["columns"] {
+  const out: ItensPreferences["columns"] = {};
+  out.visible = strList(cols["visible"], known);
+  out.order = strList(cols["order"], known);
+  if (isObj(cols["widths"])) {
+    const w: Record<string, number> = {};
+    for (const [k, v] of Object.entries(cols["widths"])) if (typeof v === "number" && v >= 40 && v <= 1200 && (!known || known.includes(k))) w[k] = Math.round(v);
+    out.widths = w;
+  }
+  if (typeof cols["frozen"] === "number" && cols["frozen"] >= 0) out.frozen = Math.min(30, Math.round(cols["frozen"]));
+  out.autoFit = strList(cols["autoFit"], known, 80);
+  return out;
+}
+
+/** Normaliza preferências da grade de itens; chaves fora de `known` saem. */
+export function normalizeItensPreferences(raw: unknown, known: ItensKnown = {}): ItensPreferences {
+  const d = defaultItensPreferences();
+  if (!isObj(raw)) return d;
+  d.columns = normalizeColumnBlock(isObj(raw["columns"]) ? raw["columns"] : {}, known.columns);
+  const fields = isObj(raw["fields"]) ? raw["fields"] : {};
+  d.fields.visible = strList(fields["visible"], known.fields);
+  d.fields.order = strList(fields["order"], known.fields);
+  if (raw["visao"] === "grade" || raw["visao"] === "formulario") d.visao = raw["visao"];
+  if (isObj(raw["meta"])) d.meta = { revision: typeof raw["meta"]["revision"] === "number" ? raw["meta"]["revision"] : undefined, updatedAt: typeof raw["meta"]["updatedAt"] === "string" ? raw["meta"]["updatedAt"] : undefined };
+  return d;
+}
+
+/**
+ * Ordem + visibilidade a partir das prefs: chaves novas (fora de `order`) entram no fim, à vista;
+ * sem `visible` todas ficam visíveis; sem `order` vale a ordem de `disponiveis`.
+ * Com `order` gravado (universo conhecido), chave nova ≠ ocultada — evita perder coluna opcional
+ * que passou a existir depois (lote, saldo, etc.).
+ */
+export function preferenciasDeLista<K extends string>(
+  disponiveis: readonly K[],
+  prefs: { visible?: string[]; order?: string[] }
+): { chave: K; visivel: boolean }[] {
+  const ordem = prefs.order?.length
+    ? [...prefs.order.filter((k): k is K => (disponiveis as readonly string[]).includes(k)), ...disponiveis.filter((k) => !prefs.order!.includes(k))]
+    : [...disponiveis];
+  const conhecidas = new Set(prefs.order ?? []);
+  return ordem.map((chave) => ({
+    chave,
+    visivel: !prefs.visible ? true : prefs.visible.includes(chave) || (conhecidas.size > 0 && !conhecidas.has(chave))
+  }));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

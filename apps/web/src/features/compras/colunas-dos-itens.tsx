@@ -7,10 +7,12 @@ import { Dialog } from "@/components/ui";
 /**
  * Duas listas com busca cfgb e setas no meio (decisão 342). Rascunho até Pronto (340).
  * Fechar descarta; ESC/fora não fecham; Restaurar antes do Fechar.
+ * Semeia o rascunho só na montagem (pai remonta ao abrir) — não zera no meio da edição (351).
  */
-export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestaurar, onFechar, titulo = "Colunas dos itens", className }: {
+export function ColunasDosItens({ colunas, ocultas, onAplicar, onRestaurar, onFechar, titulo = "Colunas dos itens", className }: {
   colunas: { key: string; label: string }[]; ocultas: Set<string>;
-  onMudar: (key: string, ocultar: boolean) => void; onOrdenar: (keys: string[]) => void;
+  /** keysVisiveis na ordem da tabela; ordemCompleta = todas as chaves (visíveis + ocultas). */
+  onAplicar: (keysVisiveis: string[], ordemCompleta: string[]) => void;
   onRestaurar: () => void; onFechar: () => void; titulo?: string; className?: string;
 }) {
   const ordemInicial = React.useMemo(() => colunas.map((c) => c.key), [colunas]);
@@ -22,7 +24,15 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
   const [draftOcultas, setDraftOcultas] = React.useState(() => new Set(ocultas));
   const [draftOrdem, setDraftOrdem] = React.useState<string[]>(() => ordemInicial);
   const [aplicarPadrao, setAplicarPadrao] = React.useState(false);
-  React.useEffect(() => { setDraftOcultas(new Set(ocultas)); setDraftOrdem(ordemInicial); setQa(""); setQu(""); setSel(null); setAplicarPadrao(false); }, [ocultas, ordemInicial]);
+  /** Montagem = abertura (pai só renderiza com o diálogo aberto). Não re-sincroniza a cada mudança de props. */
+  const semeado = React.useRef(false);
+  React.useEffect(() => {
+    if (semeado.current) return;
+    semeado.current = true;
+    setDraftOcultas(new Set(ocultas));
+    setDraftOrdem(ordemInicial);
+    setQa(""); setQu(""); setSel(null); setAplicarPadrao(false);
+  }, [ocultas, ordemInicial]);
 
   const porChave = React.useMemo(() => new Map(colunas.map((c) => [c.key, c])), [colunas]);
   const livres = draftOrdem.filter((k) => draftOcultas.has(k)).map((k) => porChave.get(k)!).filter(Boolean);
@@ -62,11 +72,8 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
 
   const salvar = () => {
     if (aplicarPadrao) { onRestaurar(); onFechar(); return; }
-    onOrdenar(draftOrdem);
-    for (const c of colunas) {
-      const agora = draftOcultas.has(c.key);
-      if (agora !== ocultas.has(c.key)) onMudar(c.key, agora);
-    }
+    const visiveis = draftOrdem.filter((k) => !draftOcultas.has(k));
+    onAplicar(visiveis, draftOrdem);
     onFechar();
   };
 

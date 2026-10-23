@@ -26,13 +26,17 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, rot
   const [draftOcultas, setDraftOcultas] = React.useState(() => new Set(ocultasIniciais));
   const [aplicarPadrao, setAplicarPadrao] = React.useState(false);
 
+  /** Só ao abrir o diálogo — ordem/ocultas do pai mudam de identidade a cada render e apagavam o rascunho. */
+  const abriu = React.useRef(false);
   React.useEffect(() => {
-    if (!aberta) return;
-    setDraftOrdem(ordemInicial);
-    setDraftOcultas(new Set(ocultasIniciais));
-    setQa(""); setQu(""); setSel(null);
-    setAplicarPadrao(false);
-    setArrastada(null); setAlvo(null);
+    if (aberta && !abriu.current) {
+      setDraftOrdem(ordemInicial);
+      setDraftOcultas(new Set(ocultasIniciais));
+      setQa(""); setQu(""); setSel(null);
+      setAplicarPadrao(false);
+      setArrastada(null); setAlvo(null);
+    }
+    abriu.current = aberta;
   }, [aberta, ordemInicial, ocultasIniciais]);
 
   const itens = draftOrdem.map((chave) => ({ chave, label: rotulos[chave] ?? chave }));

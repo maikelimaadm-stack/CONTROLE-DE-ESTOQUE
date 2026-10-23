@@ -2,13 +2,14 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Boxes, Columns3, ChevronDown, ChevronUp, X } from "lucide-react";
-import { D } from "@agro/shared";
+import { D, preferenciasDeLista, type ItensPreferences } from "@agro/shared";
 import { api } from "@/lib/api";
 import { brl, dateBR, num } from "@/lib/utils";
 import { Base1Grid } from "@/features/base1/grid";
 import { DicaDeAcao } from "@/components/ui";
 import { FiltroDeColuna, casa, type FiltroAtivo, type Tipo } from "./filtro-de-coluna";
 import { ColunasDosItens } from "./colunas-dos-itens";
+import { useItensPrefs } from "@/features/central/itens-prefs";
 import type { Base1Column, Row } from "@/features/base1/types";
 import { varianteDeCompra } from "./variantes";
 
@@ -19,6 +20,7 @@ import { varianteDeCompra } from "./variantes";
  * Decisão 339: barra só com ações (sem título "Itens" / código / aviso); ampliar = ícone da Central;
  * divisor = linha + grip da Central. Sem toolbar de listagem, sem faixa de filtros.
  * Decisão 350: Ampliar no canto esquerdo; altura do painel persistida na sessão (página do Portal).
+ * Decisão 351: colunas / larguras / freeze / auto ajustar — preferência por usuário (`compras` / `portal-itens`).
  *
  * A leitura é a da consulta do documento (`/api/compras/<segmento>/<id>`), a MESMA porta da tela de detalhe: a
  * tela não inventa recorte e não decide acesso — a linha só aparece para quem já pode lê-la, e a porta reaplica
@@ -86,18 +88,26 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
     return cs;
   }, [ehPedido]);
 
+  const chavesColunas = React.useMemo(() => colunas.map((c) => c.key), [colunas]);
+  const p = useItensPrefs("compras", "portal-itens", chavesColunas);
+  const prefs = p.prefs;
+  const updCols = (fn: (c: ItensPreferences["columns"]) => ItensPreferences["columns"]) => p.update((x) => ({ ...x, columns: fn(x.columns) }));
+
   const linhas = React.useMemo<Row[]>(() => itens.map((it, i) => ({ ...it, __seq: i + 1 })), [itens]);
 
   const [sort, setSort] = React.useState<{ key: string; dir: "asc" | "desc" } | null>(null);
-  const [colWidths, setColWidths] = React.useState<Record<string, number>>({});
-  const [ordem, setOrdem] = React.useState<string[]>([]);
-  const [congeladas, setCongeladas] = React.useState(0);
-  const [autoFitKeys, setAutoFitKeys] = React.useState<Set<string>>(() => new Set());
-  const [ocultas, setOcultas] = React.useState<Set<string>>(new Set());
   const [filtros, setFiltros] = React.useState<Record<string, FiltroAtivo>>({});
   const [filtrando, setFiltrando] = React.useState<string | null>(null);
   const [menuColunas, setMenuColunas] = React.useState(false);
-  React.useEffect(() => { setFiltros({}); setFiltrando(null); setAutoFitKeys(new Set()); }, [id]);
+  // filtro é do documento; preferências de coluna/largura/freeze/autoFit ficam no usuário
+  React.useEffect(() => { setFiltros({}); setFiltrando(null); setSort(null); }, [id]);
+
+  const listaPrefs = React.useMemo(() => preferenciasDeLista(chavesColunas, prefs.columns), [chavesColunas, prefs.columns]);
+  const ocultas = React.useMemo(() => new Set(listaPrefs.filter((c) => !c.visivel).map((c) => c.chave)), [listaPrefs]);
+  const ordem = React.useMemo(() => listaPrefs.map((c) => c.chave), [listaPrefs]);
+  const colWidths = prefs.columns.widths ?? {};
+  const congeladas = Math.min(prefs.columns.frozen ?? 0, chavesColunas.length);
+  const autoFitKeys = React.useMemo(() => new Set(prefs.columns.autoFit ?? []), [prefs.columns.autoFit]);
 
   const textoDaCelula = React.useCallback((k: string, r: Row) => { const c = colunas.find((x) => x.key === k); return c?.text ? c.text(r) : texto(r[k]); }, [colunas]);
   // filtro de cabeçalho: apresentação sobre as linhas já lidas (valores marcados por coluna), nunca consulta nova
@@ -146,9 +156,15 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
         </span>
         <span className="vdiv" aria-hidden="true" />
       </>}
-      {menuColunas && <ColunasDosItens colunas={colunasOrdenadas} ocultas={ocultas} onOrdenar={setOrdem}
-        onMudar={(k, ocultar) => setOcultas((p) => { const n = new Set(p); if (ocultar) n.add(k); else n.delete(k); return n; })}
-        onRestaurar={() => { setOcultas(new Set()); setColWidths({}); setOrdem([]); setCongeladas(0); setAutoFitKeys(new Set()); }} onFechar={() => setMenuColunas(false)} />}
+      {menuColunas && <ColunasDosItens colunas={colunasOrdenadas} ocultas={ocultas}
+        onAplicar={(keysVisiveis, ordemCompleta) => updCols((c) => ({
+          ...c,
+          order: ordemCompleta,
+          visible: keysVisiveis,
+          frozen: Math.min(c.frozen ?? 0, keysVisiveis.length),
+          autoFit: (c.autoFit ?? []).filter((k) => keysVisiveis.includes(k))
+        }))}
+        onRestaurar={() => updCols(() => ({}))} onFechar={() => setMenuColunas(false)} />}
       <span className="grp">
         <DicaDeAcao texto={recolhido ? "Abrir o painel" : "Recolher o painel"}>
           <button type="button" className="ib" data-testid="itens-recolher" aria-expanded={!recolhido} aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={onRecolher}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button>
@@ -176,7 +192,7 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
                 columns={visibleColumns}
                 referenceHeaders
                 selecaoSticky={false}
-                frozen={congeladas} onFreeze={setCongeladas}
+                frozen={congeladas} onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n, visibleColumns.length)) }))}
                 rows={sortedRows}
                 sort={sort ?? undefined}
                 onSort={onSort}
@@ -184,13 +200,21 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
                 onSelectClick={() => {}}
                 onToggle={() => {}}
                 onToggleAll={() => {}}
-                onResize={(k, w) => setColWidths((p) => ({ ...p, [k]: w }))}
-                onAutoFit={(k) => setAutoFitKeys((s) => {
-                  const n = new Set(s);
+                onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w }, autoFit: (c.autoFit ?? []).filter((x) => x !== k) }))}
+                onAutoFit={(k) => updCols((c) => {
+                  const n = new Set(c.autoFit ?? []);
                   if (n.has(k)) n.delete(k); else n.add(k);
-                  return n;
+                  const autoFit = [...n];
+                  return { ...c, autoFit: autoFit.length ? autoFit : undefined };
                 })}
-                onHide={(k) => setOcultas((p) => new Set(p).add(k))}
+                onHide={(k) => updCols((c) => {
+                  const keys = visibleColumns.map((x) => x.key);
+                  const idx = keys.indexOf(k);
+                  const fz = c.frozen ?? 0;
+                  const visible = keys.filter((x) => x !== k);
+                  const autoFit = (c.autoFit ?? []).filter((x) => x !== k);
+                  return { ...c, order: c.order ?? ordem, visible, frozen: idx >= 0 && idx < fz ? fz - 1 : fz, autoFit: autoFit.length ? autoFit : undefined };
+                })}
                 onFilter={(k) => setFiltrando(k)}
                 filteredKeys={new Set(Object.keys(filtros))}
                 autoFitKeys={autoFitKeys}

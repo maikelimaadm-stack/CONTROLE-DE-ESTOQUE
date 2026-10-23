@@ -15,7 +15,14 @@ export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, o
   const [sel, setSel] = React.useState<string | null>(null);
   const [qa, setQa] = React.useState(""); const [qu, setQu] = React.useState("");
   const [aplicarPadrao, setAplicarPadrao] = React.useState(false);
-  React.useEffect(() => { if (open) { setInUse(visible); setSel(null); setQa(""); setQu(""); setAplicarPadrao(false); } }, [open, visible]);
+  /** Só ao abrir: se depender de `visible` a cada render, o rascunho zera no meio da edição. */
+  const abriu = React.useRef(false);
+  React.useEffect(() => {
+    if (open && !abriu.current) {
+      setInUse(visible); setSel(null); setQa(""); setQu(""); setAplicarPadrao(false);
+    }
+    abriu.current = open;
+  }, [open, visible]);
   const label = (k: string) => columns.find((c) => c.key === k)?.label ?? k;
   const available = padrao.filter((k) => !inUse.includes(k));
   const match = (k: string, q: string) => !q || label(k).toLowerCase().includes(q.toLowerCase());
