@@ -33,11 +33,11 @@ export function CalendarioDePeriodo({ inicio, fim, onInicio, onFim, formato = "i
   return <CalendarioDoFiltro periodo aberto={aberto} onOpenChange={setAberto}>
     <div className={estilos.calendarios}>
       <section className={estilos.mes} aria-label="Data inicial">
-        <div className={estilos.rotulo}>Data inicial<span>{isoToBR(de) || "Selecione a data"}</span></div>
+        <div className={estilos.rotulo}>Data inicial:<span>{isoToBR(de) || "Selecione a data"}</span></div>
         <CalendarioDoSistema valor={de} inicial={base} intervalo={{ inicio: de, fim: ate }} escolher={(iso) => onInicio(formatar(iso, formato))} />
       </section>
       <section className={estilos.mes} aria-label="Data final">
-        <div className={estilos.rotulo}>Data final<span>{isoToBR(ate) || "Selecione a data"}</span></div>
+        <div className={estilos.rotulo}>Data final:<span>{isoToBR(ate) || "Selecione a data"}</span></div>
         <CalendarioDoSistema valor={ate} inicial={new Date(base.getFullYear(), base.getMonth() + 1, 1)} intervalo={{ inicio: de, fim: ate }} escolher={(iso) => onFim(formatar(iso, formato))} />
       </section>
     </div>
