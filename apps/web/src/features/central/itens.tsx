@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Copy, EyeOff, FileText, Grid3x3, Lock, MoreVertical, PanelLeft, Plus, Scaling, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
 import { cn, brl, num, dateBR } from "@/lib/utils";
-import { CHROME_ICONE_NA_CELULA, fonteDaCelula, medirTextos } from "@/lib/largura-coluna";
+import { CHROME_ICONE_NA_CELULA, fonteDaCelula, medirLarguraColuna } from "@/lib/largura-coluna";
 import { api } from "@/lib/api";
 import { EntradaNumero, Input } from "@/components/ui";
 import { B1Popover, MenuList } from "@/features/base1/ui";
@@ -512,12 +512,16 @@ export function ItensDaCentral({
     return out;
   };
 
-  const larguraPorConteudo = (k: ChaveColunaDoItem) => {
+  const larguraPorConteudo = (k: ChaveColunaDoItem, reservarIcone = false) => {
     const th = tabelaRef.current?.tHead?.rows[0]?.cells[colunasVisiveis.indexOf(k)] ?? null;
-    const base = medirTextos(textosDaColuna(k), fonteDaCelula(th));
-    // produto/armazém: lupa ou cadeado na célula
-    if (k === "produto" || k === "armazem") return Math.min(480, base + CHROME_ICONE_NA_CELULA);
-    return base;
+    const [rotulo, ...celulas] = textosDaColuna(k);
+    return medirLarguraColuna({
+      rotulo: rotulo ?? rotuloColuna(k),
+      textosCelulas: celulas,
+      fontCabecalho: fonteDaCelula(th),
+      comIconeEstado: reservarIcone || autoFitKeys.has(k),
+      chromeExtraCelula: k === "produto" || k === "armazem" ? CHROME_ICONE_NA_CELULA : 0
+    });
   };
 
   /** Grava largura no estado e no DOM (col/th/tabela) — mesma trava width=min=max do resize. */
@@ -544,7 +548,7 @@ export function ItensDaCentral({
       setAutoFitKeys((s) => { const n = new Set(s); n.delete(k); return n; });
       return;
     }
-    gravarLargura(k, larguraPorConteudo(k));
+    gravarLargura(k, larguraPorConteudo(k, true));
     setAutoFitKeys((s) => { const n = new Set(s); n.add(k); return n; });
   };
 

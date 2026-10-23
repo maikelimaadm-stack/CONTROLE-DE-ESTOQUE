@@ -2,7 +2,7 @@
 import * as React from "react";
 import { MoreVertical, ArrowUp, ArrowDown, Filter, Scaling, PanelLeft, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fonteDaCelula, medirTextos } from "@/lib/largura-coluna";
+import { fonteDaCelula, medirLarguraColuna } from "@/lib/largura-coluna";
 import { Spinner, Empty } from "@/components/ui";
 import { B1Popover, MenuList, MgCheck } from "./ui";
 import { selectClickOf, type SelectClick } from "./cards";
@@ -69,16 +69,21 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   }, [columns, frozenCount, measure]);
   React.useEffect(() => { if (scrollToId) trs.current[scrollToId]?.scrollIntoView({ block: "center" }); }, [scrollToId, rows.length]);
   const cellText = (c: Base1Column, r: Row) => c.text ? c.text(r) : String(r[c.key] ?? "");
-  /** Mede pelo texto do rótulo + células (canvas) — estável; não usa scrollWidth da caixa. */
-  const larguraPorConteudo = (c: Base1Column) => {
+  /** Cabeçalho e células com chrome separado — evita coluna “longe” dos dados. */
+  const larguraPorConteudo = (c: Base1Column, reservarIcone = false) => {
     const th = ths.current[c.key];
-    const textos = [c.label, ...rows.map((r) => cellText(c, r)).filter((t) => t && t !== "–" && t !== "—")];
-    return medirTextos(textos, fonteDaCelula(th));
+    const celulas = rows.map((r) => cellText(c, r)).filter((t) => t && t !== "–" && t !== "—");
+    return medirLarguraColuna({
+      rotulo: c.label,
+      textosCelulas: celulas,
+      fontCabecalho: fonteDaCelula(th),
+      comIconeEstado: reservarIcone || Boolean(autoFitKeys?.has(c.key) || filteredKeys?.has(c.key))
+    });
   };
   /** Menu: liga = mede + marca estado; desliga = só tira o estado (largura fica). */
   const aplicarAutoAjuste = (c: Base1Column, jaLigado: boolean) => {
     if (jaLigado) { onAutoFit?.(c.key); return; }
-    onResize?.(c.key, larguraPorConteudo(c));
+    onResize?.(c.key, larguraPorConteudo(c, true));
     onAutoFit?.(c.key);
   };
   /** Duplo clique na alça: só ajusta a largura uma vez — NÃO liga o modo auto ajustar. */
