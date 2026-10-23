@@ -1265,13 +1265,14 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   await expect(contagem).toHaveText("(2)");
   await expect(pontoDeErro, "sem item pendente, sem ponto").toHaveCount(0);
 
-  // "MOSTRAR GRADE E FORMULÁRIO" mora em Configurar colunas (o 3º botão saiu da barra)
+  // "MOSTRAR GRADE E FORMULÁRIO" mora em Configurar colunas; decisão 340 — aplica no Pronto
   await page.getByTestId("central-vendas-configurar").click();
-  const ambos = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar grade e formulário" });
+  const cfgAmbos = page.getByTestId("central-vendas-configuracao");
+  const ambos = cfgAmbos.getByRole("checkbox", { name: "Mostrar grade e formulário" });
   await expect(ambos).toHaveAttribute("aria-checked", "false");
   await ambos.click();
   await expect(ambos).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("Escape");
+  await cfgAmbos.getByRole("button", { name: "Pronto" }).click();
   await expect(page.getByTestId("central-vendas-grade"), "grade e formulário juntos").toBeVisible();
   await expect(page.getByTestId("central-vendas-item-form")).toBeVisible();
   await barra.getByRole("button", { name: "Grade", exact: true }).click();

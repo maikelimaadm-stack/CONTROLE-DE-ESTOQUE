@@ -27,7 +27,22 @@ const DIALOG_W: Record<OverlaySize, string> = { sm: "max-w-md", md: "max-w-2xl",
 const DEFAULT_PROFILE: Record<OverlaySize, OverlayProfile> = { sm: "compact", md: "content", lg: "large", xl: "workspace" };
 const DRAWER_W: Record<OverlaySize, string> = { sm: "w-[360px]", md: "w-[480px]", lg: "w-[640px]", xl: "w-[860px]" };
 
-interface OverlayBase { open: boolean; onOpenChange: (open: boolean) => void; title: string; /** descrição visível sob o título (também é a descrição acessível); sem ela o título faz o papel */ description?: React.ReactNode; children?: React.ReactNode; footer?: React.ReactNode; size?: OverlaySize; /** perfil de altura (padrão derivado de `size`) */ profile?: OverlayProfile; /** bloqueia ESC, clique fora e o botão fechar (operação em curso / etapa crítica) */ preventClose?: boolean; hideClose?: boolean; className?: string; bodyClassName?: string; testId?: string }
+interface OverlayBase {
+  open: boolean; onOpenChange: (open: boolean) => void; title: string;
+  /** descrição visível sob o título (também é a descrição acessível); sem ela o título faz o papel */
+  description?: React.ReactNode; children?: React.ReactNode; footer?: React.ReactNode;
+  size?: OverlaySize; /** perfil de altura (padrão derivado de `size`) */ profile?: OverlayProfile;
+  /** bloqueia ESC, clique fora e o botão fechar (operação em curso / etapa crítica) */ preventClose?: boolean;
+  /**
+   * Só o botão Fechar (e ações que chamam `onOpenChange(false)` de propósito) dispensam o diálogo —
+   * ESC e clique fora NÃO fecham. O `preventClose` continua mais forte (também trava o Fechar).
+   */
+  fecharSoPeloBotao?: boolean;
+  hideClose?: boolean;
+  /** Conteúdo à esquerda do botão Fechar no cabeçalho (ex.: Restaurar padrão). */
+  antesDoFechar?: React.ReactNode;
+  className?: string; bodyClassName?: string; testId?: string;
+}
 
 /**
  * Devolve o foco a quem abriu o overlay. O Radix só refoca o seu próprio `Trigger`; aqui os overlays abrem por estado
@@ -40,21 +55,25 @@ function useRestoreFocus() {
   return { onOpenAutoFocus, onCloseAutoFocus };
 }
 
-function Header({ title, description, hideClose, preventClose, kind }: { title: string; description?: React.ReactNode; hideClose?: boolean; preventClose?: boolean; kind: "dialog" | "drawer" }) {
+function Header({ title, description, hideClose, preventClose, antesDoFechar, kind }: { title: string; description?: React.ReactNode; hideClose?: boolean; preventClose?: boolean; antesDoFechar?: React.ReactNode; kind: "dialog" | "drawer" }) {
   return <div className={`mg-${kind}__header`}>
     <div className="min-w-0"><DialogP.Title className={`mg-${kind}__title`}>{title}</DialogP.Title>{description ? <DialogP.Description className={`mg-${kind}__description`}>{description}</DialogP.Description> : <DialogP.Description className="sr-only">{title}</DialogP.Description>}</div>
-    {!hideClose && <DialogP.Close className="tb-btn tb-btn-icon tb-btn-sm shrink-0" aria-label={COPY.fechar} disabled={preventClose} data-testid={`${kind}-close`}><X /></DialogP.Close>}
+    <div className="flex shrink-0 items-center gap-1">
+      {antesDoFechar}
+      {!hideClose && <DialogP.Close className="tb-btn tb-btn-icon tb-btn-sm shrink-0" aria-label={COPY.fechar} disabled={preventClose} data-testid={`${kind}-close`}><X /></DialogP.Close>}
+    </div>
   </div>;
 }
 
-export function Dialog({ open, onOpenChange, title, description, children, footer, size = "md", profile, preventClose, hideClose, className, bodyClassName, testId }: OverlayBase) {
+export function Dialog({ open, onOpenChange, title, description, children, footer, size = "md", profile, preventClose, fecharSoPeloBotao, hideClose, antesDoFechar, className, bodyClassName, testId }: OverlayBase) {
   const prof = profile ?? DEFAULT_PROFILE[size];
-  const guard = (e: Event) => { if (preventClose) e.preventDefault(); };
+  const bloquearDismiss = Boolean(preventClose || fecharSoPeloBotao);
+  const guard = (e: Event) => { if (bloquearDismiss) e.preventDefault(); };
   const focus = useRestoreFocus();
   return <DialogP.Root open={open} onOpenChange={(o) => { if (!o && preventClose) return; onOpenChange(o); }}><DialogP.Portal>
     <DialogP.Overlay className="mg-overlay" />
     <DialogP.Content className={cn("mg-dialog", DIALOG_W[size], className)} data-size={size} data-profile={prof} data-testid={testId ?? "dialog"} onEscapeKeyDown={guard} onPointerDownOutside={guard} onInteractOutside={guard} {...focus}>
-      <Header kind="dialog" title={title} description={description} hideClose={hideClose} preventClose={preventClose} />
+      <Header kind="dialog" title={title} description={description} hideClose={hideClose} preventClose={preventClose} antesDoFechar={antesDoFechar} />
       <div className={cn("mg-dialog__body", bodyClassName)}>{children}</div>
       {footer && <div className="mg-dialog__footer">{footer}</div>}
     </DialogP.Content>
