@@ -58,6 +58,14 @@ async function escolherEm(page: Page, raiz: Locator, rotulo: string, nome: strin
   await painel.getByRole("option", { name: literal(nome.slice(0, 20)) }).first().click();
 }
 
+/** RefSelect na célula da tabelinha (sem label CampoDaCentral). */
+async function escolherNaCelulaRef(page: Page, celula: Locator, nome: string) {
+  await celula.locator("button").first().click();
+  const painel = page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last();
+  await painel.getByPlaceholder(/^Pesquisar/).first().fill(nome.slice(0, 20));
+  await painel.getByRole("option", { name: literal(nome.slice(0, 20)) }).first().click();
+}
+
 /** Pesquisa do motor ancorada à célula (produto ou local de estoque) da linha. */
 async function escolherNaCelula(page: Page, celula: Locator, nome: string) {
   await celula.click();
@@ -176,8 +184,8 @@ test("R01-2 — a recusa do rateio ABRE a aba Rateio e classificação, com o pa
   let rateio = await abaDoRateio(page);
   const nat = rateio.getByTestId("compras-rateio-natureza-linha-0");
   const cen = rateio.getByTestId("compras-rateio-centro-linha-0");
-  await escolherEm(page, nat, "Natureza Financeira", c.natureza.label);
-  await escolherEm(page, cen, "Centro de Resultado", c.centro.label);
+  await escolherNaCelulaRef(page, nat, c.natureza.label);
+  await escolherNaCelulaRef(page, cen, c.centro.label);
   /* % ≠ 100 promove a Natureza para rateio por valor (produto cruzado com o centro a 100%). */
   await nat.getByTestId("compras-rateio-natureza-linha-0-percentual").fill("90");
   await abrirAba(page, "Financeiro");
@@ -227,8 +235,8 @@ test("R01-3 — o corpo do POST com fiscais e rateio por valor pela aba é BYTE 
   await rateio.getByTestId("compras-rateio-natureza-linha-1-remover").click();
   const nat = rateio.getByTestId("compras-rateio-natureza-linha-0");
   const cen = rateio.getByTestId("compras-rateio-centro-linha-0");
-  await escolherEm(page, nat, "Natureza Financeira", c.natureza.label);
-  await escolherEm(page, cen, "Centro de Resultado", c.centro.label);
+  await escolherNaCelulaRef(page, nat, c.natureza.label);
+  await escolherNaCelulaRef(page, cen, c.centro.label);
   await nat.getByTestId("compras-rateio-natureza-linha-0-percentual").fill("100");
   await cen.getByTestId("compras-rateio-centro-linha-0-percentual").fill("100");
 

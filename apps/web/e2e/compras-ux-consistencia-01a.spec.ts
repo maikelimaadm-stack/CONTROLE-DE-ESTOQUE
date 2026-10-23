@@ -152,8 +152,8 @@ test("UX1-1 — compra ABERTA com plano (entrada + 2 parcelas + obs): consultar 
   await expect(gradeConsulta.getByTestId("compras-consulta-parcela").nth(1)).toContainText("200,00");
   await expect(gradeConsulta.getByTestId("compras-consulta-parcela").nth(1)).toContainText("parcela 1 UX1");
   await expect(gradeConsulta.getByTestId("compras-consulta-parcela").nth(2)).toContainText("parcela 2 UX1");
-  // Cronograma em CampoLeitura: 3× "Vencimento" nas linhas; sem o campo solto do cabeçalho (data_vencimento).
-  await expect(gradeConsulta.locator('[data-campo="Vencimento"]')).toHaveCount(3);
+  // Cronograma em tabelinha (cabeçalhos vencimento/valor/observação); sem o campo solto do cabeçalho.
+  await expect(gradeConsulta).toContainText(/vencimento/i);
   await expect(page.getByTestId(`${P}-painel`).locator('[data-campo="data_vencimento"]')).toHaveCount(0);
   await abrirAbaConsulta(page, "Totais");
   await expect(page.getByTestId("compras-consulta-total")).toContainText("500,00");
