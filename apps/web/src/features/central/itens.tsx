@@ -526,10 +526,10 @@ export function ItensDaCentral({
         <button type="button" aria-pressed={visao === "formulario"} aria-label="Formulário" data-dica="Formulário" data-visao="formulario" onClick={() => escolherVisao("formulario")}><FileText aria-hidden /></button>
       </div>
       {configDoFormulario
-        ? <ConfigurarColunas<ChaveCampoDoItem> prefixoTestid={prefixoTestid} titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem"
+        ? <ConfigurarColunas<ChaveCampoDoItem> prefixoTestid={prefixoTestid} titulo="Visualização do formulário"
             rotulos={Object.fromEntries(chavesCampos.map((k) => [k, rotuloCampo(k)])) as Record<ChaveCampoDoItem, string>}
             lista={campos} onLista={setCampos} onRestaurar={() => setCampos(camposPadrao())} />
-        : <ConfigurarColunas<ChaveColunaDoItem> prefixoTestid={prefixoTestid} titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem"
+        : <ConfigurarColunas<ChaveColunaDoItem> prefixoTestid={prefixoTestid} titulo="Colunas da grade"
             rotulos={Object.fromEntries(chavesColunas.map((k) => [k, rotuloColuna(k)])) as Record<ChaveColunaDoItem, string>}
             lista={colunas} onLista={setColunas} onRestaurar={() => setColunas(colunasPadrao())} />}
     </div>

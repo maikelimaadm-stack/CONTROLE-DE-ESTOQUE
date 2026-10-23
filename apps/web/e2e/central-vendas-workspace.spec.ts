@@ -928,14 +928,20 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   const cfg = page.getByTestId("central-vendas-configuracao");
   await expect(cfg).toBeVisible();
   await expect(cfg).toContainText("Colunas da grade");
-  // decisão 340/341: duas listas; sem "Mostrar grade e formulário"; grade só muda no Pronto
+  // decisão 340–342: duas listas + setas no meio + busca cfgb; sem subtítulo; grade só no Pronto
   await expect(cfg.getByText("Disponíveis", { exact: true })).toBeVisible();
   await expect(cfg.getByText("Na tabela", { exact: true })).toBeVisible();
+  await expect(cfg.getByText("Colunas visíveis e ordem")).toHaveCount(0);
   await expect(cfg.getByRole("checkbox", { name: "Mostrar grade e formulário" })).toHaveCount(0);
+  await expect(cfg.getByRole("button", { name: "Usar todas" })).toBeVisible();
+  await expect(cfg.getByRole("button", { name: "Remover todas (mantém a primeira)" })).toBeVisible();
+  await expect(cfg.getByLabel("Procurar em disponíveis")).toBeVisible();
+  await expect(cfg.getByLabel("Procurar na tabela")).toBeVisible();
   await expect(cfg.getByTestId("central-vendas-na-tabela").locator("[data-coluna]")).toHaveCount(ROTULOS_DA_GRADE.length);
 
-  // esconder Quantidade no rascunho e aplicar no Pronto
+  // esconder Quantidade (seleciona + seta) e aplicar no Pronto
   await cfg.getByTestId("central-vendas-na-tabela").getByLabel("Quantidade", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Remover coluna selecionada" }).click();
   await expect(cfg.getByTestId("central-vendas-disponiveis").getByLabel("Quantidade", { exact: true })).toBeVisible();
   await expect.poll(() => cabecalhos(page), "rascunho não muda a grade").toEqual(ROTULOS_DA_GRADE);
   await cfg.getByRole("button", { name: "Pronto" }).click();
@@ -962,6 +968,7 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   // Fechar descarta: abre, muda, fecha sem Pronto — grade intacta
   await configurar.click();
   await cfg.getByTestId("central-vendas-na-tabela").getByLabel("Quantidade", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Remover coluna selecionada" }).click();
   await cfg.getByTestId("dialog-close").click();
   await expect(cfg).toHaveCount(0);
   await expect(configurar, "Fechar devolve o foco ao botão").toBeFocused();
@@ -971,14 +978,17 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
   await configurar.click();
   await expect(cfg).toContainText("Visualização do formulário");
+  await expect(cfg.getByText("Campos visíveis e ordem")).toHaveCount(0);
   const form = page.getByTestId("central-vendas-item-form");
   const desconto = form.getByLabel("Desconto", { exact: true });
   await expect(desconto).toBeVisible();
   await cfg.getByTestId("central-vendas-na-tabela").getByLabel("Desconto", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Remover coluna selecionada" }).click();
   await cfg.getByRole("button", { name: "Pronto" }).click();
   await expect(desconto).toHaveCount(0);
   await configurar.click();
   await cfg.getByTestId("central-vendas-disponiveis").getByLabel("Desconto", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Usar coluna selecionada" }).click();
   await cfg.getByRole("button", { name: "Pronto" }).click();
   await expect(desconto).toBeVisible();
 
@@ -986,6 +996,7 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   await page.getByRole("button", { name: "Grade", exact: true }).click();
   await configurar.click();
   await cfg.getByTestId("central-vendas-na-tabela").getByLabel("Quantidade", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Remover coluna selecionada" }).click();
   await cfg.getByRole("button", { name: "Pronto" }).click();
   expect(await chavesDoNavegador(page), "nenhuma chave nova no navegador: a configuração é estado da tela").toEqual(chavesAntes);
   const post = await capturarPost(page);
@@ -1323,7 +1334,9 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
   await configurar.click();
   const cfgEstoque = page.getByTestId("central-vendas-configuracao");
   await cfgEstoque.getByTestId("central-vendas-na-tabela").getByLabel("Estoque", { exact: true }).click();
+  await cfgEstoque.getByRole("button", { name: "Remover coluna selecionada" }).click();
   await cfgEstoque.getByTestId("central-vendas-disponiveis").getByLabel("Estoque", { exact: true }).click();
+  await cfgEstoque.getByRole("button", { name: "Usar coluna selecionada" }).click();
   await cfgEstoque.getByRole("button", { name: "Pronto" }).click();
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
   await page.getByRole("button", { name: "Grade", exact: true }).click();

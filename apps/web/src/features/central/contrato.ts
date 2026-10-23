@@ -466,7 +466,7 @@ export interface PropsDosItensSalvos {
 }
 export interface PropsDeConfigurarColunas<K extends string> {
   prefixoTestid: string;
-  titulo: string; subtitulo: string; rotulos: Record<K, string>; lista: readonly Preferencia<K>[];
+  titulo: string; rotulos: Record<K, string>; lista: readonly Preferencia<K>[];
   onLista: (l: Preferencia<K>[]) => void; onRestaurar: () => void;
 }
 

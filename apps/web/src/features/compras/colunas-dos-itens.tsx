@@ -1,12 +1,12 @@
 "use client";
 import * as React from "react";
-import { Check, GripVertical, RotateCcw, Search, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, GripVertical, RotateCcw, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog } from "@/components/ui";
 
 /**
- * Duas listas: clique/arraste só mudam o RASCUNHO. A grade só muda no Pronto (decisão 340).
- * Fechar (X) descarta; ESC/fora não fecham; Restaurar fica antes do Fechar no cabeçalho.
+ * Duas listas com busca cfgb e setas no meio (decisão 342). Rascunho até Pronto (340).
+ * Fechar descarta; ESC/fora não fecham; Restaurar antes do Fechar.
  */
 export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestaurar, onFechar, titulo = "Colunas dos itens", className }: {
   colunas: { key: string; label: string }[]; ocultas: Set<string>;
@@ -14,17 +14,20 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
   onRestaurar: () => void; onFechar: () => void; titulo?: string; className?: string;
 }) {
   const ordemInicial = React.useMemo(() => colunas.map((c) => c.key), [colunas]);
-  const [busca, setBusca] = React.useState("");
+  const [qa, setQa] = React.useState("");
+  const [qu, setQu] = React.useState("");
+  const [sel, setSel] = React.useState<string | null>(null);
   const [arrastada, setArrastada] = React.useState<string | null>(null);
   const [alvo, setAlvo] = React.useState<string | null>(null);
   const [draftOcultas, setDraftOcultas] = React.useState(() => new Set(ocultas));
   const [draftOrdem, setDraftOrdem] = React.useState<string[]>(() => ordemInicial);
   const [aplicarPadrao, setAplicarPadrao] = React.useState(false);
-  React.useEffect(() => { setDraftOcultas(new Set(ocultas)); setDraftOrdem(ordemInicial); setBusca(""); setAplicarPadrao(false); }, [ocultas, ordemInicial]);
+  React.useEffect(() => { setDraftOcultas(new Set(ocultas)); setDraftOrdem(ordemInicial); setQa(""); setQu(""); setSel(null); setAplicarPadrao(false); }, [ocultas, ordemInicial]);
 
   const porChave = React.useMemo(() => new Map(colunas.map((c) => [c.key, c])), [colunas]);
   const livres = draftOrdem.filter((k) => draftOcultas.has(k)).map((k) => porChave.get(k)!).filter(Boolean);
   const usadas = draftOrdem.filter((k) => !draftOcultas.has(k)).map((k) => porChave.get(k)!).filter(Boolean);
+  const filtra = (itens: typeof colunas, q: string) => itens.filter((c) => !q || c.label.toLowerCase().includes(q.toLowerCase()));
 
   const mover = (key: string, ocultar: boolean, antes?: string) => {
     if (!porChave.has(key)) return;
@@ -46,6 +49,17 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
     setArrastada(null); setAlvo(null);
   };
 
+  const usarTodas = () => { setAplicarPadrao(false); setDraftOcultas(new Set()); setSel(null); };
+  const removerTodas = () => {
+    if (usadas.length <= 1) return;
+    setAplicarPadrao(false);
+    const manter = usadas[0]!.key;
+    setDraftOcultas(new Set(draftOrdem.filter((k) => k !== manter)));
+    setSel(null);
+  };
+  const usarSel = () => { if (sel && draftOcultas.has(sel)) mover(sel, false); };
+  const removerSel = () => { if (sel && !draftOcultas.has(sel)) mover(sel, true); };
+
   const salvar = () => {
     if (aplicarPadrao) { onRestaurar(); onFechar(); return; }
     onOrdenar(draftOrdem);
@@ -59,37 +73,49 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
   const restaurarRascunho = () => {
     setDraftOcultas(new Set());
     setDraftOrdem(ordemInicial);
+    setSel(null);
     setAplicarPadrao(true);
   };
 
-  const lista = (itens: typeof colunas, on: boolean, vazio: string) => <div className="dbox-l" data-testid={on ? "colunas-na-tabela" : "colunas-disponiveis"}
-    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => soltar(e, !on)}>
-    {itens.filter((c) => c.label.toLowerCase().includes(busca.toLowerCase())).map((c) => {
-      const travada = on && usadas.length <= 1;
-      return <div key={c.key} role="button" tabIndex={0} draggable data-coluna={c.key} aria-label={c.label} aria-disabled={travada}
-        className={cn("dlin", on && "on", arrastada === c.key && "indo", alvo === c.key && arrastada !== c.key && "mira")}
-        title={travada ? "Ao menos uma coluna fica na tabela" : on ? "Clique para ocultar · arraste para reordenar" : "Clique para exibir · arraste para a tabela"}
-        onDragStart={(e) => { e.dataTransfer.setData("text/plain", c.key); e.dataTransfer.effectAllowed = "move"; setArrastada(c.key); }}
-        onDragEnd={() => { setArrastada(null); setAlvo(null); }}
-        onDragOver={(e) => { e.preventDefault(); setAlvo(c.key); }} onDrop={(e) => soltar(e, !on, c.key)}
-        onClick={() => !travada && mover(c.key, on)}
-        onKeyDown={(e) => {
-          if ((e.key === "Enter" || e.key === " ") && !travada) { e.preventDefault(); mover(c.key, on); }
-          if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-            e.preventDefault();
-            setAplicarPadrao(false);
-            setDraftOrdem((keys) => {
-              const i = keys.indexOf(c.key), j = i + (e.key === "ArrowUp" ? -1 : 1);
-              if (j < 0 || j >= keys.length) return keys;
-              const n = [...keys]; [n[i], n[j]] = [n[j]!, n[i]!]; return n;
-            });
-          }
-        }}>
-        <span className="dlin-l">{c.label}</span><span className="gripe"><GripVertical size={13} /></span>
-      </div>;
-    })}
-    {!itens.some((c) => c.label.toLowerCase().includes(busca.toLowerCase())) && <span className="dvaz">{vazio}</span>}
-  </div>;
+  const lista = (itens: typeof colunas, on: boolean, q: string, vazio: string) => {
+    const vistas = filtra(itens, q);
+    return <div className="dbox-l" data-testid={on ? "colunas-na-tabela" : "colunas-disponiveis"}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => soltar(e, !on)}>
+      {vistas.map((c) => {
+        const travada = on && usadas.length <= 1;
+        return <div key={c.key} role="button" tabIndex={0} draggable data-coluna={c.key} aria-label={c.label} aria-disabled={travada}
+          className={cn("dlin", on && "on", sel === c.key && "sel", arrastada === c.key && "indo", alvo === c.key && arrastada !== c.key && "mira")}
+          title={travada ? "Ao menos uma coluna fica na tabela" : on ? "Clique para selecionar · duplo clique para ocultar · arraste para reordenar" : "Clique para selecionar · duplo clique para usar · arraste para a tabela"}
+          onDragStart={(e) => { e.dataTransfer.setData("text/plain", c.key); e.dataTransfer.effectAllowed = "move"; setArrastada(c.key); }}
+          onDragEnd={() => { setArrastada(null); setAlvo(null); }}
+          onDragOver={(e) => { e.preventDefault(); setAlvo(c.key); }} onDrop={(e) => soltar(e, !on, c.key)}
+          onClick={() => setSel(c.key)}
+          onDoubleClick={() => !travada && mover(c.key, on)}
+          onKeyDown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && !travada) { e.preventDefault(); mover(c.key, on); }
+            if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+              e.preventDefault();
+              setAplicarPadrao(false);
+              setDraftOrdem((keys) => {
+                const i = keys.indexOf(c.key), j = i + (e.key === "ArrowUp" ? -1 : 1);
+                if (j < 0 || j >= keys.length) return keys;
+                const n = [...keys]; [n[i], n[j]] = [n[j]!, n[i]!]; return n;
+              });
+            }
+          }}>
+          <span className="dlin-l">{c.label}</span><span className="gripe"><GripVertical size={13} /></span>
+        </div>;
+      })}
+      {vistas.length === 0 && <span className="dvaz">{vazio}</span>}
+    </div>;
+  };
+
+  const busca = (valor: string, onChange: (v: string) => void, rotulo: string) => (
+    <label className="cfgb cfgb-lista"><Search size={14} aria-hidden />
+      <input value={valor} onChange={(e) => onChange(e.target.value)} placeholder="Procurar coluna" aria-label={rotulo} />
+      {valor && <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => onChange("")}><X size={12} /></button>}
+    </label>
+  );
 
   return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title={titulo} size="lg" profile="large"
     className={cn("b1-portal-compras", className)}
@@ -99,12 +125,23 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
       <button type="button" className="tb-btn tb-btn-icon" aria-label="Pronto" title="Pronto" onClick={salvar}><Check className="h-4 w-4" /></button>
     </div>}>
     <div className="b1ref">
-      <label className="cfgb"><Search size={14} /><input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar coluna nas duas listas…" aria-label="Procurar coluna" />
-        {busca && <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => setBusca("")}><X size={12} /></button>}
-      </label>
       <div className="dcol" style={{ minHeight: 320 }}>
-        <div className="dbox"><span className="dbox-h">Disponíveis<span className="bd t-plain">{livres.length}</span></span>{lista(livres, false, busca ? "Nenhuma coluna com esse texto." : "Todas as colunas estão na tabela.")}</div>
-        <div className="dbox"><span className="dbox-h">Na tabela<span className="bd t-positive">{usadas.length}</span></span>{lista(usadas, true, "Nenhuma coluna com esse texto.")}</div>
+        <div className="dbox">
+          {busca(qa, setQa, "Procurar em disponíveis")}
+          <span className="dbox-h">Disponíveis<span className="bd t-plain">{livres.length}</span></span>
+          {lista(livres, false, qa, qa ? "Nenhuma coluna com esse texto." : "Todas as colunas estão na tabela.")}
+        </div>
+        <div className="dmid">
+          <button type="button" className="tb-btn tb-btn-icon" title="Usar todas" aria-label="Usar todas" onClick={usarTodas}><ChevronsRight className="h-4 w-4" /></button>
+          <button type="button" className="tb-btn tb-btn-icon" title="Usar coluna selecionada" aria-label="Usar coluna selecionada" onClick={usarSel}><ChevronRight className="h-4 w-4" /></button>
+          <button type="button" className="tb-btn tb-btn-icon" title="Remover coluna selecionada" aria-label="Remover coluna selecionada" onClick={removerSel}><ChevronLeft className="h-4 w-4" /></button>
+          <button type="button" className="tb-btn tb-btn-icon" title="Remover todas (mantém a primeira)" aria-label="Remover todas (mantém a primeira)" onClick={removerTodas}><ChevronsLeft className="h-4 w-4" /></button>
+        </div>
+        <div className="dbox">
+          {busca(qu, setQu, "Procurar na tabela")}
+          <span className="dbox-h">Na tabela<span className="bd t-positive">{usadas.length}</span></span>
+          {lista(usadas, true, qu, "Nenhuma coluna com esse texto.")}
+        </div>
       </div>
     </div>
   </Dialog>;

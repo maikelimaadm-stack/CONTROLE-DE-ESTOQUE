@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { Check, Columns3, GripVertical, RotateCcw, Search, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Columns3, GripVertical, RotateCcw, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog } from "@/components/ui";
 import grade from "./grade.module.css";
@@ -10,15 +10,16 @@ import type { Preferencia, PropsDeConfigurarColunas } from "./contrato";
 export type { Preferencia, PropsDeConfigurarColunas } from "./contrato";
 
 /**
- * Configurar colunas/campos do lançamento — mesmo diálogo da tabela principal (decisão 340):
- * Disponíveis × Na tabela, rascunho até Pronto, Restaurar antes do Fechar, ESC/fora não fecham.
- * Visão Grade|Formulário é só o segmento da barra (decisão 341: sem "os dois juntos").
+ * Configurar colunas/campos do lançamento — diálogo Disponíveis × Na tabela (decisões 340–342):
+ * busca cfgb em cada lista, setas no meio, arraste, rascunho até Pronto; sem subtítulo.
  */
-export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, subtitulo, rotulos, lista, onLista, onRestaurar }: PropsDeConfigurarColunas<K>) {
+export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, rotulos, lista, onLista, onRestaurar }: PropsDeConfigurarColunas<K>) {
   const [aberta, setAberta] = React.useState(false);
   const ordemInicial = React.useMemo(() => lista.map((c) => c.chave), [lista]);
   const ocultasIniciais = React.useMemo(() => new Set(lista.filter((c) => !c.visivel).map((c) => c.chave)), [lista]);
-  const [busca, setBusca] = React.useState("");
+  const [qa, setQa] = React.useState("");
+  const [qu, setQu] = React.useState("");
+  const [sel, setSel] = React.useState<K | null>(null);
   const [arrastada, setArrastada] = React.useState<K | null>(null);
   const [alvo, setAlvo] = React.useState<K | null>(null);
   const [draftOrdem, setDraftOrdem] = React.useState<K[]>(() => ordemInicial);
@@ -29,15 +30,15 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, sub
     if (!aberta) return;
     setDraftOrdem(ordemInicial);
     setDraftOcultas(new Set(ocultasIniciais));
-    setBusca("");
+    setQa(""); setQu(""); setSel(null);
     setAplicarPadrao(false);
-    setArrastada(null);
-    setAlvo(null);
+    setArrastada(null); setAlvo(null);
   }, [aberta, ordemInicial, ocultasIniciais]);
 
   const itens = draftOrdem.map((chave) => ({ chave, label: rotulos[chave] ?? chave }));
   const livres = itens.filter((c) => draftOcultas.has(c.chave));
   const usadas = itens.filter((c) => !draftOcultas.has(c.chave));
+  const filtra = (linhas: typeof itens, q: string) => linhas.filter((c) => !q || c.label.toLowerCase().includes(q.toLowerCase()));
 
   const mover = (chave: K, ocultar: boolean, antes?: K) => {
     if (ocultar && !draftOcultas.has(chave) && usadas.length <= 1) return;
@@ -59,55 +60,75 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, sub
     setArrastada(null); setAlvo(null);
   };
 
+  const usarTodas = () => { setAplicarPadrao(false); setDraftOcultas(new Set()); setSel(null); };
+  const removerTodas = () => {
+    if (usadas.length <= 1) return;
+    setAplicarPadrao(false);
+    const manter = usadas[0]!.chave;
+    setDraftOcultas(new Set(draftOrdem.filter((k) => k !== manter)));
+    setSel(null);
+  };
+  const usarSel = () => { if (sel && draftOcultas.has(sel)) mover(sel, false); };
+  const removerSel = () => { if (sel && !draftOcultas.has(sel)) mover(sel, true); };
+
   const restaurarRascunho = () => {
     setDraftOcultas(new Set());
     setDraftOrdem(ordemInicial);
+    setSel(null);
     setAplicarPadrao(true);
   };
 
   const salvar = () => {
     if (aplicarPadrao) onRestaurar();
-    else {
-      const nova: Preferencia<K>[] = draftOrdem.map((chave) => ({ chave, visivel: !draftOcultas.has(chave) }));
-      onLista(nova);
-    }
+    else onLista(draftOrdem.map((chave) => ({ chave, visivel: !draftOcultas.has(chave) })));
     setAberta(false);
   };
 
-  const listaUi = (linhas: typeof itens, on: boolean, vazio: string) => <div className="dbox-l" role="list" data-testid={on ? `${prefixoTestid}-na-tabela` : `${prefixoTestid}-disponiveis`}
-    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => soltar(e, !on)}>
-    {linhas.filter((c) => c.label.toLowerCase().includes(busca.toLowerCase())).map((c) => {
-      const travada = on && usadas.length <= 1;
-      return <div key={c.chave} role="listitem" tabIndex={0} draggable data-coluna={c.chave}
-        aria-label={c.label}
-        aria-checked={!draftOcultas.has(c.chave)}
-        className={cn("dlin", on && "on", arrastada === c.chave && "indo", alvo === c.chave && arrastada !== c.chave && "mira")}
-        title={travada ? "Ao menos uma coluna fica na tabela" : on ? "Clique para ocultar · arraste para reordenar" : "Clique para exibir · arraste para a tabela"}
-        onDragStart={(e) => { e.dataTransfer.setData("text/plain", c.chave); e.dataTransfer.effectAllowed = "move"; setArrastada(c.chave); }}
-        onDragEnd={() => { setArrastada(null); setAlvo(null); }}
-        onDragOver={(e) => { e.preventDefault(); setAlvo(c.chave); }} onDrop={(e) => soltar(e, !on, c.chave)}
-        onClick={() => !travada && mover(c.chave, on)}
-        onKeyDown={(e) => {
-          if ((e.key === "Enter" || e.key === " ") && !travada) { e.preventDefault(); mover(c.chave, on); }
-          if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-            e.preventDefault();
-            setAplicarPadrao(false);
-            setDraftOrdem((keys) => {
-              const i = keys.indexOf(c.chave), j = i + (e.key === "ArrowUp" ? -1 : 1);
-              if (j < 0 || j >= keys.length) return keys;
-              const n = [...keys]; [n[i], n[j]] = [n[j]!, n[i]!]; return n;
-            });
-          }
-        }}>
-        <span className="dlin-l">{c.label}</span><span className="gripe"><GripVertical size={13} /></span>
-      </div>;
-    })}
-    {!linhas.some((c) => c.label.toLowerCase().includes(busca.toLowerCase())) && <span className="dvaz">{vazio}</span>}
-  </div>;
+  const listaUi = (linhas: typeof itens, on: boolean, q: string, vazio: string) => {
+    const vistas = filtra(linhas, q);
+    return <div className="dbox-l" role="list" data-testid={on ? `${prefixoTestid}-na-tabela` : `${prefixoTestid}-disponiveis`}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => soltar(e, !on)}>
+      {vistas.map((c) => {
+        const travada = on && usadas.length <= 1;
+        return <div key={c.chave} role="listitem" tabIndex={0} draggable data-coluna={c.chave}
+          aria-label={c.label}
+          aria-checked={!draftOcultas.has(c.chave)}
+          className={cn("dlin", on && "on", sel === c.chave && "sel", arrastada === c.chave && "indo", alvo === c.chave && arrastada !== c.chave && "mira")}
+          title={travada ? "Ao menos uma coluna fica na tabela" : on ? "Clique para selecionar · duplo clique para ocultar · arraste para reordenar" : "Clique para selecionar · duplo clique para usar · arraste para a tabela"}
+          onDragStart={(e) => { e.dataTransfer.setData("text/plain", c.chave); e.dataTransfer.effectAllowed = "move"; setArrastada(c.chave); }}
+          onDragEnd={() => { setArrastada(null); setAlvo(null); }}
+          onDragOver={(e) => { e.preventDefault(); setAlvo(c.chave); }} onDrop={(e) => soltar(e, !on, c.chave)}
+          onClick={() => setSel(c.chave)}
+          onDoubleClick={() => !travada && mover(c.chave, on)}
+          onKeyDown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && !travada) { e.preventDefault(); mover(c.chave, on); }
+            if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+              e.preventDefault();
+              setAplicarPadrao(false);
+              setDraftOrdem((keys) => {
+                const i = keys.indexOf(c.chave), j = i + (e.key === "ArrowUp" ? -1 : 1);
+                if (j < 0 || j >= keys.length) return keys;
+                const n = [...keys]; [n[i], n[j]] = [n[j]!, n[i]!]; return n;
+              });
+            }
+          }}>
+          <span className="dlin-l">{c.label}</span><span className="gripe"><GripVertical size={13} /></span>
+        </div>;
+      })}
+      {vistas.length === 0 && <span className="dvaz">{vazio}</span>}
+    </div>;
+  };
+
+  const busca = (valor: string, onChange: (v: string) => void, rotulo: string) => (
+    <label className="cfgb cfgb-lista"><Search size={14} aria-hidden />
+      <input value={valor} onChange={(e) => onChange(e.target.value)} placeholder="Procurar coluna" aria-label={rotulo} />
+      {valor && <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => onChange("")}><X size={12} /></button>}
+    </label>
+  );
 
   return <>
     <button type="button" className={cn("app-circulo-28", grade.botao, estilos.dicaFim)} aria-label="Configurar colunas" data-dica="Configurar colunas" data-testid={`${prefixoTestid}-configurar`} aria-expanded={aberta} onClick={() => setAberta(true)}><Columns3 aria-hidden /></button>
-    {aberta && <Dialog open onOpenChange={(o) => { if (!o) setAberta(false); }} title={titulo} description={subtitulo} size="lg" profile="large"
+    {aberta && <Dialog open onOpenChange={(o) => { if (!o) setAberta(false); }} title={titulo} size="lg" profile="large"
       className="b1-portal-compras" testId={`${prefixoTestid}-configuracao`}
       fecharSoPeloBotao
       antesDoFechar={<button type="button" className="tb-btn tb-btn-icon tb-btn-sm" aria-label="Restaurar padrão" title="Restaurar padrão" onClick={restaurarRascunho}><RotateCcw className="h-4 w-4" /></button>}
@@ -115,12 +136,23 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, sub
         <button type="button" className="tb-btn tb-btn-icon" aria-label="Pronto" title="Pronto" onClick={salvar}><Check className="h-4 w-4" /></button>
       </div>}>
       <div className="b1ref">
-        <label className="cfgb"><Search size={14} /><input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar coluna nas duas listas…" aria-label="Procurar coluna" />
-          {busca && <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => setBusca("")}><X size={12} /></button>}
-        </label>
         <div className="dcol" style={{ minHeight: 320 }}>
-          <div className="dbox"><span className="dbox-h">Disponíveis<span className="bd t-plain">{livres.length}</span></span>{listaUi(livres, false, busca ? "Nenhuma coluna com esse texto." : "Todas as colunas estão na tabela.")}</div>
-          <div className="dbox"><span className="dbox-h">Na tabela<span className="bd t-positive">{usadas.length}</span></span>{listaUi(usadas, true, "Nenhuma coluna com esse texto.")}</div>
+          <div className="dbox">
+            {busca(qa, setQa, "Procurar em disponíveis")}
+            <span className="dbox-h">Disponíveis<span className="bd t-plain">{livres.length}</span></span>
+            {listaUi(livres, false, qa, qa ? "Nenhuma coluna com esse texto." : "Todas as colunas estão na tabela.")}
+          </div>
+          <div className="dmid">
+            <button type="button" className="tb-btn tb-btn-icon" title="Usar todas" aria-label="Usar todas" onClick={usarTodas}><ChevronsRight className="h-4 w-4" /></button>
+            <button type="button" className="tb-btn tb-btn-icon" title="Usar coluna selecionada" aria-label="Usar coluna selecionada" onClick={usarSel}><ChevronRight className="h-4 w-4" /></button>
+            <button type="button" className="tb-btn tb-btn-icon" title="Remover coluna selecionada" aria-label="Remover coluna selecionada" onClick={removerSel}><ChevronLeft className="h-4 w-4" /></button>
+            <button type="button" className="tb-btn tb-btn-icon" title="Remover todas (mantém a primeira)" aria-label="Remover todas (mantém a primeira)" onClick={removerTodas}><ChevronsLeft className="h-4 w-4" /></button>
+          </div>
+          <div className="dbox">
+            {busca(qu, setQu, "Procurar na tabela")}
+            <span className="dbox-h">Na tabela<span className="bd t-positive">{usadas.length}</span></span>
+            {listaUi(usadas, true, qu, "Nenhuma coluna com esse texto.")}
+          </div>
         </div>
       </div>
     </Dialog>}

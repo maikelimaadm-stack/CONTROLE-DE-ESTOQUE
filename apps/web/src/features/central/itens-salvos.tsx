@@ -238,10 +238,10 @@ export function ItensSalvos({
         <button type="button" aria-pressed={visao === "formulario"} aria-label="Formulário" data-dica="Formulário" data-visao="formulario" onClick={() => setVisao("formulario")}><FileText aria-hidden /></button>
       </div>
       {configDoFormulario
-        ? <ConfigurarColunas<ChaveDoFormulario> prefixoTestid={prefixoTestid} titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem"
+        ? <ConfigurarColunas<ChaveDoFormulario> prefixoTestid={prefixoTestid} titulo="Visualização do formulário"
             rotulos={Object.fromEntries(campos.map((c) => [c.chave, c.rotulo])) as Record<ChaveDoFormulario, string>}
             lista={listaCampos} onLista={setPrefCampos} onRestaurar={() => setPrefCampos(null)} />
-        : <ConfigurarColunas<ChaveDaGrade> prefixoTestid={prefixoTestid} titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem"
+        : <ConfigurarColunas<ChaveDaGrade> prefixoTestid={prefixoTestid} titulo="Colunas da grade"
             rotulos={Object.fromEntries(colunas.map((c) => [c.chave, c.rotulo])) as Record<ChaveDaGrade, string>}
             lista={listaColunas} onLista={setPrefColunas} onRestaurar={() => setPrefColunas(null)} />}
     </div>
