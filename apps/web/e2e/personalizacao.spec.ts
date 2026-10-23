@@ -33,9 +33,9 @@ test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta
   await page.getByLabel("Mais opções").click();
   await page.getByRole("menuitem", { name: "Configurar colunas" }).click();
   const dlg = page.getByRole("dialog");
-  await expect(dlg.getByText("Configuração de colunas")).toBeVisible();
+  await expect(dlg.getByRole("heading", { name: "Colunas" })).toBeVisible();
   await dlg.getByRole("button", { name: "Sigla" }).dblclick();
-  await dlg.getByRole("button", { name: "OK" }).click();
+  await dlg.getByRole("button", { name: "Pronto" }).click();
   await expect(page.locator("th", { hasText: "Sigla" })).toBeVisible();
   await page.getByLabel("Abrir menu da coluna Sigla").click();
   await page.getByRole("menuitem", { name: "Ocultar coluna" }).click();

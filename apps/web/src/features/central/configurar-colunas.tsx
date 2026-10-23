@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import * as PopoverP from "@radix-ui/react-popover";
-import { Check, ChevronDown, ChevronUp, Columns3 } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Columns3, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import estilos from "./moldura.module.css";
 import grade from "./grade.module.css";
@@ -43,7 +43,8 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, sub
       </div>
       <div className={grade.configRodape}>
         <span className={grade.configNota}>Campos disponíveis para esta operação</span>
-        <button type="button" className={grade.link} onClick={onRestaurar}>Restaurar padrão</button>
+        {/* Decisão 339: Restaurar só ícone, mesma régua dos círculos 25px. */}
+        <button type="button" className={cn("app-circulo-28", grade.botao)} aria-label="Restaurar padrão" title="Restaurar padrão" onClick={onRestaurar}><RotateCcw aria-hidden /></button>
       </div>
     </PopoverP.Content>
   </PopoverP.Root>;

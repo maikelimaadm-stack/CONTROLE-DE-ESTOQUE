@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { GripVertical, Search, X } from "lucide-react";
+import { Check, GripVertical, RotateCcw, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog } from "@/components/ui";
 
@@ -49,13 +49,12 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
     })}
     {!itens.some((c) => c.label.toLowerCase().includes(busca.toLowerCase())) && <span className="dvaz">{vazio}</span>}
   </div>;
+  /* Decisão 339: sem descrição/ajuda no rodapé; Restaurar e Pronto só ícone (régua 25px). */
   return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title={titulo} size="lg" profile="large"
-    className={className}
-    description="Escolha e ordene as colunas da tabela"
-    footer={<div className="b1ref flex w-full items-center gap-2">
-      <span className="ltmp" style={{ flexGrow: 1, paddingLeft: 6 }}>Arraste para ordenar ou mover entre as listas · <b>{usadas.length}</b> de {colunas.length}</span>
-      <button type="button" className="tb-btn tb-btn-out sm" onClick={onRestaurar}>Restaurar padrão</button>
-      <button type="button" className="tb-btn novo sm" onClick={onFechar}>Pronto</button>
+    className={cn("b1-portal-compras", className)}
+    footer={<div className="b1ref flex w-full items-center justify-end gap-2">
+      <button type="button" className="tb-btn tb-btn-icon" aria-label="Restaurar padrão" title="Restaurar padrão" onClick={onRestaurar}><RotateCcw className="h-4 w-4" /></button>
+      <button type="button" className="tb-btn tb-btn-icon" aria-label="Pronto" title="Pronto" onClick={onFechar}><Check className="h-4 w-4" /></button>
     </div>}>
     <div className="b1ref">
       <label className="cfgb"><Search size={14} /><input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar coluna nas duas listas…" aria-label="Procurar coluna" />

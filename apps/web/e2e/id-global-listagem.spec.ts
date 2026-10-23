@@ -100,9 +100,9 @@ test.describe("ID Global na listagem", () => {
     // (o caso não precisa de estado inicial limpo — a asserção vale a partir de qualquer configuração)
     await page.getByLabel("Mais opções").first().click();
     await page.getByRole("menuitem", { name: "Configurar colunas" }).click();
-    await expect(page.getByText("Configuração de colunas")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Colunas" })).toBeVisible();
     await page.getByRole("button", { name: "Remover todas (mantém a primeira)" }).click();
-    await page.getByRole("button", { name: "OK" }).click();
+    await page.getByRole("button", { name: "Pronto" }).click();
 
     await expect(page.getByRole("columnheader", { name: "ID Global" }), "a coluna de identidade não é uma preferência do usuário").toBeVisible();
 

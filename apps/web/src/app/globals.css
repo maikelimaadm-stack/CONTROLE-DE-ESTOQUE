@@ -554,11 +554,34 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .mg-grid .th-menu { width: 20px; height: 20px; border-radius: 999px; }
 .mg-grid .th-menu.is-on { background: rgba(64,222,99,.18); color: #15803d; }
 .itpan.recolhido { height: 34px !important; }
-/* Divisor mestre-detalhe do HTML: faixa inteira arrastável, não só o traço central. */
-.compras-divisor-itens { position: relative; z-index: 1; flex-shrink: 0; height: 9px; display: flex; align-items: center; justify-content: center; cursor: row-resize; background: transparent; touch-action: none; user-select: none; }
-.compras-divisor-itens > span { width: 46px; height: 3px; border-radius: 999px; background: #d7dde4; transition: background .13s, width .13s; }
-.compras-divisor-itens:hover, .compras-divisor-itens[data-arrastando="true"] { background: #bbf7d0; }
-.compras-divisor-itens:hover > span, .compras-divisor-itens:focus-visible > span, .compras-divisor-itens[data-arrastando="true"] > span { background: #40de63; width: 70px; }
+/*
+ * Divisor mestre-detalhe = divisor horizontal da Central (decisão 339):
+ * faixa cinza 7px; traço verde + grip de três pontos só no hover/foco/arraste.
+ */
+.compras-divisor-itens {
+  position: relative; z-index: 1; flex-shrink: 0; height: 7px; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 100px; padding: 0; background: #e9edf2;
+  cursor: row-resize; touch-action: none; user-select: none;
+}
+.compras-divisor-itens::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 3px; height: 1px;
+  background: transparent;
+  transition: background-color .15s cubic-bezier(.4,0,.2,1), height .15s cubic-bezier(.4,0,.2,1), top .15s cubic-bezier(.4,0,.2,1);
+}
+.compras-divisor-itens:hover::before,
+.compras-divisor-itens:focus-visible::before,
+.compras-divisor-itens[data-arrastando="true"]::before {
+  background: rgba(64, 222, 99, .6); height: 2px; top: 2.5px;
+}
+.compras-divisor-itens:focus-visible { outline: 2px solid #22a85c; outline-offset: -1px; }
+.compras-divisor-itens__grip {
+  position: relative; z-index: 1; display: flex; color: #475569; opacity: 0;
+  transition: opacity .15s cubic-bezier(.4,0,.2,1);
+}
+.compras-divisor-itens:hover .compras-divisor-itens__grip,
+.compras-divisor-itens:focus-visible .compras-divisor-itens__grip,
+.compras-divisor-itens[data-arrastando="true"] .compras-divisor-itens__grip { opacity: 1; }
 .itbar .grp { display: inline-flex; align-items: center; gap: 3px; }
 .itbar .ib { width: 25px; height: 25px; border-radius: 999px; border: 1px solid transparent; background: #f1f3f4; color: #475569; display: inline-flex; align-items: center; justify-content: center; }
 .itbar .ib:hover { background: #e5e7eb; color: #0f172a; }

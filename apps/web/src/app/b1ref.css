@@ -17,10 +17,12 @@
 .b1ref .mdl-f{flex-shrink:0;display:flex;align-items:center;gap:8px;padding:11px 14px;border-top:1px solid #f1f4f6;background:#fbfcfd}
 .b1ref .dcol{display:flex;gap:12px;align-items:stretch;flex-grow:1;min-height:0}
 .b1ref .dbox{flex-grow:1;flex-basis:0;min-width:0;display:flex;flex-direction:column;border:1px solid #eef1f4;border-radius:11px;padding:8px;min-height:0}
-.b1ref .dbox-h{display:flex;align-items:center;gap:7px;font-size:10.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:#8b95a3;padding:2px 4px 6px}
+/* Cabeçalhos das listas: sentença (sem maiúsculas); linhas com traço de tabela (decisão 339). */
+.b1ref .dbox-h{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;color:#475569;padding:4px 6px 8px;border-bottom:1px solid #eef1f4;margin-bottom:2px}
 .b1ref .dbox-l{flex-grow:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
-.b1ref .dlin{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:8px;background:transparent;cursor:grab;transition:background .13s}
+.b1ref .dlin{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:0;border-bottom:1px solid #f1f4f6;background:transparent;cursor:grab;transition:background .13s}
 .b1ref .dlin:hover{background:#f4f6f7}
+.b1ref .dlin:last-child{border-bottom:0}
 .b1ref .dlin.on .chk{background:#40de63;border-color:#40de63;color:#fff}
 .b1ref .dlin.on:hover .chk{background:#35cf56;border-color:#35cf56}
 .b1ref .dlin.indo{opacity:.35}
@@ -135,4 +137,4 @@
 .compras-paineis .itrolo{display:flex;flex-direction:column;overflow:hidden}
 .compras-paineis .itrolo .mg-grid-wrap{flex:1;min-height:0}
 .compras-paineis .itfoot{overflow:auto}
-.compras-divisor-itens:hover,.compras-divisor-itens[data-arrastando="true"]{background:transparent}
+/* Divisor: hover/arraste = traço verde via ::before (globals.css / decisão 339); fundo da faixa permanece #e9edf2. */
