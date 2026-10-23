@@ -83,7 +83,8 @@ export function Menu({ trigger, items }: { trigger: React.ReactNode; items: { la
 }
 export { DicaDeAcao } from "./dica-de-acao";
 export { SeletorDeOperador } from "./seletor-de-operador";
-export { CalendarioDePeriodo } from "./calendario-de-periodo";
+export { CalendarioDeData, CalendarioDePeriodo } from "./calendario-de-periodo";
+export { CalendarioDoSistema, painelDoCalendarioPadrao } from "./calendario-do-sistema";
 export const Chevron = ChevronDown;
 export function Stat({ label, value, hint, tone }: { label: string; value: React.ReactNode; hint?: React.ReactNode; tone?: "green" | "red" | "slate" | "amber" }) {
   const c = { green: "text-green-700", red: "text-red-700", slate: "text-slate-800", amber: "text-amber-700" }[tone ?? "slate"];

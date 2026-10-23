@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, FilterX, Search, X, Loader2 } from "lucide-react";
-import { CalendarioDePeriodo, DicaDeAcao, SeletorDeOperador } from "@/components/ui";
+import { CalendarioDeData, CalendarioDePeriodo, DicaDeAcao, SeletorDeOperador } from "@/components/ui";
 import { FILTER_OPERATORS, operatorArity, isListOperator } from "@agro/shared";
 import { api, qs } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -72,6 +72,7 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
           {!q.isLoading && values.length === 0 && <span className="dvaz">Nenhum valor</span>}
         </div>
       </> : <div className="fcond">
+        {f.kind === "date" && arity === 1 && <CalendarioDeData valor={draft.value} onChange={(value) => setDraft((d) => ({ ...d, value, values: [] }))} />}
         <input className="fin" type={inputType} aria-label={arity === 2 ? `${f.label} de` : f.label} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value, values: [] })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} autoFocus />
         {arity === 2 && <>{f.kind === "date" ? <CalendarioDePeriodo inicio={draft.value} fim={draft.value2 ?? ""} onInicio={(value) => setDraft((d) => ({ ...d, value, values: [] }))} onFim={(value2) => setDraft((d) => ({ ...d, value2 }))} /> : <span className="fe">e</span>}<input className="fin" type={inputType} aria-label={`${f.label} até`} value={draft.value2 ?? ""} onChange={(e) => setDraft({ ...draft, value2: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} /></>}
       </div>}
@@ -93,6 +94,7 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
             {!q.isLoading && values.length === 0 && <div className="px-2 py-3 text-center text-[11.5px] text-slate-400">Nenhum valor</div>}
           </div>
         </> : <div className="mt-2 flex gap-1">
+          {f.kind === "date" && arity === 1 && <CalendarioDeData valor={draft.value} onChange={(value) => setDraft((d) => ({ ...d, value, values: [] }))} />}
           <RoundInput type={inputType} aria-label={arity === 2 ? `${f.label} de` : f.label} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value, values: [] })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} autoFocus />
           {arity === 2 && <>{f.kind === "date" && <CalendarioDePeriodo inicio={draft.value} fim={draft.value2 ?? ""} onInicio={(value) => setDraft((d) => ({ ...d, value, values: [] }))} onFim={(value2) => setDraft((d) => ({ ...d, value2 }))} />}<RoundInput type={inputType} aria-label={`${f.label} até`} value={draft.value2 ?? ""} onChange={(e) => setDraft({ ...draft, value2: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} /></>}
         </div>}

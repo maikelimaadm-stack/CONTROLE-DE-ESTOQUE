@@ -1,8 +1,8 @@
 "use client";
 import * as React from "react";
-import { Calendar, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Search } from "lucide-react";
+import { Calendar, ChevronDown, ChevronRight, CircleAlert, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MgDatePicker, type PainelDoCalendario } from "@/components/ui";
+import { MgDatePicker, painelDoCalendarioPadrao, type PainelDoCalendario } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import estilos from "./campo.module.css";
 
@@ -145,88 +145,14 @@ export function DadosAdicionais({ quantidade, aberto, onAlternar, manterMontado,
 
 /* ─────────────────────────── calendário do desenho (painel do MgDatePicker) ─────────────────────────── */
 
-const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-const SEMANA = ["D", "S", "T", "Q", "Q", "S", "S"];
-const dois = (n: number) => String(n).padStart(2, "0");
-const isoDe = (d: Date) => `${d.getFullYear()}-${dois(d.getMonth() + 1)}-${dois(d.getDate())}`;
-const brDe = (d: Date) => `${dois(d.getDate())}/${dois(d.getMonth() + 1)}/${d.getFullYear()}`;
-const lerIso = (v: string) => (/^\d{4}-\d{2}-\d{2}/.test(v) ? new Date(`${v.slice(0, 10)}T00:00:00`) : null);
-type Nivel = "dia" | "mes" | "ano";
-
-/**
- * O quadro de 240px do desenho: título "<mês> de <ano>" que sobe para meses e anos, setas (a roda do mouse anda no
- * nível em que o quadro está), 6 semanas fixas (a altura nunca muda), hoje marcado, "Hoje" e "Limpar".
- */
-function CalendarioDoDesenho({ valor, escolher }: { valor: string; escolher: (iso: string) => void }) {
-  const hoje = new Date();
-  const escolhido = lerIso(valor);
-  const base = escolhido ?? hoje;
-  const [mes, setMes] = React.useState(() => new Date(base.getFullYear(), base.getMonth(), 1));
-  const [nivel, setNivel] = React.useState<Nivel>("dia");
-  const roda = React.useRef(0);
-  const ano = mes.getFullYear(), mesAtual = mes.getMonth();
-  const decada = Math.floor(ano / 10) * 10;
-  const andar = (p: number) => setMes((m) => nivel === "dia" ? new Date(m.getFullYear(), m.getMonth() + p, 1) : new Date(m.getFullYear() + (nivel === "mes" ? p : p * 10), m.getMonth(), 1));
-  const titulo = nivel === "dia" ? `${MESES[mesAtual]} de ${ano}` : nivel === "mes" ? String(ano) : `${decada} – ${decada + 9}`;
-  const aoRodar = (e: React.WheelEvent) => {
-    roda.current += e.deltaY;
-    let passos = 0;
-    while (roda.current >= 48) { passos++; roda.current -= 48; }
-    while (roda.current <= -48) { passos--; roda.current += 48; }
-    if (passos) andar(passos);
-  };
-  const primeiro = new Date(ano, mesAtual, 1);
-  const dias = Array.from({ length: 42 }, (_, i) => new Date(ano, mesAtual, 1 - primeiro.getDay() + i));
-  const mesmoDia = (a: Date | null, b: Date) => Boolean(a) && isoDe(a!) === isoDe(b);
-  return <div onWheel={aoRodar}>
-    <div className={estilos.calCabecalho}>
-      <button type="button" className={estilos.calTitulo} disabled={nivel === "ano"} aria-label={nivel === "dia" ? "Ver os meses" : nivel === "mes" ? "Ver os anos" : "Anos"}
-        onClick={() => setNivel(nivel === "dia" ? "mes" : "ano")}>{titulo}</button>
-      <span className={estilos.calSetas}>
-        <button type="button" className={estilos.calSeta} aria-label="Anterior" onClick={() => andar(-1)}><ChevronUp aria-hidden /></button>
-        <button type="button" className={estilos.calSeta} aria-label="Próximo" onClick={() => andar(1)}><ChevronDown aria-hidden /></button>
-      </span>
-    </div>
-    {nivel === "dia" && <div className={estilos.calDias}>
-      {SEMANA.map((l, i) => <span key={i} className={estilos.calSemana}>{l}</span>)}
-      {dias.map((d) => {
-        const marcado = mesmoDia(escolhido, d);
-        return <button type="button" key={isoDe(d)} className={estilos.calDia} aria-label={brDe(d)} aria-pressed={marcado}
-          data-fora={d.getMonth() !== mesAtual ? "" : undefined} data-hoje={!marcado && mesmoDia(hoje, d) ? "" : undefined}
-          onClick={() => escolher(isoDe(d))}>{d.getDate()}</button>;
-      })}
-    </div>}
-    {nivel === "mes" && <div className={estilos.calGrade}>
-      {MESES.map((m, i) => {
-        const marcado = Boolean(escolhido) && escolhido!.getFullYear() === ano && escolhido!.getMonth() === i;
-        return <button type="button" key={m} className={estilos.calCelula} aria-label={`${m} de ${ano}`} aria-pressed={marcado}
-          data-hoje={!marcado && hoje.getFullYear() === ano && hoje.getMonth() === i ? "" : undefined}
-          onClick={() => { setMes(new Date(ano, i, 1)); setNivel("dia"); }}>{m.slice(0, 3)}</button>;
-      })}
-    </div>}
-    {nivel === "ano" && <div className={estilos.calGrade}>
-      {Array.from({ length: 12 }, (_, i) => decada - 1 + i).map((a) => {
-        const marcado = Boolean(escolhido) && escolhido!.getFullYear() === a;
-        return <button type="button" key={a} className={estilos.calCelula} aria-label={String(a)} aria-pressed={marcado}
-          data-fora={a < decada || a > decada + 9 ? "" : undefined} data-hoje={!marcado && hoje.getFullYear() === a ? "" : undefined}
-          onClick={() => { setMes(new Date(a, mesAtual, 1)); setNivel("mes"); }}>{a}</button>;
-      })}
-    </div>}
-    <div className={estilos.calRodape}>
-      <button type="button" className={estilos.calLink} onClick={() => escolher(isoDe(hoje))}>Hoje</button>
-      <button type="button" className={estilos.calLink} onClick={() => escolher("")}>Limpar</button>
-    </div>
-  </div>;
-}
 
 const painelDoCalendario = (rotulo?: string): PainelDoCalendario => ({
-  className: estilos.calendario,
+  ...painelDoCalendarioPadrao,
   rotulo: rotulo ? `Escolher ${rotulo}` : undefined,
   semIcone: true,
   /* o botão redondo de 22px do desenho, no lugar do ícone: abre e fecha o calendário */
   gatilho: ({ alternar, aberto, desabilitado }) => <button type="button" className={estilos.botaoData} data-parte="icone" aria-label="Escolher data" aria-haspopup="dialog"
-    aria-expanded={aberto} disabled={desabilitado} onClick={alternar}><Calendar aria-hidden /></button>,
-  desenhar: ({ valor, escolher }) => <CalendarioDoDesenho valor={valor} escolher={escolher} />
+    aria-expanded={aberto} disabled={desabilitado} onClick={alternar}><Calendar aria-hidden /></button>
 });
 
 /**
