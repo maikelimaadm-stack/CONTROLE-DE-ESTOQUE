@@ -44,10 +44,13 @@ export function CalendarioDePeriodo({ inicio, fim, onInicio, onFim, formato = "i
   </CalendarioDoFiltro>;
 }
 
-/** Ícone antes do campo quando o operador utiliza uma única data. */
-export function CalendarioDeData({ valor, onChange, formato = "iso" }: { valor: string; onChange: (valor: string) => void; formato?: Formato }) {
+/** Ícone dentro do campo quando o operador utiliza uma única data. */
+export function CalendarioDeData({ valor, onChange, formato = "iso", children }: { valor: string; onChange: (valor: string) => void; formato?: Formato; children: React.ReactNode }) {
   const [aberto, setAberto] = React.useState(false);
-  return <CalendarioDoFiltro aberto={aberto} onOpenChange={setAberto}>
-    <CalendarioDoSistema valor={normalizar(valor, formato)} escolher={(iso) => { onChange(formatar(iso, formato)); setAberto(false); }} />
-  </CalendarioDoFiltro>;
+  return <span className={estilos.campo}>
+    {children}
+    <CalendarioDoFiltro aberto={aberto} onOpenChange={setAberto}>
+      <CalendarioDoSistema valor={normalizar(valor, formato)} escolher={(iso) => { onChange(formatar(iso, formato)); setAberto(false); }} />
+    </CalendarioDoFiltro>
+  </span>;
 }
