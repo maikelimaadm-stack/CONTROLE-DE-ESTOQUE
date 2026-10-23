@@ -46,7 +46,7 @@ const MEDIDAS = {
     leitura: "rgb(246, 248, 250)", travada: "rgb(233, 237, 242)", valorFonte: "12.5px", larguraMaxima: 560, espaco: 6
   },
   compacto: { caixaAltura: 32 },
-  itens: { barra: 37, cabecalho: 29, linha: 24, rodape: 33 },
+  itens: { barra: 37, cabecalho: 30, linha: 26, rodape: 33 },
   painel: { faixa: 39 }
 } as const;
 

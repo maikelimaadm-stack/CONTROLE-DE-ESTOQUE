@@ -4,8 +4,7 @@ import Link from "next/link";
 import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
 import { useAuth } from "@/lib/auth";
 import { enumOptions } from "@/lib/copy";
-import { Input, LoadingState, Textarea } from "@/components/ui";
-import { MgSelect } from "@/components/ui";
+import { EntradaNumero, Input, LoadingState, MgSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { MensagemTop } from "@/features/sales/tipo-operacao-select";
 import { CampoDaCentral, ColunaDeCampos, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
@@ -92,7 +91,7 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const data = (c: ChaveDoCabecalho, hoje: string, testId: string) =>
     cc(c, hoje, { icone: "data", preenchido: Boolean(h[c]), testId }, <DataDaCentral rotulo={e.rotulo(c, hoje)} value={h[c]} onChange={mudar(c)} />);
   const numero = (c: ChaveDoCabecalho, hoje: string, testId: string) =>
-    cc(c, hoje, { preenchido: h[c] !== "" }, <Input data-testid={testId} type="number" step="0.01" min="0" value={h[c]} onChange={(ev) => e.mudar({ [c]: ev.target.value })} />);
+    cc(c, hoje, { preenchido: h[c] !== "" }, <EntradaNumero data-testid={testId} casas={2} value={h[c]} onChange={(v) => e.mudar({ [c]: v })} />);
   const texto = (c: ChaveDoCabecalho, hoje: string, testId: string) =>
     cc(c, hoje, { preenchido: Boolean(h[c]) }, <Input data-testid={testId} value={h[c]} onChange={(ev) => e.mudar({ [c]: ev.target.value })} />);
   const pedidoNome = (k: string) => (e.recebendo ? String(e.recebendo.pedido[k] ?? "") || null : undefined);

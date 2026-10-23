@@ -3,9 +3,9 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, Copy, FileText, Grid3x3, Lock, Plus, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
-import { cn, brl, num, numeroBR, dateBR } from "@/lib/utils";
+import { cn, brl, numeroBR, dateBR } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { Input } from "@/components/ui";
+import { EntradaNumero, Input } from "@/components/ui";
 import { StockCell, totalDaLinhaExibido, type ItemRow } from "@/features/docs/shared";
 import { EstoqueDisponivelDoItem } from "@/features/stock/reserva-estoque";
 import { PainelDePesquisa } from "./pesquisa";
@@ -78,7 +78,7 @@ const COLUNAS: Record<ChaveColunaDoItem, { rotulo: string; largura: number; nume
   validade: { rotulo: "Validade", largura: 112 }
 };
 /** A coluna do círculo de seleção, do desenho. */
-const LARGURA_SELECAO = 34;
+const LARGURA_SELECAO = 36;
 /**
  * A ordem de sempre (as nove de hoje), com o Local antes do produto (decisão 280: é o local que decide o saldo; o
  * Código fica junto do Produto). `saldo`, `lote` e `validade` só entram quando ligados.
@@ -178,8 +178,8 @@ export function ItensDaCentral({
   semSimboloDeMoeda = false
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
-  /** Dinheiro na tela: com o símbolo (o de sempre) ou só o número de duas casas (`semSimboloDeMoeda`, a compra). */
-  const dinheiro = (v: string | number) => (semSimboloDeMoeda ? num(v, 2) : brl(v));
+  /** Dinheiro na tela: com o símbolo (o de sempre) ou pt-BR sem `R$` — inteiro `1.000`, decimal `1.000,00`. */
+  const dinheiro = (v: string | number) => (semSimboloDeMoeda ? numeroBR(v) : brl(v));
   // a capacidade da pesquisa nova é perguntada ao montar os itens (uma vez por sessão): ao abrir a pesquisa ela já chegou
   const fonteDaPesquisa = useFonteDaPesquisaDeProdutos();
   const { doSistema, doCatalogo } = colunasDaEspecie;
@@ -366,13 +366,13 @@ export function ItensDaCentral({
       case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{numeroBR(maxDaOrigem(it) ?? "0", 4)}</td>;
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
         {ativa && !daOrigem?.quantidadeTravada && !travas(it).quantidade
-          ? <input className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} type="number" step="0.0001" min="0" max={maxDaQuantidade(it)} value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} />
+          ? <EntradaNumero className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} casas={casasDaQuantidade ?? 4} value={it.quantity} onChange={(v) => atualizar(i, "quantity", v)} />
           : <span data-testid={tid("quantidade")}>{numeroBR(linhaNovaEmBranco ? it.quantity : it.quantity || "0", casasDaQuantidade)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
-      case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario ? <input className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} /> : dinheiro(it.unit_value ?? "0")}</td>;
+      case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario ? <EntradaNumero className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} casas={6} value={it.unit_value ?? ""} onChange={(v) => atualizar(i, "unit_value", v)} /> : dinheiro(it.unit_value ?? "0")}</td>;
       case "desconto": return <td key={k} className={grade.numero}>{Number(it.discount || 0) ? dinheiro(it.discount!) : "—"}</td>;
-      case "descontoPercentual": return <td key={k} className={grade.numero}>{Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : "—"}</td>;
+      case "descontoPercentual": return <td key={k} className={grade.numero}>{Number(it.discount_percent || 0) ? `${numeroBR(it.discount_percent!)}%` : "—"}</td>;
       case "total": return <td key={k} className={cn(grade.numero, grade.forte)}>{dinheiro(totalDaLinhaExibido(it))}</td>;
       case "lote": {
         const aceita = loteDe(it).lote;
@@ -448,10 +448,10 @@ export function ItensDaCentral({
         onAbrir={(el) => setPesquisa(pesquisa?.modo === "fluxo" && pesquisa.campo === campo ? null : { linha: atual, campo, ancora: el, modo: "fluxo" })} />
     </CampoDaCentral>;
   };
-  const campoNumerico = (k: "quantidade" | "unitario" | "desconto" | "descontoPercentual", chave: "quantity" | "unit_value" | "discount" | "discount_percent", valor: string, extra: { step: string; max?: string; desabilitado?: boolean; dica?: string }) => {
+  const campoNumerico = (k: "quantidade" | "unitario" | "desconto" | "descontoPercentual", chave: "quantity" | "unit_value" | "discount" | "discount_percent", valor: string, extra: { casas: number; desabilitado?: boolean; dica?: string }) => {
     const d = doCampo(k);
     return <CampoDaCentral rotulo={d.label} obrigatorio={d.required} erro={d.error} preenchido={valor !== ""} dica={extra.dica} {...(extra.desabilitado ? { estado: "desabilitado" as const } : {})} {...d.attrs}>
-      <Input type="number" step={extra.step} min="0" max={extra.max} disabled={extra.desabilitado || undefined} value={valor} onChange={(e) => atualizar(atual, chave, e.target.value)} />
+      <EntradaNumero casas={extra.casas} disabled={extra.desabilitado || undefined} value={valor} onChange={(v) => atualizar(atual, chave, v)} />
     </CampoDaCentral>;
   };
   const campoDeTexto = (k: "lote" | "validade", chave: "provider_lot" | "expiration_date", valor: string, aceita: boolean) => {
@@ -468,10 +468,10 @@ export function ItensDaCentral({
       case "estoque": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "estoque" : undefined}>{saldoDoItem(it)}</CampoDaCentral>;
       case "saldo": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" testId={tid("item-saldo")}>{numeroBR(maxDaOrigem(it) ?? "0", 4)}</CampoDaCentral>;
       case "unidade": return <CampoDaCentral rotulo="Unidade" estado="travado" testId={tid("item-unidade")}><UnidadeTravada produto={it.product_id} /></CampoDaCentral>;
-      case "quantidade": return campoNumerico(k, "quantity", it.quantity, { step: "0.0001", max: maxDaQuantidade(it), ...(daOrigem ? { desabilitado: daOrigem.quantidadeTravada } : {}), ...(travas(it).quantidade ? { desabilitado: true, dica: travas(it).motivos?.quantidade } : {}) });
-      case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { step: "0.000001", ...(travas(it).unitario ? { desabilitado: true, dica: travas(it).motivos?.unitario } : {}) });
-      case "desconto": return campoNumerico(k, "discount", it.discount ?? "", { step: "0.01", ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
-      case "descontoPercentual": return campoNumerico(k, "discount_percent", it.discount_percent ?? "", { step: "0.01", max: "100", ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
+      case "quantidade": return campoNumerico(k, "quantity", it.quantity, { casas: casasDaQuantidade ?? 4, ...(daOrigem ? { desabilitado: daOrigem.quantidadeTravada } : {}), ...(travas(it).quantidade ? { desabilitado: true, dica: travas(it).motivos?.quantidade } : {}) });
+      case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { casas: 6, ...(travas(it).unitario ? { desabilitado: true, dica: travas(it).motivos?.unitario } : {}) });
+      case "desconto": return campoNumerico(k, "discount", it.discount ?? "", { casas: 2, ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
+      case "descontoPercentual": return campoNumerico(k, "discount_percent", it.discount_percent ?? "", { casas: 2, ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
       case "total": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "total" : undefined}><span data-testid={tid("item-total")}>{dinheiro(totalDaLinhaExibido(it))}</span></CampoDaCentral>;
       case "lote": return campoDeTexto(k, "provider_lot", it.provider_lot ?? "", loteDe(it).lote);
       case "validade": return campoDeTexto(k, "expiration_date", it.expiration_date ?? "", loteDe(it).validade);

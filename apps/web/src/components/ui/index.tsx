@@ -103,3 +103,4 @@ export { LoadingState, EmptyState, ErrorState, Empty, ErrorBox, safeErrorMessage
 export { StatusBadge, statusTone, TONE_BADGE, type StatusTone, type BadgeTone, type StatusBadgeProps } from "./status-badge";
 export { PageHeader, CardHeader, type PageHeaderProps, type Crumb } from "./page-header";
 export { DetailShell, type DetailShellProps } from "./detail-shell";
+export { EntradaNumero, type EntradaNumeroProps } from "./entrada-numero";

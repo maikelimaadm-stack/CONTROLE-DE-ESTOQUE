@@ -50,14 +50,13 @@ const MEDIDAS = {
     leitura: "rgb(246, 248, 250)", travada: "rgb(233, 237, 242)", valorFonte: "12.5px", larguraMaxima: 560, espaco: 6
   },
   compacto: { caixaAltura: 32 },
-  /** D7: 36/28/23/32 são alturas de CONTEÚDO; com a borda de 1 px, as caixas medidas são 37/29/24/33. */
-  itens: { barra: 37, cabecalho: 29, linha: 24, rodape: 33 },
+  /** D7: barra/rodapé content-box (37/33); grade de produtos = mg-grid (decisão 345): cabeçalho 30 / linha 26. */
+  itens: { barra: 37, cabecalho: 30, linha: 26, rodape: 33 },
   /** D8: faixa 38 + borda = 39 de caixa. */
   painel: { faixa: 39 },
   esqueleto: { barra: 34, quantas: 5 },
-  /** Fase B — itens da CRIAÇÃO: a 1ª coluna (o círculo) tem 34 px; a linha marcada leva o fundo verde translúcido e o
-   *  filete de 2 px à esquerda (box-shadow inset), na cor exata do desenho. */
-  itensDaCriacao: { circulo: 34, fundoMarcada: "rgba(64, 222, 99, 0.07)", fileteMarcada: "rgb(34, 168, 92) 2px 0px 0px 0px inset" }
+  /** Fase B — itens da CRIAÇÃO: coluna de seleção 36 px (par com mg-grid); linha marcada com verde e filete 3 px. */
+  itensDaCriacao: { circulo: 36, fundoMarcada: "rgba(64, 222, 99, 0.07)", fileteMarcada: "rgb(34, 168, 92) 3px 0px 0px 0px inset" }
 } as const;
 
 /** O texto padrão do motivo de cancelamento de hoje (vazio → ele). */
@@ -271,7 +270,7 @@ test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botõ
   const bdup = await caixa(dup);
   expect.soft([Math.round(bdup.width), Math.round(bdup.height)]).toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
   expect.soft((await estilo(page.getByTestId("central-vendas-novo"), ["background-color"]))["background-color"], "Novo cinza").toBe(MEDIDAS.novo.fundo);
-  // ITENS (consulta; a grade da criação é medida no VD-14): barra 36, cabeçalho 28, linha 23, rodapé 32
+  // ITENS (consulta; a grade da criação é medida no VD-14): barra 36, cabeçalho 30, linha 26, rodapé 32
   const itens = consulta.getByTestId("central-vendas-itens");
   expect.soft(Math.round((await caixa(itens.getByRole("toolbar").first())).height), "barra de itens").toBe(MEDIDAS.itens.barra);
   expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-grade").locator("thead tr").first())).height), "cabeçalho da grade").toBe(MEDIDAS.itens.cabecalho);
@@ -1058,7 +1057,7 @@ async function capturarPostDaCriacao(page: Page) {
   return capturado;
 }
 
-test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela linha), teclado, cor e filete, Duplicar/Remover do item corrente, vazio, rodapé, formulário e medidas 37/29/24/33", async ({ page }) => {
+test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela linha), teclado, cor e filete, Duplicar/Remover do item corrente, vazio, rodapé, formulário e medidas 37/30/26/33", async ({ page }) => {
   test.setTimeout(120_000);
   await login(page);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -1153,12 +1152,12 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   expect.soft(await pinturaDaLinha(linhaDaCriacao(page, 1)), "marcada: fundo verde translúcido e filete inset de 2 px #22a85c").toEqual({ fundo: true, filete: true });
   expect.soft(await pinturaDaLinha(linhaDaCriacao(page, 0)), "não marcada: nem fundo nem filete").toEqual({ fundo: false, filete: false });
 
-  // MEDIDAS — as mesmas dos itens da consulta: barra 37, cabeçalho 29, linha 24, rodapé 33; o círculo em 34 px
+  // MEDIDAS — as mesmas dos itens da consulta: barra 37, cabeçalho 30, linha 26, rodapé 33; o círculo em 36 px
   expect.soft(Math.round((await caixa(barra)).height), "barra de itens").toBe(MEDIDAS.itens.barra);
   expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-grade").locator("thead tr").first())).height), "cabeçalho da grade").toBe(MEDIDAS.itens.cabecalho);
   for (const i of [0, 1]) expect.soft(Math.round((await caixa(linhaDaCriacao(page, i))).height), `linha ${i + 1} (${i === 1 ? "marcada" : "não marcada"})`).toBe(MEDIDAS.itens.linha);
   expect.soft(Math.round((await caixa(rodape)).height), "rodapé dos itens").toBe(MEDIDAS.itens.rodape);
-  expect.soft(Math.round((await caixa(linhaDaCriacao(page, 0).locator("td").first())).width), "1ª coluna: o círculo, 34 px").toBe(MEDIDAS.itensDaCriacao.circulo);
+  expect.soft(Math.round((await caixa(linhaDaCriacao(page, 0).locator("td").first())).width), "1ª coluna: o círculo, 36 px").toBe(MEDIDAS.itensDaCriacao.circulo);
 
   // O CÍRCULO ALTERNA: desmarcar deixa a grade sem item corrente — sem campos, sem Duplicar, sem Remover
   await circuloDa(page, 1).click();

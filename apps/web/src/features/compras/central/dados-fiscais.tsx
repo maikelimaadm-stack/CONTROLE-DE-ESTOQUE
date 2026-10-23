@@ -7,8 +7,7 @@ import { D } from "@agro/shared";
 import { brl, cn, num } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
-import { Button, Input } from "@/components/ui";
-import { MgSelect } from "@/components/ui";
+import { Button, EntradaNumero, Input, MgSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import grade from "@/features/central/grade.module.css";
@@ -65,7 +64,7 @@ export function DadosFiscaisDaCriacao({ e, noPainel = false }: { e: EstadoDaCria
       {...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" } : {})}>{controle}</CampoDaCentral>;
   const valor = (c: "valor_ipi" | "valor_icms_st" | "seguro", rotulo: string, testId: string) =>
     cc(c, rotulo, { preenchido: f[c] !== "" },
-      <Input data-testid={testId} type="number" step="0.01" min="0" inputMode="decimal" value={f[c]} onChange={(ev) => e.mudarFiscal({ [c]: ev.target.value })} />);
+      <EntradaNumero data-testid={testId} casas={2} value={f[c]} onChange={(v) => e.mudarFiscal({ [c]: v })} />);
   return <div data-testid="compras-dados-fiscais" className="space-y-1">
     <ColunaDeCampos>
       {cc("chave_acesso", "Chave de acesso", { preenchido: f.chave_acesso !== "", dica: "Os 44 dígitos da chave da NF-e (espaços são ignorados)." },
@@ -201,13 +200,13 @@ function TabelaDoRateioIndependente({
           : celulaRef;
         return <div key={k} data-testid={`${prefixo}-linha-${k}`} className={GRADE_RATEIO + " px-2 py-1.5"}>
           {envolvido}
-          <Input className="min-w-0 text-right tabular-nums" data-testid={`${prefixo}-linha-${k}-valor`}
-            inputMode="decimal" placeholder="0,00" value={valorExibido}
-            onChange={(ev) => onMudar(k, { percentual: percentualDoValorDoRateio(String(e.totalExibido ?? "0"), ev.target.value) })}
+          <EntradaNumero className="min-w-0 text-right tabular-nums" data-testid={`${prefixo}-linha-${k}-valor`}
+            casas={2} placeholder="0,00" value={valorExibido}
+            onChange={(v) => onMudar(k, { percentual: percentualDoValorDoRateio(String(e.totalExibido ?? "0"), v) })}
             aria-label={`Valor ${colRef.toLowerCase()} ${k + 1}`} />
-          <Input className="min-w-0 text-right tabular-nums" data-testid={`${prefixo}-linha-${k}-percentual`}
-            inputMode="decimal" placeholder="0" value={parte.percentual}
-            onChange={(ev) => onMudar(k, { percentual: ev.target.value })}
+          <EntradaNumero className="min-w-0 text-right tabular-nums" data-testid={`${prefixo}-linha-${k}-percentual`}
+            casas={4} placeholder="0" value={parte.percentual}
+            onChange={(v) => onMudar(k, { percentual: v })}
             aria-label={`Percentual ${colRef.toLowerCase()} ${k + 1}`} />
           {partes.length > 1
             ? <Button size="sm" variant="ghost" className="!h-6 !w-6 !min-h-6 !p-0 justify-self-end text-slate-400 hover:text-rose-600"
