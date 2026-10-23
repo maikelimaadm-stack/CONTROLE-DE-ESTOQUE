@@ -19,12 +19,21 @@ export const PillBtn = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttri
 PillBtn.displayName = "PillBtn";
 
 export type ViewMode = "record" | "table" | "cards";
-/** Alternância Registro / Tabela / Cards (view-seg do MG). */
-export function ViewSwitch({ value, onChange, recordDisabled }: { value: ViewMode; onChange: (m: ViewMode) => void; recordDisabled?: boolean }) {
-  const item = (m: ViewMode, label: string, Icon: React.ComponentType<{ className?: string }>, disabled?: boolean) => (
+/**
+ * Alternância de visualização (view-seg do MG).
+ * `semRegistro` (Portal de Compras, decisão 328): só Tabela e Cards — sem o botão Registro.
+ */
+export function ViewSwitch({ value, onChange, recordDisabled, semRegistro }: {
+  value: ViewMode; onChange: (m: ViewMode) => void; recordDisabled?: boolean; semRegistro?: boolean;
+}) {
+  const item = (m: Exclude<ViewMode, "record"> | "record", label: string, Icon: React.ComponentType<{ className?: string }>, disabled?: boolean) => (
     <DicaDeAcao texto={label}><button type="button" aria-label={label} aria-pressed={value === m} disabled={disabled} onClick={() => onChange(m)}><Icon /></button></DicaDeAcao>
   );
-  return <div className="view-seg" role="group" aria-label="Modo de visualização">{item("record", "Registro", FileText, recordDisabled)}{item("table", "Tabela", Table2)}{item("cards", "Cards", LayoutGrid)}</div>;
+  return <div className="view-seg" role="group" aria-label="Modo de visualização">
+    {!semRegistro && item("record", "Registro", FileText, recordDisabled)}
+    {item("table", "Tabela", Table2)}
+    {item("cards", "Cards", LayoutGrid)}
+  </div>;
 }
 
 /** Popover padrão do modelo base (cartão branco arredondado com rodapé Restaurar / Ok). */

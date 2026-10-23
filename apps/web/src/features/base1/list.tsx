@@ -58,6 +58,11 @@ export interface Base1ListProps {
   onDuplicate?: (row: Row) => void;
   /** componente do modo "Registro" (formulário embutido com navegação entre registros) */
   Record?: React.ComponentType<RecordProps>;
+  /**
+   * Portal de Compras (decisão 328): esconde o modo Registro no ViewSwitch; preferência antiga
+   * `view.mode === "record"` cai em tabela.
+   */
+  semModoRegistro?: boolean;
   extraMenu?: { key: string; label: string; icon?: React.ReactNode; onClick: () => void }[];
   /** botões adicionais ao lado de "Novo" (ex.: Importar XML) */
   extraToolbar?: React.ReactNode;
@@ -96,7 +101,7 @@ function comColunaDeIdentidade(rodape: React.ReactNode, deslocamento: number): R
  * rodapé com contadores e "Carregar mais". Preferências por usuário (padrão da organização opcional).
  */
 export function Base1List(props: Base1ListProps) {
-  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra, csvName } = props;
+  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, semModoRegistro, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra, csvName } = props;
   const colInfo = React.useMemo(() => columns.map((c) => ({ key: c.key, label: c.label })), [columns]);
   const filterInfo = React.useMemo<ListFilterInfo[]>(() => filters.map((f) => ({ key: f.key, label: f.label, kind: f.kind })), [filters]);
   const p = useListPrefs(moduleId, colInfo, filterInfo);
@@ -277,7 +282,10 @@ export function Base1List(props: Base1ListProps) {
     {searchable && <SearchBox value={search} onChange={setSearch} active={Boolean(applied.search) || favOnly} placeholder={props.searchPlaceholder} onApply={() => apply(values, search)} onApplyFavorites={() => { if (search !== applied.search) setApplied((a) => ({ ...a, search })); setFavOnly(true); }} favoritesDisabled={favorites.size === 0} onClear={() => { setSearch(""); setFavOnly(false); setApplied((a) => ({ ...a, search: "" })); }}
       columns={columns} scope={chipScope} fetchResults={(s) => fetchPage({ page: 1, pageSize: 20, search: s, filters: applied.params })} onPick={(r) => { setSelected(new Set([String(r["id"])])); enterRecord(r); }} isFavorite={(r) => favorites.has(String(r["id"]))}
       detailFields={prefs.search?.fields ?? columns.filter((c) => !["code", "name", "description", "title"].includes(c.key)).slice(0, 3).map((c) => c.key)} onDetailFieldsChange={(keys) => p.update((x) => ({ ...x, search: { ...(x.search ?? {}), fields: keys } }))} onDetailFieldsRestore={() => p.update((x) => ({ ...x, search: undefined }))} />}
-    <ViewSwitch value={view} recordDisabled={!Record && !onOpen} onChange={(m) => { if (m === "record") enterRecord(); else { setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } })); } }} />
+    <ViewSwitch value={view} semRegistro={semModoRegistro} recordDisabled={!Record && !onOpen} onChange={(m) => {
+      if (m === "record") { if (!semModoRegistro) enterRecord(); return; }
+      setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } }));
+    }} />
     <B1Popover className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><MoreHorizontal className="h-4 w-4" /></IconBtn>}><MenuList items={menuItems} onPick={onMenu} /></B1Popover>
   </div>;
   const distinctFor = (f: Base1FilterDef) => distinct && f.mode === "advanced" && f.kind !== "boolean" && !f.options ? (s: string) => distinct(f.key, s) : undefined;
