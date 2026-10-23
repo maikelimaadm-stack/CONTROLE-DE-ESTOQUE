@@ -17,7 +17,7 @@ import { rotaDoDocumento } from "../documentos-compra-list";
 import { CamposExtrasDaCompra } from "../campos-extras";
 import { PREFIXO_CENTRAL_COMPRAS, colunasDosItensDeCompras, linkDoTituloDeCompra } from "./adaptador";
 import type { EstadoDaConsulta } from "./estado";
-import { BensDaConsulta, DadosFiscaisDaConsulta, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
+import { BensDaConsulta, DadosFiscaisDaConsulta, RateioDaConsulta, SafraDaConsulta, temDadosFiscais } from "./dados-fiscais";
 import { modeloDeParcelasParaTela } from "./modelo-de-parcelas";
 
 /**
@@ -124,6 +124,7 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
       {e.ehCompra && nosDados.has("serie_nota") && <CampoLeitura rotulo="Série" adorno="travado" valor={t(d["serie_nota"])} />}
       <div data-testid="compras-consulta-codigo-campo"><CampoLeitura rotulo="Número" adorno="travado" testId="compras-consulta-codigo" valor={t(d["codigo"])} /></div>
       <CampoLeitura rotulo="Observação" multilinha valor={t(d["observacao"])} />
+      {e.ehCompra && <SafraDaConsulta d={d} />}
     </ColunaDeCampos>
     <CamposExtrasDaCompra>
       <CampoLeitura rotulo="Movimento" adorno="travado" valor={tr(e.variante.chaveI18n)} />
@@ -174,7 +175,7 @@ function ParcelasEmLeitura({ d, situacao }: { d: Row; situacao: string | null | 
     preferirTitulos: confirmado
   });
   if (modelo.especie === "vazio") {
-    return <p className="text-[12px] text-slate-500" data-testid="compras-consulta-parcelas-vazio">Nenhum cronograma de pagamento gravado.</p>;
+    return null;
   }
   if (modelo.especie === "resumo") {
     return <div data-testid="compras-consulta-parcelas-resumo" className="space-y-1 text-[12px] text-slate-600">

@@ -57,11 +57,14 @@ export function rateioNoPainel(e: OndeDesenhaRateio & Pick<EstadoDaCriacao, "mos
 
 /** O primeiro caminho de recusa que é do rateio (na ordem em que o servidor os deu), ou `null`. */
 export function caminhoDoRateioComErro(erros: Readonly<Record<string, string>>): string | null {
-  return Object.keys(erros).find(ehCaminhoDoRateio) ?? null;
+  /* Safra mora nos Dados — não dispara a abertura da aba Rateio. */
+  return Object.keys(erros).find((c) => ehCaminhoDoRateio(c) && !/\.safra_id$/.test(c) && c !== "safra_id") ?? null;
 }
 
 /** A aba do painel em que o caminho mora, quando é do rateio e o rateio está no painel; senão `null`. */
 export function abaDoRateio(e: OndeDesenhaRateio & Pick<EstadoDaCriacao, "mostrarFormulario">, caminho: string): string | null {
+  /* Safra mora nos Dados principais — a recusa não abre a aba Rateio. */
+  if (/\.safra_id$/.test(caminho) || caminho.endsWith("safra_id")) return null;
   return rateioNoPainel(e) && ehCaminhoDoRateio(caminho) ? ABA_DO_RATEIO : null;
 }
 
@@ -73,8 +76,19 @@ export function testIdDoAlvoDoRateio(caminho: string): string | null {
   const item = CAMINHO_DA_CLASSIFICACAO_DO_ITEM.exec(caminho);
   if (item) return `compras-item-classificacao-${item[1] ?? item[2]}`;
   if (!caminho.startsWith("rateio")) return null;
+  if (/\.safra_id$/.test(caminho)) return "compras-safra";
+  if (/\.conta_contabil_id$/.test(caminho)) return "compras-rateio-conta";
+  if (/\.categoria_financeira_id$/.test(caminho)) {
+    const linha = CAMINHO_DA_LINHA_DO_RATEIO.exec(caminho);
+    return linha ? `compras-rateio-natureza-linha-${linha[1] ?? linha[2]}` : "compras-rateio-natureza";
+  }
+  if (/\.centro_custo_id$/.test(caminho)) {
+    const linha = CAMINHO_DA_LINHA_DO_RATEIO.exec(caminho);
+    return linha ? `compras-rateio-centro-linha-${linha[1] ?? linha[2]}` : "compras-rateio-centro";
+  }
   const linha = CAMINHO_DA_LINHA_DO_RATEIO.exec(caminho);
-  return linha ? `compras-rateio-linha-${linha[1] ?? linha[2]}` : "compras-rateio";
+  /* Percentual da linha pareada → tabela Natureza (índice do produto cruzado, melhor esforço). */
+  return linha ? `compras-rateio-natureza-linha-${linha[1] ?? linha[2]}` : "compras-rateio";
 }
 
 /**

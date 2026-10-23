@@ -88,16 +88,19 @@ describe("RATEIO-01 · a recusa do rateio abre a aba dele e leva ao controle", (
     expect(ABA_DO_RATEIO).toBe("rateio");
     expect(ROTULO_DA_ABA_DO_RATEIO).toBe("Rateio e classificação");
     for (const c of ["rateio", "rateio.linhas[0].percentual", "itens[0].categoria_financeira_id", "itens.3.gera_estoque"]) expect(abaDoRateio(e, c), c).toBe(ABA_DO_RATEIO);
-    for (const c of ["frete", "plano_parcelas", "observacao", "chave_acesso", "itens[0].armazem_id"]) expect(abaDoRateio(e, c), c).toBeNull();
+    for (const c of ["frete", "plano_parcelas", "observacao", "chave_acesso", "itens[0].armazem_id", "rateio.linhas[0].safra_id"]) expect(abaDoRateio(e, c), c).toBeNull();
   });
 
   it("o alvo: a linha do rateio por valor, a linha da classificação do item, ou o \"Rateio\"", () => {
     expect(testIdDoAlvoDoRateio("rateio")).toBe("compras-rateio");
     expect(testIdDoAlvoDoRateio("rateio.tipo")).toBe("compras-rateio");
     expect(testIdDoAlvoDoRateio("rateio.linhas")).toBe("compras-rateio");
-    expect(testIdDoAlvoDoRateio("rateio.linhas[0].safra_id")).toBe("compras-rateio-linha-0");
-    expect(testIdDoAlvoDoRateio("rateio.linhas.12.percentual")).toBe("compras-rateio-linha-12");
-    expect(testIdDoAlvoDoRateio("rateio.linhas[3]")).toBe("compras-rateio-linha-3");
+    expect(testIdDoAlvoDoRateio("rateio.linhas[0].safra_id")).toBe("compras-safra");
+    expect(testIdDoAlvoDoRateio("rateio.linhas[0].conta_contabil_id")).toBe("compras-rateio-conta");
+    expect(testIdDoAlvoDoRateio("rateio.linhas.12.percentual")).toBe("compras-rateio-natureza-linha-12");
+    expect(testIdDoAlvoDoRateio("rateio.linhas[3]")).toBe("compras-rateio-natureza-linha-3");
+    expect(testIdDoAlvoDoRateio("rateio.linhas[1].categoria_financeira_id")).toBe("compras-rateio-natureza-linha-1");
+    expect(testIdDoAlvoDoRateio("rateio.linhas[1].centro_custo_id")).toBe("compras-rateio-centro-linha-1");
     expect(testIdDoAlvoDoRateio("itens[1].categoria_financeira_id")).toBe("compras-item-classificacao-1");
     expect(testIdDoAlvoDoRateio("itens.0.imobilizado")).toBe("compras-item-classificacao-0");
     for (const c of ["itens[0].armazem_id", "itens[0].quantidade", "categoria_financeira_id", "chave_acesso", "itens"]) expect(testIdDoAlvoDoRateio(c), c).toBeNull();

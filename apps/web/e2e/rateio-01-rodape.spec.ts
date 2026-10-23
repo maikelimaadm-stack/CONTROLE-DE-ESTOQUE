@@ -7,8 +7,8 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed, ty
  *
  * ┌─ O QUE ESTE ARQUIVO PROVA ─────────────────────────────────────────────────────────────────────┐
  * │ R01-1 com a capacidade `importacaoXml`, a criação da COMPRA tem a aba "Rateio e classificação"   │
- * │       no painel; CampoDaCentral sempre à vista (Conta Contábil + Safra + CAPEX); sem seletor;   │
- * │       sem itens na aba; sem “Adicionar rateio por valor”.                                       │
+ * │       no painel; duas tabelas (Natureza × Centro) + Conta Contábil; Safra nos Dados; CAPEX;     │
+ * │       sem seletor; sem itens na aba; sem “Adicionar rateio por valor”.                          │
  * │ R01-2 a recusa do rateio ABRE a aba "Rateio e classificação", marca pendência e leva ao controle.│
  * │ R01-3 o CORPO do POST com fiscais e rateio por valor é BYTE A BYTE o de referência.             │
  * │ R01-4 SEM a capacidade: nenhuma aba de rateio/fiscal, e o corpo de hoje byte a byte.             │
@@ -21,8 +21,8 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed, ty
 const P = "central-compras";
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 const caminho = (r: Response) => new URL(r.url()).pathname;
-/** Testids do rateio na aba (campos padrão CampoDaCentral; Conta Contábil/Safra/CAPEX à vista). */
-const DO_RATEIO = ["compras-rateio-e-itens", "compras-rateio", "compras-classificacao-unica", "compras-rateio-linha-0", "compras-rateio-linha-0-conta", "compras-rateio-linha-0-safra", "compras-classificacao-gasto"];
+/** Testids do rateio na aba (duas tabelas + Conta Contábil + CAPEX; Safra fica nos Dados). */
+const DO_RATEIO = ["compras-rateio-e-itens", "compras-rateio", "compras-classificacao-unica", "compras-rateio-natureza-linha-0", "compras-rateio-centro-linha-0", "compras-rateio-conta", "compras-classificacao-gasto"];
 /** Testids fiscais (aba Fiscal + faixa de totais + Dados principais para tipo de documento). */
 const FISCAIS_NO_PAINEL = ["compras-chave-acesso", "compras-uf-nota", "compras-valor-ipi", "compras-valor-icms-st"];
 const ABA_RATEIO = "Rateio e classificação";
@@ -111,7 +111,7 @@ const hojeIso = () => new Date().toISOString().slice(0, 10);
 
 /* ═════════════════════════════════ R01-1 ═════════════════════════════════ */
 
-test("R01-1 — com importacaoXml, campos padrão de rateio; Conta Contábil/Safra/CAPEX; sem seletor de modos", async ({ page }) => {
+test("R01-1 — com importacaoXml, duas tabelas de rateio; Conta Contábil na aba; Safra nos Dados; CAPEX; sem seletor", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
   const portas = await api<{ capacidades?: Record<string, unknown> }>(page, "GET", "/api/compras/compras/operation-types");
@@ -124,15 +124,18 @@ test("R01-1 — com importacaoXml, campos padrão de rateio; Conta Contábil/Saf
   await expect(botaoDosAdicionais(page), "sem acordeão Dados adicionais").toHaveCount(0);
   await expect(dados(page).getByTestId("compras-dados-fiscais"), "fiscais fora dos Dados principais").toHaveCount(0);
   for (const t of DO_RATEIO) await expect(dados(page).getByTestId(t), `${t}: nada do rateio nos Dados`).toHaveCount(0);
+  await expect(dados(page).getByTestId("compras-safra"), "Safra nos Dados principais").toBeVisible();
   await expect(dados(page).getByText("Rateio e itens"), "nem o título antigo do rateio").toHaveCount(0);
   await expect(dados(page).getByText("Classificação da compra"), "sem título de ajuda nos Dados").toHaveCount(0);
 
   const rateio = await abaDoRateio(page);
   for (const t of DO_RATEIO.slice(1)) await expect(rateio.getByTestId(t), `${t} na aba Rateio e classificação`).toHaveCount(1);
   for (const t of DO_RATEIO) await expect(page.getByTestId(t), `${t}: uma vez só na tela`).toHaveCount(1);
-  await expect(rateio.getByTestId("compras-classificacao-unica"), "uma linha na grade (par do documento)").toBeVisible();
-  await expect(rateio.getByTestId("compras-rateio-linha-0-conta"), "Conta Contábil sempre à vista").toBeVisible();
-  await expect(rateio.getByTestId("compras-rateio-linha-0-safra"), "Safra sempre à vista").toBeVisible();
+  await expect(rateio.getByTestId("compras-classificacao-unica"), "duas tabelas no modo documento").toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-natureza")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-centro")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-conta"), "Conta Contábil à parte na aba").toBeVisible();
+  await expect(rateio.getByTestId("compras-safra"), "Safra não fica no rateio").toHaveCount(0);
   await expect(rateio.getByTestId("compras-classificacao-gasto"), "CAPEX/OPEX como seleção à vista").toBeVisible();
   await expect(rateio.getByTestId("compras-rateio-adicionar-por-valor")).toHaveCount(0);
   await expect(rateio.getByTestId("compras-itens-classificacao"), "sem itens na aba Rateio").toHaveCount(0);
@@ -152,15 +155,15 @@ test("R01-1 — com importacaoXml, campos padrão de rateio; Conta Contábil/Saf
   await expect(dados(page).getByTestId("compras-tipo-documento-fiscal"), "tipo de documento nos Dados principais").toHaveCount(1);
 
   await abrirAba(page, ABA_RATEIO);
-  await rateio.getByTestId("compras-rateio-adicionar").click();
+  await rateio.getByTestId("compras-rateio-natureza-adicionar").click();
   await expect(rateio.getByTestId("compras-rateio-por-valor")).toBeVisible();
   await expect(rateio.getByTestId("compras-classificacao-unica"), "passa a por_valor ao adicionar linha").toHaveCount(0);
-  await expect(rateio.getByTestId("compras-rateio-linha-0")).toBeVisible();
-  await expect(rateio.getByTestId("compras-rateio-linha-1")).toBeVisible();
-  await rateio.getByTestId("compras-rateio-linha-0-percentual").fill("60");
-  await rateio.getByTestId("compras-rateio-linha-1-percentual").fill("40");
-  await expect(rateio.getByTestId("compras-rateio-soma")).toContainText("Soma: 100%");
-  await expect(dados(page).locator('[data-testid^="compras-rateio-linha-"]'), "nenhuma linha do rateio nos Dados").toHaveCount(0);
+  await expect(rateio.getByTestId("compras-rateio-natureza-linha-0")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-natureza-linha-1")).toBeVisible();
+  await rateio.getByTestId("compras-rateio-natureza-linha-0-percentual").fill("60");
+  await rateio.getByTestId("compras-rateio-natureza-linha-1-percentual").fill("40");
+  await expect(rateio.getByTestId("compras-rateio-natureza-soma")).toContainText("Soma: 100%");
+  await expect(dados(page).locator('[data-testid^="compras-rateio-natureza-linha-"]'), "nenhuma linha do rateio nos Dados").toHaveCount(0);
 });
 
 /* ═════════════════════════════════ R01-2 ═════════════════════════════════ */
@@ -171,11 +174,12 @@ test("R01-2 — a recusa do rateio ABRE a aba Rateio e classificação, com o pa
   await compraNaCentral(page, c);
 
   let rateio = await abaDoRateio(page);
-  const linha = rateio.getByTestId("compras-rateio-linha-0");
-  await escolherEm(page, linha, "Natureza Financeira", c.natureza.label);
-  await escolherEm(page, linha, "Centro de Resultado", c.centro.label);
-  /* % ≠ 100 promove a linha para rateio por valor (Conta/Safra já estavam à vista). */
-  await linha.getByTestId("compras-rateio-linha-0-percentual").fill("90");
+  const nat = rateio.getByTestId("compras-rateio-natureza-linha-0");
+  const cen = rateio.getByTestId("compras-rateio-centro-linha-0");
+  await escolherEm(page, nat, "Natureza Financeira", c.natureza.label);
+  await escolherEm(page, cen, "Centro de Resultado", c.centro.label);
+  /* % ≠ 100 promove a Natureza para rateio por valor (produto cruzado com o centro a 100%). */
+  await nat.getByTestId("compras-rateio-natureza-linha-0-percentual").fill("90");
   await abrirAba(page, "Financeiro");
   await page.getByTestId(`${P}-recolher`).click();
   await expect(painel(page), "premissa: o painel recolhido").toHaveAttribute("data-recolhido", "true");
@@ -218,13 +222,15 @@ test("R01-3 — o corpo do POST com fiscais e rateio por valor pela aba é BYTE 
   await page.getByTestId("compras-uf-nota").fill("sp");
   await page.getByTestId("compras-valor-ipi").fill("10.00");
   const rateio = await abaDoRateio(page);
-  /* Adicionar linha promove por_valor; remove a 2ª e deixa 100% na 1ª. */
-  await rateio.getByTestId("compras-rateio-adicionar").click();
-  await rateio.getByTestId("compras-rateio-linha-1-remover").click();
-  const linha = rateio.getByTestId("compras-rateio-linha-0");
-  await escolherEm(page, linha, "Natureza Financeira", c.natureza.label);
-  await escolherEm(page, linha, "Centro de Resultado", c.centro.label);
-  await linha.getByTestId("compras-rateio-linha-0-percentual").fill("100");
+  /* Adicionar natureza promove por_valor; remove a 2ª e deixa 100% na 1ª × centro. */
+  await rateio.getByTestId("compras-rateio-natureza-adicionar").click();
+  await rateio.getByTestId("compras-rateio-natureza-linha-1-remover").click();
+  const nat = rateio.getByTestId("compras-rateio-natureza-linha-0");
+  const cen = rateio.getByTestId("compras-rateio-centro-linha-0");
+  await escolherEm(page, nat, "Natureza Financeira", c.natureza.label);
+  await escolherEm(page, cen, "Centro de Resultado", c.centro.label);
+  await nat.getByTestId("compras-rateio-natureza-linha-0-percentual").fill("100");
+  await cen.getByTestId("compras-rateio-centro-linha-0-percentual").fill("100");
 
   // A REFERÊNCIA: a forma do corpo do estado (`corpoDoLancamento`), montada à mão do mesmo cenário, na mesma ordem — o
   // cabeçalho de hoje (sem as chaves vazias), os itens, os fiscais preenchidos e o rateio (percentual em TEXTO).
@@ -276,7 +282,7 @@ test("R01-4 — SEM a capacidade importacaoXml: nenhuma aba de rateio/fiscal, na
   await escolherEm(page, page.getByTestId("compras-central"), "Natureza Financeira", c.natureza.label);
   await escolherEm(page, page.getByTestId("compras-central"), "Centro de Resultado", c.centro.label);
   await expect(botaoDosAdicionais(page), "sem campo a recolher, sem Dados adicionais (como hoje)").toHaveCount(0);
-  for (const t of [...DO_RATEIO, "compras-dados-fiscais", ...FISCAIS_NO_PAINEL, "compras-seguro", "compras-tipo-titulo", "compras-classificacao-gasto"]) {
+  for (const t of [...DO_RATEIO, "compras-safra", "compras-dados-fiscais", ...FISCAIS_NO_PAINEL, "compras-seguro", "compras-tipo-titulo", "compras-classificacao-gasto"]) {
     await expect(page.getByTestId(t), `${t}: nada da F7 na tela`).toHaveCount(0);
   }
 

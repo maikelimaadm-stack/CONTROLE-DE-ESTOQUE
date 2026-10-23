@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import Link from "next/link";
+import { Plus, X } from "lucide-react";
 import { enumLabel, enumOptions } from "@/lib/copy";
 import { D } from "@agro/shared";
 import { brl, num } from "@/lib/utils";
@@ -12,9 +13,12 @@ import { RefSelect } from "@/components/ui/ref-select";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import type { Row } from "@/features/docs/shared";
 import {
-  opcoesDeNaturezaDeDespesa, percentualDoValorDoRateio, somaDoRateio, valorDoPercentualDoRateio,
+  opcoesDeNaturezaDeDespesa, percentualDoValorDoRateio, valorDoPercentualDoRateio,
   type ChaveDosDadosFiscais, type EstadoDaCriacao
 } from "./estado";
+import {
+  projetarRateioIndependente, somaDasPartes, type ParteDoRateioIndependente
+} from "./rateio-independente";
 
 /**
  * OS DADOS FISCAIS DA COMPRA (OPERACOES-01 F7, decisão 284) — o que a nota antiga tinha no cabeçalho e a compra passou
@@ -26,10 +30,10 @@ import {
  *   · CONSULTA (`DadosFiscaisDaConsulta`, `RateioDaConsulta`, `BensDaConsulta`): leitura do que o detalhe trouxe. Compra
  *     sem nenhum dado fiscal (a de hoje, ou a API anterior) não mostra nada.
  *
- *   · CLASSIFICAÇÃO E RATEIO (`RateioEItensDaCriacao`, `compras-rateio-e-itens`, decisão 325): classificação única
- *     (Natureza Financeira + Centro de Resultado) por padrão; “Adicionar rateio por valor” sob demanda. Sem seletor
- *     `Como classificar` / `por_produto` para compras novas; legado por_produto só em leitura. RATEIO-01 (316): mora
- *     na aba do painel (`criacao-painel.tsx` / `rateio-no-rodape.ts`), nunca nos Dados principais.
+ *   · CLASSIFICAÇÃO E RATEIO (`RateioEItensDaCriacao`, `compras-rateio-e-itens`, decisão 325): duas tabelas
+ *     independentes (Natureza e Centro), no mesmo CampoDaCentral das parcelas; Conta Contábil à parte na aba;
+ *     Safra nos Dados principais. Corpo = produto cruzado das %. Sem seletor `Como classificar` / `por_produto`
+ *     para compras novas; legado por_produto só em leitura. RATEIO-01 (316): mora na aba do painel.
  */
 
 const TIPOS_DE_DOCUMENTO = enumOptions("document_type");
@@ -104,126 +108,161 @@ export function TipoDeTituloDaCriacao({ e }: { e: EstadoDaCriacao }) {
     : campo;
 }
 
-type LinhaRateioNaTela = { categoriaId: string; centroId: string; contaId: string; safraId: string; percentual: string };
+/** Vista independente a partir do estado (documento = par do cabeçalho a 100%). */
+function vistaDoRateio(e: EstadoDaCriacao) {
+  const r = e.rateio;
+  const h = e.cabecalho;
+  if (r.tipo === "por_valor") return projetarRateioIndependente(r.linhas);
+  return {
+    naturezas: [{ id: h.categoria_financeira_id, percentual: "100" }],
+    centros: [{ id: h.centro_custo_id, percentual: "100" }],
+    contaId: "",
+    safraId: "",
+  };
+}
+
+type DimensaoDoRateio = "natureza" | "centro";
 
 /**
- * Uma linha do rateio — MESMOS CampoDaCentral da Central (cor, caixa, ícone, rótulo à frente).
- * Conta Contábil e Safra sempre desenhados; sem grade paralela nem rótulo duplicado.
+ * Uma parte (Natureza ou Centro) — mesmos CampoDaCentral das parcelas (vencimento/valor/obs).
+ * Conta Contábil e Safra NÃO entram na linha.
  */
-function LinhaDoRateio({
-  e, k, l, unica, onMudar, onRemover,
+function LinhaDaParteDoRateio({
+  e, dimensao, k, parte, unica, onMudar, onRemover,
 }: {
-  e: EstadoDaCriacao; k: number; l: LinhaRateioNaTela; unica: boolean;
-  onMudar: (p: Partial<LinhaRateioNaTela>) => void; onRemover?: () => void;
+  e: EstadoDaCriacao; dimensao: DimensaoDoRateio; k: number; parte: ParteDoRateioIndependente; unica: boolean;
+  onMudar: (p: Partial<ParteDoRateioIndependente>) => void; onRemover?: () => void;
 }) {
-  const erroEm = (campo: string) => e.erro(`rateio.linhas[${k}].${campo}`) ?? e.erro(`rateio.linhas.${k}.${campo}`)
-    ?? (unica && (campo === "categoria_financeira_id" || campo === "centro_custo_id") ? e.erro(campo) : undefined);
+  const campoDoc = dimensao === "natureza" ? "categoria_financeira_id" : "centro_custo_id";
+  const prefixo = dimensao === "natureza" ? "compras-rateio-natureza" : "compras-rateio-centro";
+  const rotulo = dimensao === "natureza" ? "Natureza Financeira" : "Centro de Resultado";
+  const erroEm = e.erro(`rateio.linhas[${k}].${campoDoc}`) ?? e.erro(`rateio.linhas.${k}.${campoDoc}`)
+    ?? (unica ? e.erro(campoDoc) : undefined);
   const base = String(e.totalExibido ?? "0");
-  const valorExibido = valorDoPercentualDoRateio(base, l.percentual);
-  const dc = (c: "categoria_financeira_id" | "centro_custo_id") => (
-    unica
-      ? {
-          "data-campo": c,
-          ...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" as const } : {}),
-          ...(e.layout ? { "data-obrigatorio": String(e.obrigatorio(c)) } : {}),
-        }
-      : {}
-  );
-  /** Mesmo fieldset da trava do layout / TOP (LANC-T2): `display: contents`, sem estilo novo. */
-  const envolver = (c: "categoria_financeira_id" | "centro_custo_id", campo: React.ReactElement) => {
-    if (!unica || !e.travado(c)) return campo;
-    return <fieldset key={c} disabled data-editavel="false"
-      data-travado-pela-top={e.travadoPelaTop(c) ? "true" : undefined}
-      data-travado-na-edicao={e.travadoNaEdicao(c) ? "true" : undefined}
-      data-motivo={e.motivoNaEdicao(c) ?? undefined}
-      style={{ display: "contents" }}>{campo}</fieldset>;
-  };
-  return <div data-testid={`compras-rateio-linha-${k}`} className="space-y-1">
+  const valorExibido = valorDoPercentualDoRateio(base, parte.percentual);
+  const dc = unica
+    ? {
+        "data-campo": campoDoc,
+        ...(e.semeadoPelaTop(campoDoc) ? { "data-padrao-top": "semeado" as const } : {}),
+        ...(e.layout ? { "data-obrigatorio": String(e.obrigatorio(campoDoc)) } : {}),
+      }
+    : {};
+  const campo = <CampoDaCentral rotulo={rotulo} obrigatorio erro={erroEm} icone="pesquisa" preenchido={Boolean(parte.id)}
+    testId={unica ? (dimensao === "natureza" ? "compras-classificacao-natureza" : "compras-classificacao-centro") : `${prefixo}-linha-${k}-ref`}
+    {...dc}>
+    {dimensao === "natureza"
+      ? <RefSelect resource="financial_categories" value={parte.id} buscarOpcoes={opcoesDeNaturezaDeDespesa}
+          onChange={(v) => onMudar({ id: v ?? "" })} labelHint={unica ? e.dica("categoria_financeira_id") : undefined} />
+      : <RefSelect resource="cost_centers" value={parte.id} filter={{ kind: "analytic" }}
+          onChange={(v) => onMudar({ id: v ?? "" })} labelHint={unica ? e.dica("centro_custo_id") : undefined} />}
+  </CampoDaCentral>;
+  const envolvido = unica && e.travado(campoDoc)
+    ? <fieldset key={campoDoc} disabled data-editavel="false"
+        data-travado-pela-top={e.travadoPelaTop(campoDoc) ? "true" : undefined}
+        data-travado-na-edicao={e.travadoNaEdicao(campoDoc) ? "true" : undefined}
+        data-motivo={e.motivoNaEdicao(campoDoc) ?? undefined}
+        style={{ display: "contents" }}>{campo}</fieldset>
+    : campo;
+  return <div data-testid={`${prefixo}-linha-${k}`} className="space-y-1">
     <ColunaDeCampos>
-      {envolver("categoria_financeira_id", <CampoDaCentral rotulo="Natureza Financeira" obrigatorio erro={erroEm("categoria_financeira_id")} icone="pesquisa" preenchido={Boolean(l.categoriaId)}
-        testId={unica ? "compras-classificacao-natureza" : `compras-rateio-linha-${k}-natureza`} {...dc("categoria_financeira_id")}>
-        <RefSelect resource="financial_categories" value={l.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa}
-          onChange={(v) => onMudar({ categoriaId: v ?? "" })} labelHint={unica ? e.dica("categoria_financeira_id") : undefined} />
-      </CampoDaCentral>)}
-      {envolver("centro_custo_id", <CampoDaCentral rotulo="Centro de Resultado" obrigatorio erro={erroEm("centro_custo_id")} icone="pesquisa" preenchido={Boolean(l.centroId)}
-        testId={unica ? "compras-classificacao-centro" : `compras-rateio-linha-${k}-centro`} {...dc("centro_custo_id")}>
-        <RefSelect resource="cost_centers" value={l.centroId} filter={{ kind: "analytic" }}
-          onChange={(v) => onMudar({ centroId: v ?? "" })} labelHint={unica ? e.dica("centro_custo_id") : undefined} />
-      </CampoDaCentral>)}
-      <CampoDaCentral rotulo="Conta Contábil" icone="pesquisa" preenchido={Boolean(l.contaId)}
-        testId={`compras-rateio-linha-${k}-conta`}>
-        <RefSelect resource="chart_accounts" value={l.contaId} onChange={(v) => onMudar({ contaId: v ?? "" })} />
-      </CampoDaCentral>
-      <CampoDaCentral rotulo="Safra" icone="pesquisa" erro={erroEm("safra_id")} preenchido={Boolean(l.safraId)}
-        testId={`compras-rateio-linha-${k}-safra`}>
-        <RefSelect resource="harvests" value={l.safraId} onChange={(v) => onMudar({ safraId: v ?? "" })} />
-      </CampoDaCentral>
-      <CampoDaCentral rotulo="Percentual (%)" obrigatorio erro={erroEm("percentual")} preenchido={l.percentual !== ""}>
-        <Input data-testid={`compras-rateio-linha-${k}-percentual`} inputMode="decimal" value={l.percentual}
-          onChange={(ev) => onMudar({ percentual: ev.target.value })} />
-      </CampoDaCentral>
-      <CampoDaCentral rotulo="Valor" preenchido={valorExibido !== ""}>
-        <Input data-testid={`compras-rateio-linha-${k}-valor`} inputMode="decimal" value={valorExibido}
+      {envolvido}
+      <CampoDaCentral rotulo="Valor" preenchido={valorExibido !== ""} testId={`${prefixo}-linha-${k}-valor-campo`}>
+        <Input data-testid={`${prefixo}-linha-${k}-valor`} inputMode="decimal" value={valorExibido}
           onChange={(ev) => onMudar({ percentual: percentualDoValorDoRateio(base, ev.target.value) })} />
+      </CampoDaCentral>
+      <CampoDaCentral rotulo="Percentual (%)" obrigatorio preenchido={parte.percentual !== ""} testId={`${prefixo}-linha-${k}-percentual-campo`}>
+        <Input data-testid={`${prefixo}-linha-${k}-percentual`} inputMode="decimal" value={parte.percentual}
+          onChange={(ev) => onMudar({ percentual: ev.target.value })} />
       </CampoDaCentral>
     </ColunaDeCampos>
     {onRemover && <div className="pt-0.5">
-      <Button size="sm" variant="ghost" data-testid={`compras-rateio-linha-${k}-remover`} onClick={onRemover}>Remover linha</Button>
+      <Button size="sm" variant="ghost" className="text-slate-400 hover:text-rose-600"
+        data-testid={`${prefixo}-linha-${k}-remover`} onClick={onRemover}>
+        <X className="mr-1 h-3.5 w-3.5" aria-hidden />Remover
+      </Button>
     </div>}
   </div>;
 }
 
+/** Tabela independente (Natureza ou Centro) — lista como as parcelas, CampoDaCentral. */
+function TabelaDoRateioIndependente({
+  e, dimensao, partes, unica, onMudar, onAdicionar, onRemover,
+}: {
+  e: EstadoDaCriacao; dimensao: DimensaoDoRateio; partes: ParteDoRateioIndependente[]; unica: boolean;
+  onMudar: (k: number, p: Partial<ParteDoRateioIndependente>) => void;
+  onAdicionar: () => void; onRemover: (k: number) => void;
+}) {
+  const prefixo = dimensao === "natureza" ? "compras-rateio-natureza" : "compras-rateio-centro";
+  const titulo = dimensao === "natureza" ? "Rateio Natureza Financeira" : "Rateio Centro de Resultado";
+  const base = (() => { try { return D(String(e.totalExibido ?? "0")); } catch { return D(0); } })();
+  const somaPct = somaDasPartes(partes);
+  const valorUsado = partes.reduce((a, p) => {
+    try { return a.plus(base.times(D(p.percentual || "0")).div(100)); } catch { return a; }
+  }, D(0));
+  const restante = base.minus(valorUsado);
+  return <div data-testid={prefixo} className="space-y-2">
+    <div className="flex items-center justify-between gap-2">
+      <p className="text-[11.5px] font-semibold text-slate-600">{titulo} <span className="text-rose-600" aria-hidden>*</span></p>
+      <Button size="sm" variant="outline" data-testid={`${prefixo}-adicionar`} onClick={onAdicionar}
+        disabled={partes.length >= 50} aria-label={`Adicionar ${dimensao === "natureza" ? "natureza" : "centro"}`}>
+        <Plus className="mr-1 h-3.5 w-3.5" aria-hidden />Adicionar
+      </Button>
+    </div>
+    <div className="space-y-3">
+      {partes.map((p, k) => (
+        <LinhaDaParteDoRateio key={k} e={e} dimensao={dimensao} k={k} parte={p} unica={unica && partes.length === 1}
+          onMudar={(patch) => onMudar(k, patch)}
+          onRemover={partes.length > 1 ? () => onRemover(k) : undefined} />
+      ))}
+    </div>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-slate-600">
+      <span data-testid={`${prefixo}-soma`}>Soma: {somaPct}% | Valor: {num(valorUsado.toFixed(2), 2)} | Restante: {num(restante.toFixed(2), 2)}</span>
+    </div>
+  </div>;
+}
+
 /**
- * Rateio e classificação: campos padrão da Central (CampoDaCentral), Conta Contábil/Safra/CAPEX sempre à vista.
- * Sem SimpleTable, sem grade com rótulo duplicado. Sem itens na aba; legado por_produto só em leitura.
+ * Rateio e classificação: duas tabelas independentes (Natureza × Centro) no CampoDaCentral das parcelas.
+ * Conta Contábil à parte; Safra nos Dados principais; CAPEX à vista. Sem itens na aba; legado por_produto só leitura.
  */
 export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
   if (!e.editarRateio) return null;
   const r = e.rateio;
   const f = e.fiscal;
-  const h = e.cabecalho;
   const legadoPorProduto = r.tipo === "por_produto";
   const porValor = r.tipo === "por_valor";
-  /** Uma linha na tela: por_valor usa as linhas; classificação única (documento) = par do cabeçalho a 100%. */
-  const linhasNaTela: LinhaRateioNaTela[] = porValor
-    ? r.linhas
-    : [{
-        categoriaId: h.categoria_financeira_id, centroId: h.centro_custo_id,
-        contaId: "", safraId: "", percentual: "100",
-      }];
-  const base = (() => { try { return D(String(e.totalExibido ?? "0")); } catch { return D(0); } })();
-  const valorUsado = linhasNaTela.reduce((a, l) => {
-    try { return a.plus(base.times(D(l.percentual || "0")).div(100)); } catch { return a; }
-  }, D(0));
-  const diferenca = base.minus(valorUsado);
-  const somaPct = porValor ? somaDoRateio(r) : "100";
+  const vista = vistaDoRateio(e);
+  const unica = !porValor;
 
-  const mudarLinha = (k: number, p: Partial<LinhaRateioNaTela>) => {
-    if (!porValor) {
-      const precisaDividir = Boolean(p.contaId) || Boolean(p.safraId)
-        || (p.percentual !== undefined && p.percentual.trim() !== "" && p.percentual.trim() !== "100");
-      if (precisaDividir) {
-        e.ativarRateioPorValor({
-          ...(p.categoriaId !== undefined ? { categoriaId: p.categoriaId } : {}),
-          ...(p.centroId !== undefined ? { centroId: p.centroId } : {}),
-          ...(p.contaId !== undefined ? { contaId: p.contaId } : {}),
-          ...(p.safraId !== undefined ? { safraId: p.safraId } : {}),
-          ...(p.percentual !== undefined ? { percentual: p.percentual } : {}),
-        });
-        return;
-      }
-      if (p.categoriaId !== undefined) e.mudar({ categoria_financeira_id: p.categoriaId });
-      if (p.centroId !== undefined) e.mudar({ centro_custo_id: p.centroId });
-      return;
-    }
-    e.mudarLinhaDoRateio(k, p);
+  const aplicar = (
+    naturezas: ParteDoRateioIndependente[],
+    centros: ParteDoRateioIndependente[],
+    contaId: string,
+    safraId: string,
+    opts?: { forcarPorValor?: boolean },
+  ) => e.aplicarRateioIndependente(naturezas, centros, contaId, safraId, opts);
+
+  const mudarNatureza = (k: number, p: Partial<ParteDoRateioIndependente>) => {
+    const naturezas = vista.naturezas.map((l, i) => (i === k ? { ...l, ...p } : l));
+    aplicar(naturezas, vista.centros, vista.contaId, vista.safraId);
   };
-  const adicionarLinha = () => {
-    if (!porValor) {
-      e.ativarRateioPorValor(undefined, { categoriaId: "", centroId: "", contaId: "", safraId: "", percentual: "" });
-      return;
-    }
-    e.adicionarLinhaDoRateio();
+  const mudarCentro = (k: number, p: Partial<ParteDoRateioIndependente>) => {
+    const centros = vista.centros.map((l, i) => (i === k ? { ...l, ...p } : l));
+    aplicar(vista.naturezas, centros, vista.contaId, vista.safraId);
+  };
+  const adicionarNatureza = () => {
+    aplicar([...vista.naturezas, { id: "", percentual: "" }], vista.centros, vista.contaId, vista.safraId, { forcarPorValor: true });
+  };
+  const adicionarCentro = () => {
+    aplicar(vista.naturezas, [...vista.centros, { id: "", percentual: "" }], vista.contaId, vista.safraId, { forcarPorValor: true });
+  };
+  const removerNatureza = (k: number) => {
+    if (vista.naturezas.length <= 1) return;
+    aplicar(vista.naturezas.filter((_, i) => i !== k), vista.centros, vista.contaId, vista.safraId, { forcarPorValor: true });
+  };
+  const removerCentro = (k: number) => {
+    if (vista.centros.length <= 1) return;
+    aplicar(vista.naturezas, vista.centros.filter((_, i) => i !== k), vista.contaId, vista.safraId, { forcarPorValor: true });
   };
 
   return <div data-testid="compras-rateio-e-itens" className="mt-1 space-y-3">
@@ -236,25 +275,24 @@ export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
         </div>
       ) : (
         <div data-testid={porValor ? "compras-rateio-por-valor" : "compras-classificacao-unica"} className="space-y-3">
-          {linhasNaTela.map((l, k) => (
-            <LinhaDoRateio key={k} e={e} k={k} l={l} unica={linhasNaTela.length === 1}
-              onMudar={(p) => mudarLinha(k, p)}
-              onRemover={porValor && r.linhas.length > 1 ? () => e.removerLinhaDoRateio(k) : undefined} />
-          ))}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
-            <Button size="sm" variant="outline" data-testid="compras-rateio-adicionar" onClick={adicionarLinha}
-              disabled={porValor && r.linhas.length >= 50}>Adicionar linha</Button>
-            <span data-testid="compras-rateio-base" className="text-slate-600">Base: {num(e.totalExibido, 2)}</span>
-            <span data-testid="compras-rateio-soma" className="ml-auto text-slate-600">
-              Soma: {somaPct}% | Valor: {num(valorUsado.toFixed(2), 2)} | Diferença: {num(diferenca.toFixed(2), 2)}
-            </span>
+          <div className="grid gap-4 md:grid-cols-2">
+            <TabelaDoRateioIndependente e={e} dimensao="natureza" partes={vista.naturezas} unica={unica}
+              onMudar={mudarNatureza} onAdicionar={adicionarNatureza} onRemover={removerNatureza} />
+            <TabelaDoRateioIndependente e={e} dimensao="centro" partes={vista.centros} unica={unica}
+              onMudar={mudarCentro} onAdicionar={adicionarCentro} onRemover={removerCentro} />
           </div>
+          <p className="text-[12px] text-slate-600" data-testid="compras-rateio-base">Base: {num(e.totalExibido, 2)}</p>
           {e.erro("rateio") && <p className="text-[12px] text-red-600" data-parte="erro">{e.erro("rateio")}</p>}
         </div>
       )}
     </div>
 
     <ColunaDeCampos>
+      <CampoDaCentral rotulo="Conta Contábil" icone="pesquisa" preenchido={Boolean(vista.contaId)}
+        testId="compras-rateio-conta">
+        <RefSelect resource="chart_accounts" value={vista.contaId}
+          onChange={(v) => aplicar(vista.naturezas, vista.centros, v ?? "", vista.safraId, { forcarPorValor: Boolean(v) })} />
+      </CampoDaCentral>
       <CampoDaCentral rotulo="Classificação CAPEX/OPEX" erro={e.erro("classificacao_gasto")} icone="selecao" preenchido
         testId="compras-classificacao-gasto-campo">
         <MgSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto}
@@ -262,6 +300,20 @@ export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
       </CampoDaCentral>
     </ColunaDeCampos>
   </div>;
+}
+
+/** Safra nos Dados principais (criação) — carimba todas as linhas do rateio; fora das tabelas. */
+export function SafraDaCriacao({ e }: { e: EstadoDaCriacao }) {
+  if (!e.editarRateio) return null;
+  const vista = vistaDoRateio(e);
+  const erro = e.erro("rateio.linhas[0].safra_id") ?? e.erro("rateio.linhas.0.safra_id");
+  return <CampoDaCentral rotulo="Safra" icone="pesquisa" erro={erro} preenchido={Boolean(vista.safraId)} testId="compras-safra">
+    <RefSelect resource="harvests" value={vista.safraId}
+      onChange={(v) => e.aplicarRateioIndependente(
+        vista.naturezas, vista.centros, vista.contaId, v ?? "",
+        { forcarPorValor: Boolean(v) },
+      )} />
+  </CampoDaCentral>;
 }
 
 /* ═════════════════════════════════════ CONSULTA ═════════════════════════════════════ */
@@ -313,27 +365,62 @@ export function percentualDaTela(v: unknown): string {
 }
 const codigoENome = (codigo: unknown, nome: unknown) => [texto(codigo), texto(nome)].filter(Boolean).join(" — ") || "";
 
-/** Uma linha do rateio em LEITURA — mesmos rótulos e CampoLeitura da Central (paridade com a edição). */
-function LinhaDoRateioEmLeitura({ l, k }: { l: Row; k: number }) {
-  return <div data-testid={`compras-consulta-rateio-linha-${k}`} className="space-y-1">
-    <ColunaDeCampos>
-      <CampoLeitura rotulo="Natureza Financeira" adorno="pesquisa" testId={k === 0 ? "compras-consulta-rateio-natureza" : undefined}
-        valor={codigoENome(l["categoria_financeira_codigo"], l["categoria_financeira_nome"])} />
-      <CampoLeitura rotulo="Centro de Resultado" adorno="pesquisa" testId={k === 0 ? "compras-consulta-rateio-centro" : undefined}
-        valor={codigoENome(l["centro_custo_codigo"], l["centro_custo_nome"])} />
-      <CampoLeitura rotulo="Conta Contábil" adorno="pesquisa" testId={k === 0 ? "compras-consulta-rateio-conta" : `compras-consulta-rateio-linha-${k}-conta`}
-        valor={codigoENome(l["conta_contabil_codigo"], l["conta_contabil_nome"])} />
-      <CampoLeitura rotulo="Safra" adorno="pesquisa" testId={k === 0 ? "compras-consulta-rateio-safra" : `compras-consulta-rateio-linha-${k}-safra`}
-        valor={texto(l["safra_nome"])} />
-      <CampoLeitura rotulo="Percentual (%)" testId={k === 0 ? "compras-consulta-rateio-percentual" : undefined}
-        valor={percentualDaTela(l["percentual"])} />
-    </ColunaDeCampos>
+type ParteLeitura = { id: string; rotulo: string; percentual: string };
+
+/** Agrega linhas pareadas da consulta em Natureza × Centro (mesma regra da edição). */
+function projetarLeitura(linhas: readonly Row[]): {
+  naturezas: ParteLeitura[]; centros: ParteLeitura[]; conta: string; safra: string;
+} {
+  const natOrdem: string[] = [];
+  const cenOrdem: string[] = [];
+  const natSoma = new Map<string, ReturnType<typeof D>>();
+  const cenSoma = new Map<string, ReturnType<typeof D>>();
+  const natRotulo = new Map<string, string>();
+  const cenRotulo = new Map<string, string>();
+  let conta = "";
+  let safra = "";
+  for (const l of linhas) {
+    let p: ReturnType<typeof D>;
+    try { p = D(String(l["percentual"] ?? "0")); } catch { p = D(0); }
+    const nid = texto(l["categoria_financeira_id"]);
+    const cid = texto(l["centro_custo_id"]);
+    if (!natSoma.has(nid)) { natOrdem.push(nid); natSoma.set(nid, D(0)); natRotulo.set(nid, codigoENome(l["categoria_financeira_codigo"], l["categoria_financeira_nome"])); }
+    if (!cenSoma.has(cid)) { cenOrdem.push(cid); cenSoma.set(cid, D(0)); cenRotulo.set(cid, codigoENome(l["centro_custo_codigo"], l["centro_custo_nome"])); }
+    natSoma.set(nid, (natSoma.get(nid) ?? D(0)).plus(p));
+    cenSoma.set(cid, (cenSoma.get(cid) ?? D(0)).plus(p));
+    if (!conta) conta = codigoENome(l["conta_contabil_codigo"], l["conta_contabil_nome"]);
+    if (!safra) safra = texto(l["safra_nome"]);
+  }
+  return {
+    naturezas: natOrdem.map((id) => ({ id, rotulo: natRotulo.get(id) ?? "", percentual: (natSoma.get(id) ?? D(0)).toFixed() })),
+    centros: cenOrdem.map((id) => ({ id, rotulo: cenRotulo.get(id) ?? "", percentual: (cenSoma.get(id) ?? D(0)).toFixed() })),
+    conta, safra,
+  };
+}
+
+function TabelaLeituraDoRateio({
+  titulo, testId, partes, rotuloRef, testIdRef,
+}: {
+  titulo: string; testId: string; partes: ParteLeitura[]; rotuloRef: string; testIdRef: string;
+}) {
+  return <div data-testid={testId} className="space-y-2">
+    <p className="text-[11.5px] font-semibold text-slate-600">{titulo}</p>
+    <div className="space-y-3">
+      {partes.map((p, k) => (
+        <div key={k} data-testid={`${testId}-linha-${k}`} className="space-y-1">
+          <ColunaDeCampos>
+            <CampoLeitura rotulo={rotuloRef} adorno="pesquisa" testId={k === 0 ? testIdRef : undefined} valor={p.rotulo} />
+            <CampoLeitura rotulo="Percentual (%)" valor={percentualDaTela(p.percentual)} />
+          </ColunaDeCampos>
+        </div>
+      ))}
+    </div>
   </div>;
 }
 
 /**
- * O RATEIO da compra (`compras-consulta-rateio`): mesmos campos padrão da edição (CampoLeitura).
- * Conta Contábil e Safra sempre à vista; classificação única = uma linha do par do documento.
+ * O RATEIO da compra (`compras-consulta-rateio`): duas tabelas independentes (paridade com a edição).
+ * Conta Contábil à parte; Safra nos Dados principais (`SafraDaConsulta`).
  */
 export function RateioDaConsulta({ d }: { d: Row }) {
   const tipo = d["rateio_tipo"];
@@ -360,15 +447,38 @@ export function RateioDaConsulta({ d }: { d: Row }) {
     </div>;
   }
   const linhasDaTela: Row[] = tipo === "por_valor" ? linhas : [{
+    categoria_financeira_id: d["categoria_financeira_id"],
     categoria_financeira_codigo: d["categoria_financeira_codigo"],
     categoria_financeira_nome: d["categoria_financeira_nome"],
+    centro_custo_id: d["centro_custo_id"],
     centro_custo_codigo: d["centro_custo_codigo"],
     centro_custo_nome: d["centro_custo_nome"],
     conta_contabil_codigo: null, conta_contabil_nome: null, safra_nome: null, percentual: "100",
   }];
+  const vista = projetarLeitura(linhasDaTela);
   return <div data-testid="compras-consulta-rateio" data-tipo={tipo ?? "documento"} className="space-y-3">
-    {linhasDaTela.map((l, k) => <LinhaDoRateioEmLeitura key={k} l={l} k={k} />)}
+    <div className="grid gap-4 md:grid-cols-2">
+      <TabelaLeituraDoRateio titulo="Rateio Natureza Financeira" testId="compras-consulta-rateio-natureza-tabela"
+        partes={vista.naturezas.length ? vista.naturezas : [{ id: "", rotulo: "", percentual: "100" }]}
+        rotuloRef="Natureza Financeira" testIdRef="compras-consulta-rateio-natureza" />
+      <TabelaLeituraDoRateio titulo="Rateio Centro de Resultado" testId="compras-consulta-rateio-centro-tabela"
+        partes={vista.centros.length ? vista.centros : [{ id: "", rotulo: "", percentual: "100" }]}
+        rotuloRef="Centro de Resultado" testIdRef="compras-consulta-rateio-centro" />
+    </div>
+    <ColunaDeCampos>
+      <CampoLeitura rotulo="Conta Contábil" adorno="pesquisa" testId="compras-consulta-rateio-conta" valor={vista.conta} />
+    </ColunaDeCampos>
   </div>;
+}
+
+/** Safra nos Dados principais (consulta) — valor carimbado nas linhas do rateio. */
+export function SafraDaConsulta({ d }: { d: Row }) {
+  const tipo = d["rateio_tipo"];
+  const linhas = Array.isArray(d["rateio"]) ? (d["rateio"] as unknown[]).filter(ehObj) as Row[] : [];
+  const safra = tipo === "por_valor"
+    ? (linhas.map((l) => texto(l["safra_nome"])).find(Boolean) ?? "")
+    : "";
+  return <CampoLeitura rotulo="Safra" adorno="pesquisa" testId="compras-consulta-safra" valor={safra} />;
 }
 
 /**
