@@ -113,6 +113,20 @@
   width: 12px !important;
   height: 12px !important;
 }
+.portal :global(.th-estado) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+  color: var(--mg-accent, #22a85c) !important;
+}
+.portal :global(.th-estado-icone) {
+  width: 12px !important;
+  height: 12px !important;
+  flex-shrink: 0;
+  display: block;
+}
 
 /* ── Tabela | Cards ── */
 .portal :global(.view-seg) {

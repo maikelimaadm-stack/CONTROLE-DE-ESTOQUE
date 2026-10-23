@@ -181,12 +181,10 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
                 onSelectClick={() => {}}
                 onToggle={() => {}}
                 onToggleAll={() => {}}
-                onResize={(k, w) => { setAutoFitKeys((s) => { if (!s.has(k)) return s; const n = new Set(s); n.delete(k); return n; }); setColWidths((p) => ({ ...p, [k]: w })); }}
+                onResize={(k, w) => setColWidths((p) => ({ ...p, [k]: w }))}
                 onAutoFit={(k) => setAutoFitKeys((s) => {
                   const n = new Set(s);
-                  if (n.has(k)) { n.delete(k); return n; }
-                  n.add(k);
-                  setColWidths((p) => { const w = { ...p }; delete w[k]; return w; });
+                  if (n.has(k)) n.delete(k); else n.add(k);
                   return n;
                 })}
                 onHide={(k) => setOcultas((p) => new Set(p).add(k))}

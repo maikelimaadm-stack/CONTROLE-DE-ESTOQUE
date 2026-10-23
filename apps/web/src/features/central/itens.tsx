@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Copy, FileText, Grid3x3, Lock, MoreVertical, PanelLeft, Plus, Scaling, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
 import { cn, brl, num, dateBR } from "@/lib/utils";
+import { fonteDaCelula, medirTextos } from "@/lib/largura-coluna";
 import { api } from "@/lib/api";
 import { EntradaNumero, Input } from "@/components/ui";
 import { B1Popover, MenuList } from "@/features/base1/ui";
@@ -368,7 +369,10 @@ export function ItensDaCentral({
     if (!alvo.closest("tr[data-testid]") && sel >= 0) setSelecionado(-1);
   };
 
-  const colunasVisiveis = colunas.filter((c) => c.visivel && ligada(c.chave) && (!permitidas || permitidas.has(c.chave))).map((c) => c.chave);
+  const colunasVisiveis = React.useMemo(
+    () => colunas.filter((c) => c.visivel && ligada(c.chave) && (!permitidas || permitidas.has(c.chave))).map((c) => c.chave),
+    [colunas, ligada, permitidas]
+  );
   const larguraDe = (k: ChaveColunaDoItem) => larguras[k] ?? COLUNAS[k].largura;
   const larguraMinima = colunasVisiveis.reduce((a, k) => a + larguraDe(k), 0);
 
@@ -470,34 +474,53 @@ export function ItensDaCentral({
   };
 
   /**
-   * Largura pelo conteúdo real (rótulo / células), não pela largura atual + padding —
-   * senão cada clique em auto ajustar “afastava” a coluna.
+   * Textos da coluna a partir dos dados (não do DOM) — estável entre cliques.
+   * Evita input ativo / ícones do cabeçalho alterarem a medida.
    */
-  const medirConteudoDaColuna = (k: ChaveColunaDoItem): number => {
-    const table = tabelaRef.current;
-    const idx = colunasVisiveis.indexOf(k);
-    const col = colsRef.current[k];
-    if (!table || idx < 0 || !col) return COLUNAS[k].largura;
-    const th = table.tHead?.rows[0]?.cells[idx] as HTMLElement | undefined;
-    const tds = Array.from(table.tBodies[0]?.rows ?? []).map((r) => r.cells[idx] as HTMLElement | undefined).filter(Boolean) as HTMLElement[];
-    const prevCol = { w: col.style.width, min: col.style.minWidth, max: col.style.maxWidth };
-    const prevTh = th ? { w: th.style.width, min: th.style.minWidth, max: th.style.maxWidth } : null;
-    // estreita a coluna: scrollWidth passa a refletir o conteúdo, não a caixa atual
-    col.style.width = col.style.minWidth = col.style.maxWidth = "1px";
-    if (th) th.style.width = th.style.minWidth = th.style.maxWidth = "1px";
-    let max = LARGURA_MIN_COLUNA;
-    if (th) {
-      const rotulo = th.querySelector(`.${grade.cabecalhoRotulo}`) as HTMLElement | null;
-      max = Math.max(max, Math.ceil((rotulo ?? th).scrollWidth) + 44);
+  const textosDaColuna = (k: ChaveColunaDoItem): string[] => {
+    const out = [rotuloColuna(k)];
+    const casasQ = casasDaQuantidade ?? 2;
+    for (const it of items) {
+      let t = "";
+      switch (k) {
+        case "codigo": t = conhecidos[it.product_id]?.code ?? ""; break;
+        case "produto": t = conhecidos[it.product_id]?.label ?? ""; break;
+        case "armazem": t = it.warehouse_id ? (conhecidos[it.warehouse_id]?.label ?? "") : ""; break;
+        case "estoque": t = ""; break;
+        case "saldo": t = num(maxDaOrigem(it) ?? "0", casasQ); break;
+        case "quantidade": t = num(it.quantity, casasQ); break;
+        case "unitario": t = it.unit_value !== undefined && it.unit_value !== "" ? (semSimboloDeMoeda ? num(it.unit_value, 2) : brl(it.unit_value)) : ""; break;
+        case "desconto": t = Number(it.discount || 0) ? dinheiro(it.discount!) : ""; break;
+        case "descontoPercentual": t = Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : ""; break;
+        case "total": t = dinheiro(totalDaLinhaExibido(it)); break;
+        case "lote": t = it.provider_lot ?? ""; break;
+        case "validade": t = it.expiration_date ? dateBR(it.expiration_date) : ""; break;
+      }
+      t = String(t).replace(/\s+/g, " ").trim();
+      if (t && t !== "—") out.push(t);
     }
-    for (const td of tds) max = Math.max(max, Math.ceil(td.scrollWidth) + 18);
-    col.style.width = prevCol.w; col.style.minWidth = prevCol.min; col.style.maxWidth = prevCol.max;
-    if (th && prevTh) { th.style.width = prevTh.w; th.style.minWidth = prevTh.min; th.style.maxWidth = prevTh.max; }
-    return Math.min(480, Math.max(LARGURA_MIN_COLUNA, max));
+    // estoque / rótulos ainda não resolvidos: complementa com o texto visível da célula
+    if (k === "estoque" || out.length <= 1) {
+      const idx = colunasVisiveis.indexOf(k);
+      const table = tabelaRef.current;
+      if (idx >= 0 && table?.tBodies[0]) {
+        for (const row of Array.from(table.tBodies[0].rows)) {
+          const td = row.cells[idx];
+          if (!td) continue;
+          const cell = td.querySelector("input, [contenteditable]") as HTMLElement | null;
+          const bruto = cell && "value" in cell ? String((cell as HTMLInputElement).value || "") : (td.innerText || td.textContent || "");
+          const t = bruto.replace(/\s+/g, " ").trim();
+          if (t && t !== "—") out.push(t);
+        }
+      }
+    }
+    return out;
   };
 
   const aplicarAutoAjuste = (k: ChaveColunaDoItem) => {
-    setLarguras((m) => ({ ...m, [k]: medirConteudoDaColuna(k) }));
+    const th = tabelaRef.current?.tHead?.rows[0]?.cells[colunasVisiveis.indexOf(k)] ?? null;
+    const w = medirTextos(textosDaColuna(k), fonteDaCelula(th));
+    setLarguras((m) => (m[k] === w ? m : { ...m, [k]: w }));
   };
 
   const alternarAutoAjuste = (k: ChaveColunaDoItem) => {
@@ -505,7 +528,6 @@ export function ItensDaCentral({
       const n = new Set(s);
       if (n.has(k)) { n.delete(k); return n; }
       n.add(k);
-      // mede no próximo frame (depois do estado) — chama direto com a chave
       queueMicrotask(() => aplicarAutoAjuste(k));
       return n;
     });
@@ -514,17 +536,6 @@ export function ItensDaCentral({
   React.useEffect(() => {
     if (congeladas > colunasVisiveis.length) setCongeladas(colunasVisiveis.length);
   }, [congeladas, colunasVisiveis.length]);
-
-  // Enquanto auto ajustar está ligado, reaplica à medida do conteúdo (idempotente).
-  React.useEffect(() => {
-    if (!autoFitKeys.size) return;
-    for (const k of autoFitKeys) {
-      if (!colunasVisiveis.includes(k)) continue;
-      const w = medirConteudoDaColuna(k);
-      setLarguras((m) => (m[k] === w ? m : { ...m, [k]: w }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando dados/colunas/autofit mudam
-  }, [autoFitKeys, items, colunasVisiveis]);
 
   const leftsCongeladas = React.useMemo(() => {
     const out: Partial<Record<ChaveColunaDoItem, number>> = {};
@@ -555,11 +566,11 @@ export function ItensDaCentral({
             <div className={grade.cabecalhoLinha}>
               <span className={grade.cabecalhoRotulo}>{rotuloColuna(k)}{obrigatoria(k) && !doSistema.has(catalogo(k)) && <span className="req text-red-500"> *</span>}</span>
               {temEstado && <span className={grade.iconesEstado} aria-hidden>
-                {fitOn && <Scaling />}
-                {estaCongelada && <PanelLeft />}
+                {fitOn && <Scaling className={grade.iconeEstado} strokeWidth={2.25} />}
+                {estaCongelada && <PanelLeft className={grade.iconeEstado} strokeWidth={2.25} />}
               </span>}
               <B1Popover className="w-52 p-1" align="start" open={menuColuna === k} onOpenChange={(o) => setMenuColuna(o ? k : null)}
-                trigger={<button type="button" className={cn(grade.menuCabecalho, temEstado && grade.menuAtivo)} aria-label={`Abrir menu da coluna ${rotuloColuna(k)}`} onClick={(e) => e.stopPropagation()}><MoreVertical /></button>}>
+                trigger={<button type="button" className={cn(grade.menuCabecalho, temEstado && grade.menuAtivo)} aria-label={`Abrir menu da coluna ${rotuloColuna(k)}`} onClick={(e) => e.stopPropagation()}><MoreVertical className={grade.iconeEstado} strokeWidth={2.25} /></button>}>
                 <MenuList onPick={(acao) => {
                   setMenuColuna(null);
                   if (acao === "fit") alternarAutoAjuste(k);

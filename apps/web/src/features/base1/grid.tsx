@@ -2,6 +2,7 @@
 import * as React from "react";
 import { MoreVertical, ArrowUp, ArrowDown, Filter, Scaling, PanelLeft, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fonteDaCelula, medirTextos } from "@/lib/largura-coluna";
 import { Spinner, Empty } from "@/components/ui";
 import { B1Popover, MenuList, MgCheck } from "./ui";
 import { selectClickOf, type SelectClick } from "./cards";
@@ -65,16 +66,35 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
     return () => ro.disconnect();
   }, [columns, frozenCount, measure]);
   React.useEffect(() => { if (scrollToId) trs.current[scrollToId]?.scrollIntoView({ block: "center" }); }, [scrollToId, rows.length]);
+  const cellText = (c: Base1Column, r: Row) => c.text ? c.text(r) : String(r[c.key] ?? "");
+  /** Mede pelo texto do rótulo + células (canvas) — estável; não usa scrollWidth da caixa. */
+  const larguraPorConteudo = (c: Base1Column) => {
+    const th = ths.current[c.key];
+    const textos = [c.label, ...rows.map((r) => cellText(c, r)).filter((t) => t && t !== "–" && t !== "—")];
+    return medirTextos(textos, fonteDaCelula(th));
+  };
+  /** Liga = mede e grava largura + marca estado; desliga = só tira o estado (largura fica). */
+  const aplicarAutoAjuste = (c: Base1Column, jaLigado: boolean) => {
+    if (jaLigado) { onAutoFit?.(c.key); return; }
+    onResize?.(c.key, larguraPorConteudo(c));
+    onAutoFit?.(c.key);
+  };
+  const reaplicarOuLigar = (c: Base1Column) => {
+    onResize?.(c.key, larguraPorConteudo(c));
+    if (!autoFitKeys?.has(c.key)) onAutoFit?.(c.key);
+  };
   const startResize = (e: React.MouseEvent, c: Base1Column) => {
-    // segundo clique do duplo-clique não inicia arrasto (o dblclick aplica auto ajustar)
     if (e.detail > 1) return;
     e.preventDefault(); e.stopPropagation();
     const th = ths.current[c.key]; if (!th) return; const x0 = e.clientX; const w0 = th.getBoundingClientRect().width;
     const move = (ev: MouseEvent) => { th.style.width = th.style.minWidth = th.style.maxWidth = `${Math.max(48, w0 + ev.clientX - x0)}px`; measure(); };
-    const up = (ev: MouseEvent) => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); onResize?.(c.key, Math.round(Math.max(48, w0 + ev.clientX - x0))); };
+    const up = (ev: MouseEvent) => {
+      window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+      onResize?.(c.key, Math.round(Math.max(48, w0 + ev.clientX - x0)));
+      if (autoFitKeys?.has(c.key)) onAutoFit?.(c.key); // arrastar desliga o auto ajustar
+    };
     window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
   };
-  const cellText = (c: Base1Column, r: Row) => c.text ? c.text(r) : String(r[c.key] ?? "");
   const stickyBg = (on: boolean, ri: number) => on ? "var(--mg-selection-bg)" : ri % 2 === 1 ? "var(--mg-row-alt)" : "#fff";
   void _referenceHeaders;
   return <div className="mg-grid-wrap">
@@ -94,10 +114,10 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
                 <span className="truncate">{c.label}</span>
                 {sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 shrink-0 text-[var(--mg-accent)]" /> : <ArrowDown className="h-3 w-3 shrink-0 text-[var(--mg-accent)]" />)}
               </button>
-              {temEstado && <span className="inline-flex shrink-0 items-center gap-0.5 text-[var(--mg-accent)]" aria-hidden>
-                {filterOn && <Filter className="h-3 w-3" />}
-                {fitOn && <Scaling className="h-3 w-3" />}
-                {isFrozen && <PanelLeft className="h-3 w-3" />}
+              {temEstado && <span className="th-estado" aria-hidden>
+                {filterOn && <Filter className="th-estado-icone" strokeWidth={2.25} />}
+                {fitOn && <Scaling className="th-estado-icone" strokeWidth={2.25} />}
+                {isFrozen && <PanelLeft className="th-estado-icone" strokeWidth={2.25} />}
               </span>}
               {(() => {
                 const rotuloFreeze = isAnchor ? "Descongelar colunas" : isFrozen ? "Congelar até esta coluna" : "Congelar coluna";
@@ -108,11 +128,11 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
                   ...(c.hideable === false ? [] : [{ key: "hide", label: "Ocultar coluna", icon: <EyeOff className="h-4 w-4" />, disabled: !onHide || columns.length <= 1 }])
                 ];
                 if (!itens.length) return null;
-                return <B1Popover className={cn("w-52 p-1", popoverClassName)} align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className={cn("th-menu", temEstado && "is-on")}><MoreVertical /></button>}>
+                return <B1Popover className={cn("w-52 p-1", popoverClassName)} align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className={cn("th-menu", temEstado && "is-on")}><MoreVertical className="h-3 w-3" strokeWidth={2.25} /></button>}>
                   <MenuList onPick={(k) => {
                     setMenuFor(null);
                     if (k === "filter") onFilter?.(c.key);
-                    if (k === "fit") onAutoFit?.(c.key);
+                    if (k === "fit") aplicarAutoAjuste(c, fitOn);
                     if (k === "freeze") onFreeze?.(isAnchor ? 0 : i + 1);
                     if (k === "hide") onHide?.(c.key);
                   }} items={itens} />
@@ -124,7 +144,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
               aria-label={`Redimensionar ${c.label}`}
               title="Arraste para redimensionar · duplo clique para auto ajustar"
               onMouseDown={(e) => startResize(e, c)}
-              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); onAutoFit?.(c.key); }}
+              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); reaplicarOuLigar(c); }}
               className="absolute right-0 top-0 z-[5] h-full w-1.5 cursor-col-resize touch-none select-none bg-transparent"
             />}
           </th>); })}
