@@ -648,10 +648,10 @@ export function ItensDaCentral({
       case "produto": return <>{campoDeReferencia("product_id", "products")}{pesquisaEmFluxo("product_id")}</>;
       case "armazem": return <>{campoDeReferencia("warehouse_id", "warehouses")}{pesquisaEmFluxo("warehouse_id")}</>;
       case "estoque": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "estoque" : undefined}>{saldoDoItem(it)}</CampoDaCentral>;
-      case "saldo": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" testId={tid("item-saldo")}>{num(maxDaOrigem(it) ?? "0", 4)}</CampoDaCentral>;
+      case "saldo": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" testId={tid("item-saldo")}>{num(maxDaOrigem(it) ?? "0", casasDaQuantidade ?? 2)}</CampoDaCentral>;
       case "unidade": return <CampoDaCentral rotulo="Unidade" estado="travado" testId={tid("item-unidade")}><UnidadeTravada produto={it.product_id} /></CampoDaCentral>;
-      case "quantidade": return campoNumerico(k, "quantity", it.quantity, { casas: casasDaQuantidade ?? 4, ...(daOrigem ? { desabilitado: daOrigem.quantidadeTravada } : {}), ...(travas(it).quantidade ? { desabilitado: true, dica: travas(it).motivos?.quantidade } : {}) });
-      case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { casas: 6, ...(travas(it).unitario ? { desabilitado: true, dica: travas(it).motivos?.unitario } : {}) });
+      case "quantidade": return campoNumerico(k, "quantity", it.quantity, { casas: casasDaQuantidade ?? 2, ...(daOrigem ? { desabilitado: daOrigem.quantidadeTravada } : {}), ...(travas(it).quantidade ? { desabilitado: true, dica: travas(it).motivos?.quantidade } : {}) });
+      case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { casas: 2, ...(travas(it).unitario ? { desabilitado: true, dica: travas(it).motivos?.unitario } : {}) });
       case "desconto": return campoNumerico(k, "discount", it.discount ?? "", { casas: 2, ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
       case "descontoPercentual": return campoNumerico(k, "discount_percent", it.discount_percent ?? "", { casas: 2, ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
       case "total": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "total" : undefined}><span data-testid={tid("item-total")}>{dinheiro(totalDaLinhaExibido(it))}</span></CampoDaCentral>;
