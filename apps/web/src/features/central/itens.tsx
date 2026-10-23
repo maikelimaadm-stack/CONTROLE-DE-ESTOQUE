@@ -239,6 +239,7 @@ export function ItensDaCentral({
   /** Larguras redimensionadas na sessão (decisão 347) — sem persistência. */
   const [larguras, setLarguras] = React.useState<Partial<Record<ChaveColunaDoItem, number>>>({});
   const raizItens = React.useRef<HTMLDivElement | null>(null);
+  const colsRef = React.useRef<Partial<Record<ChaveColunaDoItem, HTMLTableColElement | null>>>({});
   const colunasPadrao = React.useCallback(() => (layout ? padrao(chavesDoLayout(layout)) : padrao(chavesColunas)), [layout, chavesDoLayout, chavesColunas]);
   const camposPadrao = React.useCallback(() => (layout ? padrao(camposDoLayout(layout)) : padrao(chavesCampos)), [layout, camposDoLayout, chavesCampos]);
   const [colunas, setColunas] = React.useState<Preferencia<ChaveColunaDoItem>[]>(colunasPadrao);
@@ -360,28 +361,47 @@ export function ItensDaCentral({
     if (!alvo.closest("tr[data-testid]") && sel >= 0) setSelecionado(-1);
   };
 
+  const colunasVisiveis = colunas.filter((c) => c.visivel && ligada(c.chave) && (!permitidas || permitidas.has(c.chave))).map((c) => c.chave);
+  const larguraDe = (k: ChaveColunaDoItem) => larguras[k] ?? COLUNAS[k].largura;
+  const larguraMinima = colunasVisiveis.reduce((a, k) => a + larguraDe(k), 0);
+
+  /** Resize igual ao Base1: DOM ao arrastar, estado só no mouseup; colunas com width=min=max (sem redistribuir). */
   const iniciarResize = (e: React.MouseEvent, k: ChaveColunaDoItem) => {
     e.preventDefault();
     e.stopPropagation();
     const th = (e.currentTarget as HTMLElement).closest("th");
     if (!th) return;
+    const table = th.closest("table");
+    const col = colsRef.current[k];
     const x0 = e.clientX;
     const w0 = th.getBoundingClientRect().width;
-    const move = (ev: MouseEvent) => {
+    const aplicar = (w: number) => {
+      const px = `${w}px`;
+      if (col) col.style.width = col.style.minWidth = col.style.maxWidth = px;
+      th.style.width = th.style.minWidth = th.style.maxWidth = px;
+      if (table) {
+        let soma = 0;
+        for (const chave of colunasVisiveis) {
+          const c = colsRef.current[chave];
+          const lida = c?.style.width ? Number.parseInt(c.style.width, 10) : NaN;
+          soma += Number.isFinite(lida) ? lida : larguraDe(chave);
+        }
+        table.style.width = table.style.minWidth = `${soma}px`;
+      }
+    };
+    const move = (ev: MouseEvent) => aplicar(Math.max(LARGURA_MIN_COLUNA, Math.round(w0 + ev.clientX - x0)));
+    const up = (ev: MouseEvent) => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
       const w = Math.max(LARGURA_MIN_COLUNA, Math.round(w0 + ev.clientX - x0));
       setLarguras((m) => ({ ...m, [k]: w }));
     };
-    const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   };
 
   const subtotal = items.reduce((a, it) => a + totalDaLinhaExibido(it), 0);
   const item = atual >= 0 ? items[atual] : undefined;
-
-  const colunasVisiveis = colunas.filter((c) => c.visivel && ligada(c.chave) && (!permitidas || permitidas.has(c.chave))).map((c) => c.chave);
-  const larguraDe = (k: ChaveColunaDoItem) => larguras[k] ?? COLUNAS[k].largura;
-  const larguraMinima = colunasVisiveis.reduce((a, k) => a + larguraDe(k), 0);
 
   /** O saldo de ESTOQUE mostrado. Só exibe — quem preenche o custo médio (com `custoMedioNoUnitario`) é `efeitosDoEstoque`. */
   const saldoDoItem = (it: ItemRow) => (reservaEstoque
@@ -441,13 +461,19 @@ export function ItensDaCentral({
   };
 
   const tabela = <div className={grade.rolagem} onClick={cliqueNaGrade}>
-    <table className={grade.grade} style={{ minWidth: larguraMinima }} aria-label="Itens do documento" data-testid={tid("grade")}>
-      <colgroup>{colunasVisiveis.map((k) => <col key={k} style={COLUNAS[k].elastica ? { minWidth: larguraDe(k) } : { width: larguraDe(k) }} />)}</colgroup>
+    <table className={grade.grade} style={{ width: larguraMinima, minWidth: larguraMinima }} aria-label="Itens do documento" data-testid={tid("grade")}>
+      <colgroup>{colunasVisiveis.map((k) => {
+        const w = larguraDe(k);
+        return <col key={k} ref={(el) => { colsRef.current[k] = el; }} style={{ width: w, minWidth: w, maxWidth: w }} />;
+      })}</colgroup>
       <thead><tr>
-        {colunasVisiveis.map((k) => <th key={k} scope="col" className={grade.cabecalhoColuna} {...dataCampo(k)}>
-          <span className={grade.cabecalhoRotulo}>{rotuloColuna(k)}{obrigatoria(k) && !doSistema.has(catalogo(k)) && <span className="req text-red-500"> *</span>}</span>
-          <span role="separator" aria-label={`Redimensionar ${rotuloColuna(k)}`} className={grade.alcaResize} onMouseDown={(e) => iniciarResize(e, k)} />
-        </th>)}
+        {colunasVisiveis.map((k) => {
+          const w = larguraDe(k);
+          return <th key={k} scope="col" className={grade.cabecalhoColuna} style={{ width: w, minWidth: w, maxWidth: w }} {...dataCampo(k)}>
+            <span className={grade.cabecalhoRotulo}>{rotuloColuna(k)}{obrigatoria(k) && !doSistema.has(catalogo(k)) && <span className="req text-red-500"> *</span>}</span>
+            <span role="separator" aria-label={`Redimensionar ${rotuloColuna(k)}`} className={grade.alcaResize} onMouseDown={(e) => iniciarResize(e, k)} />
+          </th>;
+        })}
       </tr></thead>
       <tbody>
         {items.length === 0 && <tr><td colSpan={colunasVisiveis.length || 1} className={grade.vazio}>

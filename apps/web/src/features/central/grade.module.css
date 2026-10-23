@@ -118,8 +118,9 @@
 .rolagem { flex: 1 1 auto; min-height: 0; min-width: 0; overflow: auto; }
 
 /* grade de produtos = estilo da tabela principal (mg-grid): cabeçalho 30 / linha 26 / fonte 12 / pad 9 */
+/* Largura = soma das colunas (inline). Sem width:100% — com fixed isso redistribuía e o resize invertia. */
 .grade {
-  width: 100%;
+  width: max-content;
   line-height: normal;
   border-collapse: separate;
   border-spacing: 0;
@@ -139,8 +140,8 @@
   color: #334155;
   text-align: left;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* overflow visível para a alça na divisão; o rótulo é que corta com reticências */
+  overflow: visible;
   border-bottom: 1px solid #e7eaee;
   border-right: 1px solid #e7eaee;
 }
@@ -159,22 +160,24 @@
 .grade th:last-child,
 .grade td:last-child { border-right: 0; }
 .cabecalhoColuna { position: relative; }
-.cabecalhoRotulo { display: block; overflow: hidden; text-overflow: ellipsis; }
-/* Alça só na divisão: hit de 5px, sem marcador colorido (par com Base1Grid / portal). */
+.cabecalhoRotulo {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 4px;
+}
+/* Alça na divisão (dentro do th): hit 6px, sem marcador; overflow:hidden no th cortava a alça. */
 .alcaResize {
   position: absolute;
-  right: -2px;
+  right: 0;
   top: 0;
-  width: 5px;
+  width: 6px;
   height: 100%;
   cursor: col-resize;
+  z-index: 5;
   background: transparent;
-  opacity: 0;
-}
-.alcaResize:hover,
-.cabecalhoColuna:hover .alcaResize {
-  background: transparent;
-  opacity: 0;
+  touch-action: none;
+  user-select: none;
 }
 /* número: o valor à direita; o rótulo do cabeçalho continua à esquerda, como no desenho */
 .grade td.numero { text-align: right; font-variant-numeric: tabular-nums; }
@@ -503,10 +506,12 @@
 .celulaIcone svg { width: 13px; height: 13px; }
 .celulaBotao:hover .celulaIcone { color: #22a85c; }
 
-/* Célula editável plana — sem pílula/badge (mg-input + borda branca). Foco só com filete leve. */
+/* Célula editável = texto da célula: sem pílula, sem fundo branco no foco, sem filete. */
 .entrada,
 .entrada:global(.mg-input) {
-  width: 74px;
+  display: block;
+  width: 100%;
+  max-width: 100%;
   height: 22px;
   box-sizing: border-box;
   border: 0 !important;
@@ -516,10 +521,9 @@
   text-align: right;
   font: inherit;
   font-size: 12.5px;
-  padding: 0 4px;
+  padding: 0;
   font-variant-numeric: tabular-nums;
   color: inherit;
-  transition: box-shadow var(--mi) var(--ez-io), background-color var(--mi) var(--ez-io);
 }
 /* sem setas nativas se algum type=number sobrar; EntradaNumero usa text */
 .entrada[type="number"]::-webkit-inner-spin-button,
@@ -527,11 +531,17 @@
 .entrada[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .entrada:focus,
 .entrada:global(.mg-input):focus {
-  outline: none;
-  background: rgba(255, 255, 255, .72) !important;
-  box-shadow: inset 0 -1px 0 #cfd6de !important;
+  outline: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
-.quantidade .entrada { flex: 0 1 74px; min-width: 0; }
+.entrada[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  width: 0;
+  padding: 0;
+  margin: 0;
+}
+.quantidade .entrada { flex: 1 1 auto; min-width: 0; width: auto; }
 
 /* grade vazia: frase + o mesmo círculo só-ícone da barra (decisão 327; sem pílula com texto) */
 .vazioConteudo { display: flex; flex-direction: column; align-items: center; gap: 10px; }

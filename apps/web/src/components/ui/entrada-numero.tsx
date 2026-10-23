@@ -42,7 +42,7 @@ export const EntradaNumero = React.forwardRef<HTMLInputElement, EntradaNumeroPro
       inputMode={inteiro ? "numeric" : "decimal"}
       autoComplete="off"
       className={cn(!semChrome && "mg-input", className)}
-      placeholder={rest.placeholder ?? " "}
+      placeholder={rest.placeholder ?? (semChrome ? "" : " ")}
       value={exibido}
       onFocus={(e) => {
         setFoco(true);

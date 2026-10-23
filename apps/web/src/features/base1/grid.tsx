@@ -108,8 +108,8 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
                 </B1Popover>;
               })()}
             </div>
-            {/* Alça na divisão: cursor col-resize, sem barra/marcador colorido (par com grade Central). */}
-            {c.resizable !== false && <span role="separator" aria-label={`Redimensionar ${c.label}`} onMouseDown={(e) => startResize(e, c)} className="absolute right-0 top-0 h-full w-[5px] cursor-col-resize bg-transparent opacity-0 hover:bg-transparent hover:opacity-0" />}
+            {/* Alça na divisão: hit 6px, sem marcador; cursor col-resize (par com grade Central). */}
+            {c.resizable !== false && <span role="separator" aria-label={`Redimensionar ${c.label}`} onMouseDown={(e) => startResize(e, c)} className="absolute right-0 top-0 z-[5] h-full w-1.5 cursor-col-resize touch-none select-none bg-transparent" />}
           </th>); })}
       </tr></thead>
       <tbody>
