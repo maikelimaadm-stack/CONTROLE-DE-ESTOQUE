@@ -82,8 +82,8 @@
 .portal :global(.itbar .ib svg),
 .portal :global(.mg-nav-btn svg),
 .portal :global(.mg-search-dropdown__config-btn svg) {
-  width: 14px !important;
-  height: 14px !important;
+  width: 16px !important;
+  height: 16px !important;
   color: inherit !important;
 }
 /* Cabeçalho: ícone puro — sem círculo, sem sombra, sem borda no active */
@@ -257,7 +257,7 @@
 .importar:hover { background: var(--portal-acao-hover) !important; color: var(--portal-acao-fg-hover) !important; box-shadow: var(--portal-sombra-hover) !important; border-color: transparent !important; }
 .importar:is(:active, [data-state="open"]) { border-color: transparent !important; }
 .importar:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-.importar svg { width: 14px !important; height: 14px !important; flex-shrink: 0; color: inherit !important; }
+.importar svg { width: 16px !important; height: 16px !important; flex-shrink: 0; color: inherit !important; }
 
 /*
  * Popovers / dialogs / fpop portalados no body (decisão 337):
@@ -301,8 +301,8 @@
 }
 :global(.b1-portal-compras) :global(.tb-btn svg),
 :global(.b1-portal-compras.mg-dialog) :global(.tb-btn svg) {
-  width: 14px !important;
-  height: 14px !important;
+  width: 16px !important;
+  height: 16px !important;
   color: inherit !important;
 }
 :global(.b1-portal-compras) :global(.tb-btn-icon),
