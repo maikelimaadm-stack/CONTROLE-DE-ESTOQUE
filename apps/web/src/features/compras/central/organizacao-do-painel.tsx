@@ -136,15 +136,14 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
      entrada, quando há). Os totais do documento ficam na aba Totais; as contas vinculadas, na aba Vínculos. */
   const financeiro = presentes(FINANCEIRO);
   const tipoTitulo = fiscalNoPainel(e);
-  /* Com grade de parcelas, o vencimento mora em cada linha — sem campo solto concorrente (decisão 324). */
+  /* Com cronograma de parcelas, o vencimento mora em cada linha — sem campo solto concorrente (decisão 324). */
   const temGradeParcelas = financeiro.includes("plano_parcelas");
   const mostraVencimento = financeiro.includes("data_vencimento") && !temGradeParcelas;
   if (financeiro.length || tipoTitulo) {
     abas.push({
       value: valorUnico("financeiro"), label: "Financeiro",
       erro: comErro(financeiro) || Boolean(e.erro("tipo_titulo_id")),
-      /* O pagamento fica na coluna de 330px; a tabela de parcelas ocupa a largura do painel, abaixo dele, para
-         vencimento, valor e observação caberem na mesma linha. */
+      /* Pagamento e cronograma usam os mesmos CampoDaCentral da Central (cor/caixa/ícone). */
       content: <div className="space-y-3">
         <PainelColuna>
           {financeiro.includes("condicao_pagamento_id") && <React.Fragment>{desenharCampo("condicao_pagamento_id")}</React.Fragment>}
@@ -154,7 +153,7 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
           {mostraVencimento && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
         </PainelColuna>
         {temGradeParcelas &&
-          <div className="max-w-[960px]" data-testid="compras-financeiro-parcelas">{desenharCampo("plano_parcelas")}</div>}
+          <div data-testid="compras-financeiro-parcelas">{desenharCampo("plano_parcelas")}</div>}
       </div>
     });
   }
@@ -167,25 +166,28 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
   });
 
   const rateioCampos = presentes(RATEIO_CAMPOS);
-  /* RateioEItensDaCriacao / RateioDaConsulta são a autoridade visual — grade com Conta Contábil e Safra à vista. */
+  /* RateioEItensDaCriacao / RateioDaConsulta são a autoridade visual — CampoDaCentral com Conta Contábil e Safra à vista.
+     Sem F7 (`!rateioNoPainel`), a aba ainda desenha Natureza/Centro do layout (R01-4). */
   if (rateioNoPainel(e) || rateioCampos.length) abas.push({
     value: valorUnico(ABA_DO_RATEIO), label: ROTULO_DA_ABA_DO_RATEIO,
     erro: caminhoDoRateioComErro(e.errosDaTela) !== null || comErro(rateioCampos) || Boolean(e.erro("classificacao_gasto")),
     content: <PainelLargo>
-      {rateioNoPainel(e) && (e.editarRateio
+      {rateioNoPainel(e) && e.editarRateio
         ? <RateioEItensDaCriacao e={e} />
-        : e.documentoEmEdicao
+        : rateioNoPainel(e) && e.documentoEmEdicao
           ? <div data-testid="compras-edicao-rateio-leitura" className="space-y-3">
               <RateioDaConsulta d={e.documentoEmEdicao} />
-              <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="travado" testId="compras-classificacao-gasto"
-                valor={typeof e.documentoEmEdicao["classificacao_gasto"] === "string"
-                  && (e.documentoEmEdicao["classificacao_gasto"] === "capex" || e.documentoEmEdicao["classificacao_gasto"] === "opex")
-                  ? enumLabel("classificacao_gasto", String(e.documentoEmEdicao["classificacao_gasto"]))
-                  : "—"} />
+              <ColunaDeCampos>
+                <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="selecao" testId="compras-classificacao-gasto"
+                  valor={typeof e.documentoEmEdicao["classificacao_gasto"] === "string"
+                    && (e.documentoEmEdicao["classificacao_gasto"] === "capex" || e.documentoEmEdicao["classificacao_gasto"] === "opex")
+                    ? enumLabel("classificacao_gasto", String(e.documentoEmEdicao["classificacao_gasto"]))
+                    : enumLabel("classification", "unclassified")} />
+              </ColunaDeCampos>
             </div>
           : rateioCampos.length > 0
             ? <ColunaDeCampos>{rateioCampos.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}</ColunaDeCampos>
-            : null)}
+            : null}
     </PainelLargo>
   });
 

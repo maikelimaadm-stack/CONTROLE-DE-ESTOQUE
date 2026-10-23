@@ -183,40 +183,31 @@ function ParcelasEmLeitura({ d, situacao }: { d: Row; situacao: string | null | 
       {modelo.primeiroVencimento && <p>Primeiro vencimento: {dataOuVazio(modelo.primeiroVencimento)}</p>}
     </div>;
   }
-  const cols = confirmado
-    ? "grid-cols-[minmax(96px,124px)_minmax(80px,104px)_minmax(0,1fr)_minmax(88px,auto)]"
-    : modelo.comEntrada
-      ? "grid-cols-[72px_minmax(96px,124px)_minmax(80px,104px)_minmax(0,1fr)]"
-      : "grid-cols-[minmax(96px,124px)_minmax(80px,104px)_minmax(0,1fr)]";
-  return <div data-testid="compras-consulta-parcelas" className="mt-1 max-w-full overflow-x-auto divide-y divide-slate-100 rounded-md border border-slate-200">
-    <div aria-hidden className={`grid ${cols} gap-2 border-b border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500`}>
-      {modelo.comEntrada && !confirmado && <span>Tipo</span>}
-      <span>Vencimento</span><span>Valor</span><span>Observação</span>
-      {confirmado && <span>Situação</span>}
-    </div>
+  return <div data-testid="compras-consulta-parcelas" className="mt-1 space-y-3">
     {modelo.linhas.map((l, k) => {
       const obs = l.observacao || (l.observacaoDoPlano
         ? <span className="text-slate-500" data-testid="compras-consulta-parcela-obs-plano" title="Do plano gravado — não é a nota do título">
             {l.observacaoDoPlano} <span className="text-[10px] text-slate-400">(plano)</span>
           </span>
         : null);
+      const tipo = modelo.comEntrada && !confirmado ? (l.entrada ? "Entrada" : "Parcela") : "";
       return <div key={k} data-testid="compras-consulta-parcela" data-entrada={l.entrada ? "sim" : "nao"} data-origem={l.origem}
-        className={`grid ${cols} gap-2 px-2 py-1.5 text-[12px]`}>
-        {modelo.comEntrada && !confirmado && <span className="text-slate-500">{l.entrada ? "Entrada" : "Parcela"}</span>}
-        <span className="text-slate-700">{dataOuVazio(l.vencimento)}</span>
-        <span className="tabular-nums text-slate-900">{temValor(l.valor) ? brl(String(l.valor)) : ""}</span>
-        <span className="min-w-0 break-words text-slate-500">{obs || "—"}</span>
-        {confirmado && <span className="text-slate-600">
-          {l.situacaoTitulo
+        className="space-y-1">
+        {tipo && <p className="text-[11px] font-medium text-slate-500">{tipo}</p>}
+        <ColunaDeCampos>
+          <CampoLeitura rotulo="Vencimento" adorno="data" valor={dataOuVazio(l.vencimento)} />
+          <CampoLeitura rotulo="Valor" valor={temValor(l.valor) ? brl(String(l.valor)) : ""} />
+          <CampoLeitura rotulo="Observação" valor={obs || ""} />
+          {confirmado && <CampoLeitura rotulo="Situação" valor={l.situacaoTitulo
             ? <Selo tom={statusTone(l.situacaoTitulo, "title_status")} valor={l.situacaoTitulo}>{enumLabel("title_status", l.situacaoTitulo)}</Selo>
-            : "—"}
-        </span>}
+            : ""} />}
+        </ColunaDeCampos>
       </div>;
     })}
-    {confirmado && <p className="px-2 py-1.5 text-[11px] text-slate-500" data-testid="compras-consulta-parcelas-titulos-aviso">
+    {confirmado && <p className="text-[11px] text-slate-500" data-testid="compras-consulta-parcelas-titulos-aviso">
       {modelo.avisoObservacaoTitulos ?? "Títulos gerados (valores e situação atuais). Detalhes de baixa na aba Vínculos."}
     </p>}
-    {modelo.linhas.some((l) => l.origem === "plano_derivado") && <p className="px-2 py-1.5 text-[11px] text-slate-500" data-testid="compras-consulta-parcelas-derivado">
+    {modelo.linhas.some((l) => l.origem === "plano_derivado") && <p className="text-[11px] text-slate-500" data-testid="compras-consulta-parcelas-derivado">
       Cronograma derivado do plano gravado com a mesma regra de parcelamento do sistema (sem lista linha a linha persistida).
     </p>}
   </div>;
@@ -293,12 +284,12 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
     content: <PainelLargo>
       <div className="space-y-3">
         <RateioDaConsulta d={d} />
-        <PainelColuna>
-          <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="travado" testId="compras-consulta-classificacao"
+        <ColunaDeCampos>
+          <CampoLeitura rotulo="Classificação CAPEX/OPEX" adorno="selecao" testId="compras-consulta-classificacao"
             valor={typeof d["classificacao_gasto"] === "string" && (d["classificacao_gasto"] === "capex" || d["classificacao_gasto"] === "opex")
               ? enumLabel("classificacao_gasto", d["classificacao_gasto"])
               : enumLabel("classification", "unclassified")} />
-        </PainelColuna>
+        </ColunaDeCampos>
       </div>
     </PainelLargo>
   });

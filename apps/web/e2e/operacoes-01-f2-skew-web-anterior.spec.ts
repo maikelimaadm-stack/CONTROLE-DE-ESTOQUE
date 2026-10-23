@@ -246,9 +246,9 @@ async function abrirCriacaoDeCompra(page: Page, top: string, c: CenarioDaCompra,
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  // Sentido 2 = WEB DA BASE: rótulos da base (`Natureza de despesa`), não os deste HEAD.
-  await escolher(page, "Natureza de despesa", c.natureza.label);
-  await escolher(page, "Centro de resultado", c.centro.label);
+  // Sentido 2 = WEB DA BASE (pós-#151): "Natureza Financeira".
+  await escolher(page, "Natureza Financeira", c.natureza.label);
+  await escolher(page, "Centro de Resultado", c.centro.label);
   // Local POR LINHA: o chamador escolhe na célula após Adicionar item (não há cabeçalho).
 }
 
