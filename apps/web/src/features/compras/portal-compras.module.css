@@ -98,15 +98,16 @@
   border-color: transparent !important;
   box-shadow: none !important;
   background: transparent !important;
-  color: var(--mg-icon, #64748b) !important;
+  color: #475569 !important;
 }
 .portal :global(.th-menu:hover) {
   background: var(--mg-gray-fill, #f1f3f4) !important;
-  color: var(--mg-accent, #22a85c) !important;
+  color: #0f172a !important;
 }
 .portal :global(.th-menu svg) {
   width: 12px !important;
   height: 12px !important;
+  color: inherit !important;
 }
 .portal :global(.th-estado) {
   display: inline-flex;
@@ -114,13 +115,14 @@
   align-items: center;
   gap: 3px;
   margin-left: 2px;
-  color: var(--mg-accent, #22a85c) !important;
+  color: #475569 !important;
 }
 .portal :global(.th-estado-icone) {
   width: 12px !important;
   height: 12px !important;
   flex-shrink: 0;
   display: block;
+  color: inherit !important;
 }
 
 /* ── Tabela | Cards ── */

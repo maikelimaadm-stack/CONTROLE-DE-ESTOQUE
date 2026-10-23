@@ -130,7 +130,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
             <div className="flex h-[30px] items-center gap-1">
               <button type="button" className={cn("inline-flex min-w-0 flex-1 items-center gap-1 truncate text-left", !onSort && "cursor-default")} onClick={() => c.sortable !== false && onSort?.(c.key)} title={c.label}>
                 <span className="truncate">{c.label}</span>
-                {sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 shrink-0 text-[var(--mg-accent)]" /> : <ArrowDown className="h-3 w-3 shrink-0 text-[var(--mg-accent)]" />)}
+                {sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 shrink-0 text-[#475569]" /> : <ArrowDown className="h-3 w-3 shrink-0 text-[#475569]" />)}
               </button>
               {temIcones && <span className="th-estado" aria-hidden>
                 {filterOn && <Filter className="th-estado-icone" strokeWidth={2.25} />}
