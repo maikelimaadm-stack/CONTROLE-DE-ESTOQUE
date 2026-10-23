@@ -1,10 +1,10 @@
 "use client";
 import * as React from "react";
-import { Bookmark, Check, MoreVertical } from "lucide-react";
+import { Bookmark, Check, MoreVertical, RotateCcw } from "lucide-react";
 import { CARD_FIELDS_MAX } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { Spinner, Empty, Dialog } from "@/components/ui";
-import { B1Popover, IconBtn, PillBtn, RadioRow, CheckRow } from "./ui";
+import { B1Popover, IconBtn, RadioRow, CheckRow } from "./ui";
 import type { Base1Column, Row } from "./types";
 
 const initials = (s: string) => s.replace(/[^\p{L}\p{N} ]/gu, "").trim().slice(0, 3).toUpperCase() || "—";
@@ -48,41 +48,58 @@ export function Base1Cards({ rows, columns, fields, perRow, loading, onOpen, sel
 }
 
 const PER_ROW: { n: 1 | 2 | 3 | 4; hint: string }[] = [{ n: 1, hint: "Até 5 campos por linha no card" }, { n: 2, hint: "Até 2 campos por linha no card" }, { n: 3, hint: "1 campo por linha no card" }, { n: 4, hint: "1 campo por linha no card" }];
+/** Padrão do layout: 4 cards por linha (o mesmo fallback da listagem). */
+const LAYOUT_PADRAO: 1 | 2 | 3 | 4 = 4;
 
 /**
- * Diálogo "Layout dos cards" (cards por linha). Saiu do popover com âncora invisível: ao fechar
- * o Mais opções o Radix dismissava o filho no mesmo clique — configuração parecia morta.
+ * Diálogo "Layout dos cards" — padrão das colunas (340): Restaurar antes do Fechar (só ícone),
+ * Pronto só ícone; ESC/fora não fecham (`fecharSoPeloBotao`); rascunho até o Pronto.
  */
 export function CardsLayoutPopover({ value, onChange, onRestore, open, onOpenChange, className }: {
   value: 1 | 2 | 3 | 4; onChange: (n: 1 | 2 | 3 | 4) => void; onRestore: () => void;
   open: boolean; onOpenChange: (o: boolean) => void; className?: string;
 }) {
   const [draft, setDraft] = React.useState(value);
-  React.useEffect(() => { if (open) setDraft(value); }, [open, value]);
+  const [aplicarPadrao, setAplicarPadrao] = React.useState(false);
+  const abriu = React.useRef(false);
+  React.useEffect(() => {
+    if (open && !abriu.current) { setDraft(value); setAplicarPadrao(false); }
+    abriu.current = open;
+  }, [open, value]);
   if (!open) return null;
-  return <Dialog open onOpenChange={onOpenChange} title="Layout dos cards" size="sm" className={cn("b1-portal-compras", className)}
+  const salvar = () => { if (aplicarPadrao) onRestore(); else onChange(draft); onOpenChange(false); };
+  return <Dialog open onOpenChange={onOpenChange} title="Layout dos cards" size="sm"
+    className={cn("b1-portal-compras b1-colunas-dlg", className)}
     bodyClassName="!p-4"
+    fecharSoPeloBotao
+    antesDoFechar={<button type="button" className="tb-btn tb-btn-icon tb-btn-sm" title="Restaurar padrão" aria-label="Restaurar padrão" onClick={() => { setDraft(LAYOUT_PADRAO); setAplicarPadrao(true); }}><RotateCcw className="h-4 w-4" /></button>}
     footer={<div className="b1ref flex w-full items-center justify-end gap-2">
-      <PillBtn tone="gray" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn>
-      <PillBtn onClick={() => { onChange(draft); onOpenChange(false); }}>OK</PillBtn>
+      <button type="button" className="tb-btn tb-btn-icon" title="Pronto" aria-label="Pronto" onClick={salvar}><Check className="h-4 w-4" /></button>
     </div>}>
-    <div role="radiogroup" aria-label="Cards por linha">{PER_ROW.map((o) => <RadioRow key={o.n} checked={draft === o.n} onClick={() => setDraft(o.n)} title={`${o.n} card${o.n > 1 ? "s" : ""} por linha`} hint={o.hint} />)}</div>
+    <div role="radiogroup" aria-label="Cards por linha">{PER_ROW.map((o) => <RadioRow key={o.n} checked={draft === o.n} onClick={() => { setAplicarPadrao(false); setDraft(o.n); }} title={`${o.n} card${o.n > 1 ? "s" : ""} por linha`} hint={o.hint} />)}</div>
   </Dialog>;
 }
 
 /**
- * Diálogo "Campos dos cards" — até CARD_FIELDS_MAX campos (preferência do usuário).
- * Mesmo motivo do Layout: diálogo estável em vez de popover aninhado ao Mais opções.
+ * Diálogo "Campos dos cards" — até CARD_FIELDS_MAX; mesmo chrome das colunas (340):
+ * Restaurar/Pronto só ícone; fecha só pelo X; rascunho até o Pronto.
  */
 export function CardFieldsPopover({ columns, value, onChange, onRestore, open, onOpenChange, className }: {
   columns: Base1Column[]; value: string[]; onChange: (keys: string[]) => void; onRestore: () => void;
   open: boolean; onOpenChange: (o: boolean) => void; className?: string;
 }) {
+  const padrao = React.useMemo(() => columns.slice(0, CARD_FIELDS_MAX).map((c) => c.key), [columns]);
   const [draft, setDraft] = React.useState<string[]>(() => value.slice(0, CARD_FIELDS_MAX));
-  React.useEffect(() => { if (open) setDraft(value.slice(0, CARD_FIELDS_MAX)); }, [open, value]);
+  const [aplicarPadrao, setAplicarPadrao] = React.useState(false);
+  const abriu = React.useRef(false);
+  React.useEffect(() => {
+    if (open && !abriu.current) { setDraft(value.slice(0, CARD_FIELDS_MAX)); setAplicarPadrao(false); }
+    abriu.current = open;
+  }, [open, value]);
   if (!open) return null;
   const cheio = draft.length >= CARD_FIELDS_MAX;
   const toggle = (key: string, on: boolean) => {
+    setAplicarPadrao(false);
     setDraft((d) => {
       if (on) {
         if (d.includes(key) || d.length >= CARD_FIELDS_MAX) return d;
@@ -91,11 +108,14 @@ export function CardFieldsPopover({ columns, value, onChange, onRestore, open, o
       return d.filter((k) => k !== key);
     });
   };
-  return <Dialog open onOpenChange={onOpenChange} title="Campos dos cards" size="sm" className={cn("b1-portal-compras", className)}
+  const salvar = () => { if (aplicarPadrao) onRestore(); else onChange(draft.slice(0, CARD_FIELDS_MAX)); onOpenChange(false); };
+  return <Dialog open onOpenChange={onOpenChange} title="Campos dos cards" size="sm"
+    className={cn("b1-portal-compras b1-colunas-dlg", className)}
     bodyClassName="!p-4"
+    fecharSoPeloBotao
+    antesDoFechar={<button type="button" className="tb-btn tb-btn-icon tb-btn-sm" title="Restaurar padrão" aria-label="Restaurar padrão" onClick={() => { setDraft(padrao); setAplicarPadrao(true); }}><RotateCcw className="h-4 w-4" /></button>}
     footer={<div className="b1ref flex w-full items-center justify-end gap-2">
-      <PillBtn tone="gray" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn>
-      <PillBtn onClick={() => { onChange(draft.slice(0, CARD_FIELDS_MAX)); onOpenChange(false); }}>OK</PillBtn>
+      <button type="button" className="tb-btn tb-btn-icon" title="Pronto" aria-label="Pronto" onClick={salvar}><Check className="h-4 w-4" /></button>
     </div>}>
     <p className="mb-2 text-[11.5px] text-slate-500">{draft.length} de {CARD_FIELDS_MAX} campos{cheio ? " · máximo atingido" : ""}</p>
     <div className="max-h-72 overflow-auto">{[...columns].sort((a, b) => a.label.localeCompare(b.label, "pt-BR")).map((c) => {
