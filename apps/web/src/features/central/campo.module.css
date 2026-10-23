@@ -175,9 +175,21 @@ fieldset:disabled .caixa .controle { cursor: default; }
    começa em 2 e a linha mede 1,5em ⇒ 15 − 2 − ,75em = 13px − ,75em (3,625px com 12,5px). A especificidade é BAIXA de
    propósito: vence o padding da `.controle` (!important lá também) e perde para as do compacto (13px), que não mudam */
 .caixa textarea.controle { resize: none; line-height: 1.5; padding-top: calc(13px - .75em) !important; }
-/* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" continua à direita */
-.caixa :global(.cmd-display) { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+/* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" continua à direita.
+   flex + align-items:center — com rótulo à frente o `display:block` deixava o texto no topo da caixa (fora do centro do rótulo). */
+.caixa :global(.cmd-display) {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.caixa :global(.cmd-display) > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
+/* rótulo à frente: o nome do campo já está fora — sem "Pesquisar"/placeholder na caixa (como o input com placeholder transparente) */
+[data-densidade="rotulo-a-frente"] .caixa :global(.cmd-display-placeholder) { visibility: hidden; }
 .caixa :global(.cmd-chevron) { display: none; }
 .caixa :global(.cmd-clear) { right: 11px; margin-top: -7px; }
 .linha:has(:global(.cmd-clear)) .controle { padding-right: 30px !important; }

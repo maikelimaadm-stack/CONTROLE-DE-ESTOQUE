@@ -828,7 +828,9 @@ export function ItensDaCentral({
 /** O controle da pesquisa no formulário do item: o `CampoDaCentral` injeta `id` e `className`. */
 function CampoReferenciaBotao({ recurso, valor, conhecido, aberto, onAbrir, id: idDoCampo, className }: { recurso: string; valor?: string; conhecido?: OpcaoReal; aberto: boolean; onAbrir: (el: HTMLElement) => void; id?: string; className?: string }) {
   const o = useRotulo(recurso, valor, conhecido);
-  return <button type="button" id={idDoCampo} className={cn("cmd-display", !o && "is-empty", className)} aria-haspopup="listbox" aria-expanded={aberto} onClick={(e) => onAbrir(e.currentTarget)}>
-    {o ? <span>{o.code ? `${o.code} · ` : ""}{o.label}</span> : <span className="cmd-display-placeholder">Pesquisar</span>}
+  const rotuloAcao = recurso === "products" ? "Pesquisar produto" : "Pesquisar local de estoque";
+  return <button type="button" id={idDoCampo} className={cn("cmd-display", !o && "is-empty", className)} aria-haspopup="listbox" aria-expanded={aberto} aria-label={o ? undefined : rotuloAcao} onClick={(e) => onAbrir(e.currentTarget)}>
+    {/* vazio: "—" (mesmo do RefSelect); com rótulo à frente o CSS esconde o placeholder — sem texto "Pesquisar" na caixa */}
+    {o ? <span>{o.code ? `${o.code} · ` : ""}{o.label}</span> : <span className="cmd-display-placeholder">—</span>}
   </button>;
 }
