@@ -1,9 +1,8 @@
 /*
- * PORTAL DE COMPRAS — botões da barra (decisões 327 e 328).
+ * PORTAL DE COMPRAS — botões da barra (decisões 327–335).
  *
- * Uma cor, um tamanho, um estilo: o cinza `#f1f3f4` / ícone `#475569` dos `IconBtn` da listagem
- * e dos círculos da Central. Sem verde especial no Novo; Importar XML é só ícone.
- * Modo de visão: só Tabela/Cards, no mesmo trilho do Posição do rótulo (decisão 328).
+ * Círculo só-ícone: 25px, cinza `#f1f3f4` / `#475569`, sombra verde.
+ * Segmento Tabela|Cards: trilho 25px, padding 2, gap 5, mesma sombra.
  */
 .portal {
   --portal-espaco: 6px;
@@ -11,6 +10,8 @@
   --portal-acao-fg: #475569;
   --portal-acao-hover: #e8ecef;
   --portal-acao-fg-hover: #0f172a;
+  --portal-sombra: 0 2px 6px rgba(34, 197, 94, .30);
+  --portal-sombra-hover: 0 3px 9px rgba(34, 197, 94, .36);
 }
 .contexto > button,
 .contexto > span > button {
@@ -27,27 +28,63 @@
 .portal :global([data-testid="b1-toolbar"]) { height: auto; }
 .contexto > button { border-radius: 999px; }
 
-/* Tabela | Cards — trilho 28px + polegar 22px (igual Posição do rótulo da Central). */
-.portal :global(.view-seg) {
-  height: 28px;
+/* Ícones redondos da toolbar Base1 (anexos, Mais opções, carregar mais…). */
+.portal :global([data-testid="b1-toolbar"] .tb-btn-icon),
+.portal :global(.mg-summary .tb-btn-icon) {
+  position: relative;
+  width: 25px !important;
+  min-width: 25px !important;
+  height: 25px !important;
+  min-height: 25px !important;
   box-sizing: border-box;
-  padding: 3px;
-  gap: 2px;
+  border-radius: 999px;
+  border: 1px solid transparent !important;
+  background: var(--portal-acao-bg) !important;
+  color: var(--portal-acao-fg) !important;
+  box-shadow: var(--portal-sombra) !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  flex-shrink: 0;
+}
+.portal :global([data-testid="b1-toolbar"] .tb-btn-icon:hover:not(:disabled)),
+.portal :global(.mg-summary .tb-btn-icon:hover:not(:disabled)) {
+  background: var(--portal-acao-hover) !important;
+  color: var(--portal-acao-fg-hover) !important;
+  box-shadow: var(--portal-sombra-hover) !important;
+}
+.portal :global([data-testid="b1-toolbar"] .tb-btn-icon svg),
+.portal :global(.mg-summary .tb-btn-icon svg) {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+/* Tabela | Cards — trilho 25px (decisão 335). */
+.portal :global(.view-seg) {
+  height: 25px;
+  box-sizing: border-box;
+  padding: 2px;
+  gap: 5px;
   border: 0;
   border-radius: 999px;
   background: #f1f3f4;
-  box-shadow: none;
+  box-shadow: var(--portal-sombra);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 .portal :global(.view-seg button) {
-  width: 22px !important;
-  min-width: 22px !important;
-  height: 22px !important;
-  min-height: 22px !important;
+  width: 21px !important;
+  min-width: 21px !important;
+  height: 21px !important;
+  min-height: 21px !important;
   padding: 0 !important;
   border-radius: 999px;
   border-color: transparent !important;
   background: transparent !important;
   color: #475569 !important;
+  box-shadow: none !important;
 }
 .portal :global(.view-seg button:hover:not(:disabled)) {
   background: rgba(15, 23, 42, .07) !important;
@@ -64,49 +101,51 @@
   height: 14px !important;
 }
 
-/* Tipo: mesmo fundo cinza das outras ações (não o branco com borda).
- * `!important` vence o `height: 24px !important` de `botoes.css` (decisão 327). */
+/* Tipo: altura alinhada aos círculos 25px. */
 .portal :global(.tipo) {
-  height: 28px !important;
-  min-height: 28px !important;
+  height: 25px !important;
+  min-height: 25px !important;
   border-color: transparent !important;
   background: var(--portal-acao-bg) !important;
   color: var(--portal-acao-fg) !important;
+  box-shadow: var(--portal-sombra) !important;
 }
 .portal :global(.tipo:hover),
 .portal :global(.tipo[data-state="open"]) {
   background: var(--portal-acao-hover) !important;
   color: var(--portal-acao-fg-hover) !important;
   border-color: transparent !important;
-  box-shadow: none;
+  box-shadow: var(--portal-sombra-hover) !important;
 }
 .portal :global(.tipoPrefixo) { color: #94a3b8; }
 .portal :global(.tipoValor) { color: inherit; font-weight: 600; }
 
-/* Novo dividido: cinza (não verde), círculo 28px, ícones 16px. */
+/* Novo dividido: altura 25px; partes só-ícone em círculo 25px. */
 .portal :global(.dividido) {
-  height: 28px !important;
-  min-height: 28px !important;
+  height: 25px !important;
+  min-height: 25px !important;
   margin-left: 0;
   background: var(--portal-acao-bg) !important;
-  box-shadow: none;
+  box-shadow: var(--portal-sombra) !important;
+  border-radius: 999px;
 }
 .portal :global(.novo),
 .portal :global(.abrirMenu) {
   color: var(--portal-acao-fg) !important;
   background: transparent !important;
-  height: 28px !important;
-  min-height: 28px !important;
+  height: 25px !important;
+  min-height: 25px !important;
+  box-shadow: none !important;
 }
 .portal :global(.abrirMenu) {
-  width: 28px !important;
-  min-width: 28px !important;
+  width: 25px !important;
+  min-width: 25px !important;
   border-left-color: #e2e8f0 !important;
 }
 .portal :global(.novo.novoSoIcone),
 .portal :global(.novoSoIcone) {
-  width: 28px !important;
-  min-width: 28px !important;
+  width: 25px !important;
+  min-width: 25px !important;
   padding: 0 !important;
 }
 .portal :global(.novo svg),
@@ -126,26 +165,28 @@
   background: #dde3e8 !important;
 }
 
-/* Importar XML: círculo 28px, só ícone. */
+/* Importar XML: círculo 25px, só ícone. */
 .importar {
   composes: app-button from global;
-  width: 28px !important;
-  min-width: 28px !important;
-  height: 28px !important;
-  min-height: 28px !important;
+  position: relative;
+  width: 25px !important;
+  min-width: 25px !important;
+  height: 25px !important;
+  min-height: 25px !important;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0 !important;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: var(--portal-acao-bg) !important;
   color: var(--portal-acao-fg) !important;
+  box-shadow: var(--portal-sombra) !important;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1);
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1);
 }
-.importar:hover { background: var(--portal-acao-hover) !important; color: var(--portal-acao-fg-hover) !important; }
+.importar:hover { background: var(--portal-acao-hover) !important; color: var(--portal-acao-fg-hover) !important; box-shadow: var(--portal-sombra-hover) !important; }
 .importar:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
 .importar svg { width: 16px !important; height: 16px !important; flex-shrink: 0; }
