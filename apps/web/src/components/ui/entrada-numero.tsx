@@ -7,7 +7,7 @@ export type EntradaNumeroProps = Omit<React.InputHTMLAttributes<HTMLInputElement
   /** Valor canônico (ponto decimal, sem milhar), como a API e o estado do lançamento usam. */
   value: string;
   onChange: (canonico: string) => void;
-  /** Teto de casas na digitação; fora do foco a exibição força essas casas (315 → 315,00). */
+  /** Casas na digitação e na exibição fora do foco (padrão 2 → 315,00). */
   casas?: number;
   /** Só inteiro (sem vírgula). */
   inteiro?: boolean;
@@ -17,27 +17,32 @@ export type EntradaNumeroProps = Omit<React.InputHTMLAttributes<HTMLInputElement
 
 /**
  * Campo numérico do lançamento: sem setas/spinner, sem roda do mouse, pt-BR na tela,
- * canônico no estado. No foco, zero some para digitar limpo.
+ * canônico no estado. No Tab/foco o valor já vem selecionado; ao sair, formata com as casas.
  */
 export const EntradaNumero = React.forwardRef<HTMLInputElement, EntradaNumeroProps>(function EntradaNumero(
-  { value, onChange, casas, inteiro, semChrome, className, onFocus, onBlur, onWheel, ...rest },
+  { value, onChange, casas = 2, inteiro, semChrome, className, onFocus, onBlur, onWheel, ...rest },
   ref
 ) {
   const [foco, setFoco] = React.useState(false);
   const [texto, setTexto] = React.useState("");
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const setRefs = React.useCallback((el: HTMLInputElement | null) => {
+    inputRef.current = el;
+    if (typeof ref === "function") ref(el);
+    else if (ref) (ref as React.MutableRefObject<HTMLInputElement | null>).current = el;
+  }, [ref]);
 
-  // Fora do foco: casas fixas (`num`) — inteiro também mostra decimais (decisão 349). Sem `casas`: numeroBR.
   const exibido = foco
     ? texto
     : (value === "" || value == null
       ? ""
       : inteiro
         ? numeroBR(value, 0)
-        : (casas !== undefined ? num(value, casas) : numeroBR(value)));
+        : num(value, casas));
 
   return (
     <input
-      ref={ref}
+      ref={setRefs}
       type="text"
       inputMode={inteiro ? "numeric" : "decimal"}
       autoComplete="off"
@@ -48,6 +53,8 @@ export const EntradaNumero = React.forwardRef<HTMLInputElement, EntradaNumeroPro
         setFoco(true);
         setTexto(ehZeroCanonico(value) ? "" : paraDigitacao(value));
         onFocus?.(e);
+        // Tab/clique: valor já selecionado para digitar por cima
+        requestAnimationFrame(() => inputRef.current?.select());
       }}
       onBlur={(e) => {
         const c = canonicoDoDigitado(texto);
@@ -61,7 +68,6 @@ export const EntradaNumero = React.forwardRef<HTMLInputElement, EntradaNumeroPro
         onChange(canonicoDoDigitado(filtrado));
       }}
       onWheel={(e) => {
-        // nunca negociar o número com a roda do mouse
         (e.target as HTMLInputElement).blur();
         onWheel?.(e);
       }}

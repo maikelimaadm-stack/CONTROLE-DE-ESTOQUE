@@ -91,11 +91,12 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
   const [colWidths, setColWidths] = React.useState<Record<string, number>>({});
   const [ordem, setOrdem] = React.useState<string[]>([]);
   const [congeladas, setCongeladas] = React.useState(0);
+  const [autoFitKeys, setAutoFitKeys] = React.useState<Set<string>>(() => new Set());
   const [ocultas, setOcultas] = React.useState<Set<string>>(new Set());
   const [filtros, setFiltros] = React.useState<Record<string, FiltroAtivo>>({});
   const [filtrando, setFiltrando] = React.useState<string | null>(null);
   const [menuColunas, setMenuColunas] = React.useState(false);
-  React.useEffect(() => { setFiltros({}); setFiltrando(null); }, [id]);
+  React.useEffect(() => { setFiltros({}); setFiltrando(null); setAutoFitKeys(new Set()); }, [id]);
 
   const textoDaCelula = React.useCallback((k: string, r: Row) => { const c = colunas.find((x) => x.key === k); return c?.text ? c.text(r) : texto(r[k]); }, [colunas]);
   // filtro de cabeçalho: apresentação sobre as linhas já lidas (valores marcados por coluna), nunca consulta nova
@@ -139,7 +140,7 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
       </>}
       {menuColunas && <ColunasDosItens colunas={colunasOrdenadas} ocultas={ocultas} onOrdenar={setOrdem}
         onMudar={(k, ocultar) => setOcultas((p) => { const n = new Set(p); if (ocultar) n.add(k); else n.delete(k); return n; })}
-        onRestaurar={() => { setOcultas(new Set()); setColWidths({}); setOrdem([]); setCongeladas(0); }} onFechar={() => setMenuColunas(false)} />}
+        onRestaurar={() => { setOcultas(new Set()); setColWidths({}); setOrdem([]); setCongeladas(0); setAutoFitKeys(new Set()); }} onFechar={() => setMenuColunas(false)} />}
       <span className="grp">
         <DicaDeAcao texto={maximizado ? "Restaurar layout" : "Ampliar Itens"}>
           <button type="button" className="ib" data-testid="itens-maximizar" aria-label={maximizado ? "Restaurar layout" : "Ampliar Itens"} aria-pressed={maximizado} onClick={onMaximizar}>
@@ -171,7 +172,6 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
               <Base1Grid
                 columns={visibleColumns}
                 referenceHeaders
-                freezeSingle
                 selecaoSticky={false}
                 frozen={congeladas} onFreeze={setCongeladas}
                 rows={sortedRows}
@@ -181,11 +181,18 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
                 onSelectClick={() => {}}
                 onToggle={() => {}}
                 onToggleAll={() => {}}
-                onResize={(k, w) => setColWidths((p) => ({ ...p, [k]: w }))}
-                onAutoFit={(k) => setColWidths((p) => { const n = { ...p }; delete n[k]; return n; })}
+                onResize={(k, w) => { setAutoFitKeys((s) => { if (!s.has(k)) return s; const n = new Set(s); n.delete(k); return n; }); setColWidths((p) => ({ ...p, [k]: w })); }}
+                onAutoFit={(k) => setAutoFitKeys((s) => {
+                  const n = new Set(s);
+                  if (n.has(k)) { n.delete(k); return n; }
+                  n.add(k);
+                  setColWidths((p) => { const w = { ...p }; delete w[k]; return w; });
+                  return n;
+                })}
                 onHide={(k) => setOcultas((p) => new Set(p).add(k))}
                 onFilter={(k) => setFiltrando(k)}
                 filteredKeys={new Set(Object.keys(filtros))}
+                autoFitKeys={autoFitKeys}
                 popoverClassName="b1-portal-compras"
               />
               {filtrando && <FiltroDeColuna

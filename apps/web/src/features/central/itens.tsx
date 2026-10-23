@@ -239,8 +239,10 @@ export function ItensDaCentral({
   const [conhecidos, setConhecidos] = React.useState<Record<string, OpcaoReal>>({});
   /** Larguras redimensionadas na sessão (decisão 347) — sem persistência. */
   const [larguras, setLarguras] = React.useState<Partial<Record<ChaveColunaDoItem, number>>>({});
-  /** Uma coluna congelada por vez (decisão 349); `null` = nenhuma. */
-  const [congelada, setCongelada] = React.useState<ChaveColunaDoItem | null>(null);
+  /** Prefixo congelado: N = primeiras N colunas sticky (congelar a 3ª congela 1+2+3). */
+  const [congeladas, setCongeladas] = React.useState(0);
+  /** Auto ajustar ligado por coluna até desativar ou redimensionar à mão. */
+  const [autoFitKeys, setAutoFitKeys] = React.useState<Set<ChaveColunaDoItem>>(() => new Set());
   const [menuColuna, setMenuColuna] = React.useState<ChaveColunaDoItem | null>(null);
   const raizItens = React.useRef<HTMLDivElement | null>(null);
   const colsRef = React.useRef<Partial<Record<ChaveColunaDoItem, HTMLTableColElement | null>>>({});
@@ -372,6 +374,7 @@ export function ItensDaCentral({
 
   /** Resize igual ao Base1: DOM ao arrastar, estado só no mouseup; colunas com width=min=max (sem redistribuir). */
   const iniciarResize = (e: React.MouseEvent, k: ChaveColunaDoItem) => {
+    if (e.detail > 1) return; // duplo clique → auto ajustar, não arrastar
     e.preventDefault();
     e.stopPropagation();
     const th = (e.currentTarget as HTMLElement).closest("th");
@@ -399,6 +402,7 @@ export function ItensDaCentral({
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
       const w = Math.max(LARGURA_MIN_COLUNA, Math.round(w0 + ev.clientX - x0));
+      setAutoFitKeys((s) => { if (!s.has(k)) return s; const n = new Set(s); n.delete(k); return n; });
       setLarguras((m) => ({ ...m, [k]: w }));
     };
     window.addEventListener("mousemove", move);
@@ -433,22 +437,22 @@ export function ItensDaCentral({
           aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId={tid("armazem")} tabulavel={ativa}
           onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} />}</td>;
       case "estoque": return <td key={k} className={cn(grade.numero, grade.estoque)}>{saldoDoItem(it)}</td>;
-      case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{num(maxDaOrigem(it) ?? "0", 4)}</td>;
+      case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{num(maxDaOrigem(it) ?? "0", casasDaQuantidade ?? 2)}</td>;
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
         {ativa && !daOrigem?.quantidadeTravada && !travas(it).quantidade
-          ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} casas={casasDaQuantidade ?? 4} value={it.quantity} onChange={(v) => atualizar(i, "quantity", v)} />
+          ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} casas={casasDaQuantidade ?? 2} value={it.quantity} onChange={(v) => atualizar(i, "quantity", v)} />
           : <span data-testid={tid("quantidade")}>{num(it.quantity, casasDaQuantidade ?? 2)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
       case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario
-        ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} casas={6} value={it.unit_value ?? ""} onChange={(v) => atualizar(i, "unit_value", v)} />
-        : (it.unit_value !== undefined && it.unit_value !== "" ? (semSimboloDeMoeda ? num(it.unit_value, 6) : brl(it.unit_value)) : "—")}</td>;
+        ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} casas={2} value={it.unit_value ?? ""} onChange={(v) => atualizar(i, "unit_value", v)} />
+        : (it.unit_value !== undefined && it.unit_value !== "" ? (semSimboloDeMoeda ? num(it.unit_value, 2) : brl(it.unit_value)) : "—")}</td>;
       case "desconto": return <td key={k} className={grade.numero}>{ativa && !travas(it).desconto
         ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Desconto do item ${i + 1}`} casas={2} value={it.discount ?? ""} onChange={(v) => atualizarDesconto(i, "discount", v)} />
         : (Number(it.discount || 0) ? dinheiro(it.discount!) : "—")}</td>;
       case "descontoPercentual": return <td key={k} className={grade.numero}>{ativa && !travas(it).desconto
-        ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Desconto % do item ${i + 1}`} casas={4} value={it.discount_percent ?? ""} onChange={(v) => atualizarDesconto(i, "discount_percent", v)} />
-        : (Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 4)}%` : "—")}</td>;
+        ? <EntradaNumero semChrome className={grade.entrada} aria-label={`Desconto % do item ${i + 1}`} casas={2} value={it.discount_percent ?? ""} onChange={(v) => atualizarDesconto(i, "discount_percent", v)} />
+        : (Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : "—")}</td>;
       case "total": return <td key={k} className={cn(grade.numero, grade.forte)}>{dinheiro(totalDaLinhaExibido(it))}</td>;
       case "lote": {
         const aceita = loteDe(it).lote;
@@ -465,25 +469,73 @@ export function ItensDaCentral({
     }
   };
 
-  const autoAjustar = (k: ChaveColunaDoItem) => {
+  /**
+   * Largura pelo conteúdo real (rótulo / células), não pela largura atual + padding —
+   * senão cada clique em auto ajustar “afastava” a coluna.
+   */
+  const medirConteudoDaColuna = (k: ChaveColunaDoItem): number => {
     const table = tabelaRef.current;
     const idx = colunasVisiveis.indexOf(k);
-    if (!table || idx < 0) {
-      setLarguras((m) => { const n = { ...m }; delete n[k]; return n; });
-      return;
+    const col = colsRef.current[k];
+    if (!table || idx < 0 || !col) return COLUNAS[k].largura;
+    const th = table.tHead?.rows[0]?.cells[idx] as HTMLElement | undefined;
+    const tds = Array.from(table.tBodies[0]?.rows ?? []).map((r) => r.cells[idx] as HTMLElement | undefined).filter(Boolean) as HTMLElement[];
+    const prevCol = { w: col.style.width, min: col.style.minWidth, max: col.style.maxWidth };
+    const prevTh = th ? { w: th.style.width, min: th.style.minWidth, max: th.style.maxWidth } : null;
+    // estreita a coluna: scrollWidth passa a refletir o conteúdo, não a caixa atual
+    col.style.width = col.style.minWidth = col.style.maxWidth = "1px";
+    if (th) th.style.width = th.style.minWidth = th.style.maxWidth = "1px";
+    let max = LARGURA_MIN_COLUNA;
+    if (th) {
+      const rotulo = th.querySelector(`.${grade.cabecalhoRotulo}`) as HTMLElement | null;
+      max = Math.max(max, Math.ceil((rotulo ?? th).scrollWidth) + 44);
     }
-    let max = 56;
-    const th = table.querySelectorAll("thead th")[idx] as HTMLElement | undefined;
-    if (th) max = Math.max(max, Math.ceil(th.scrollWidth) + 28);
-    table.querySelectorAll(`tbody tr td:nth-child(${idx + 1})`).forEach((td) => {
-      max = Math.max(max, Math.ceil((td as HTMLElement).scrollWidth) + 18);
+    for (const td of tds) max = Math.max(max, Math.ceil(td.scrollWidth) + 18);
+    col.style.width = prevCol.w; col.style.minWidth = prevCol.min; col.style.maxWidth = prevCol.max;
+    if (th && prevTh) { th.style.width = prevTh.w; th.style.minWidth = prevTh.min; th.style.maxWidth = prevTh.max; }
+    return Math.min(480, Math.max(LARGURA_MIN_COLUNA, max));
+  };
+
+  const aplicarAutoAjuste = (k: ChaveColunaDoItem) => {
+    setLarguras((m) => ({ ...m, [k]: medirConteudoDaColuna(k) }));
+  };
+
+  const alternarAutoAjuste = (k: ChaveColunaDoItem) => {
+    setAutoFitKeys((s) => {
+      const n = new Set(s);
+      if (n.has(k)) { n.delete(k); return n; }
+      n.add(k);
+      // mede no próximo frame (depois do estado) — chama direto com a chave
+      queueMicrotask(() => aplicarAutoAjuste(k));
+      return n;
     });
-    setLarguras((m) => ({ ...m, [k]: Math.min(480, Math.max(LARGURA_MIN_COLUNA, max)) }));
   };
 
   React.useEffect(() => {
-    if (congelada && !colunasVisiveis.includes(congelada)) setCongelada(null);
-  }, [congelada, colunasVisiveis]);
+    if (congeladas > colunasVisiveis.length) setCongeladas(colunasVisiveis.length);
+  }, [congeladas, colunasVisiveis.length]);
+
+  // Enquanto auto ajustar está ligado, reaplica à medida do conteúdo (idempotente).
+  React.useEffect(() => {
+    if (!autoFitKeys.size) return;
+    for (const k of autoFitKeys) {
+      if (!colunasVisiveis.includes(k)) continue;
+      const w = medirConteudoDaColuna(k);
+      setLarguras((m) => (m[k] === w ? m : { ...m, [k]: w }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando dados/colunas/autofit mudam
+  }, [autoFitKeys, items, colunasVisiveis]);
+
+  const leftsCongeladas = React.useMemo(() => {
+    const out: Partial<Record<ChaveColunaDoItem, number>> = {};
+    let acc = 0;
+    for (let i = 0; i < congeladas && i < colunasVisiveis.length; i++) {
+      const k = colunasVisiveis[i]!;
+      out[k] = acc;
+      acc += larguraDe(k);
+    }
+    return out;
+  }, [congeladas, colunasVisiveis, larguras]);
 
   const tabela = <div className={grade.rolagem} onClick={cliqueNaGrade}>
     <table ref={tabelaRef} className={grade.grade} style={{ width: larguraMinima, minWidth: larguraMinima }} aria-label="Itens do documento" data-testid={tid("grade")}>
@@ -492,25 +544,36 @@ export function ItensDaCentral({
         return <col key={k} ref={(el) => { colsRef.current[k] = el; }} style={{ width: w, minWidth: w, maxWidth: w }} />;
       })}</colgroup>
       <thead><tr>
-        {colunasVisiveis.map((k) => {
+        {colunasVisiveis.map((k, i) => {
           const w = larguraDe(k);
-          const estaCongelada = congelada === k;
-          return <th key={k} scope="col" className={cn(grade.cabecalhoColuna, estaCongelada && grade.congelada)} style={{ width: w, minWidth: w, maxWidth: w }} {...dataCampo(k)}>
+          const estaCongelada = i < congeladas;
+          const ehAncora = estaCongelada && i === congeladas - 1;
+          const fitOn = autoFitKeys.has(k);
+          const temEstado = fitOn || estaCongelada;
+          return <th key={k} scope="col" className={cn(grade.cabecalhoColuna, estaCongelada && grade.congelada)}
+            style={{ width: w, minWidth: w, maxWidth: w, ...(estaCongelada ? { left: leftsCongeladas[k] ?? 0 } : {}) }} {...dataCampo(k)}>
             <div className={grade.cabecalhoLinha}>
               <span className={grade.cabecalhoRotulo}>{rotuloColuna(k)}{obrigatoria(k) && !doSistema.has(catalogo(k)) && <span className="req text-red-500"> *</span>}</span>
+              {temEstado && <span className={grade.iconesEstado} aria-hidden>
+                {fitOn && <Scaling />}
+                {estaCongelada && <PanelLeft />}
+              </span>}
               <B1Popover className="w-52 p-1" align="start" open={menuColuna === k} onOpenChange={(o) => setMenuColuna(o ? k : null)}
-                trigger={<button type="button" className={grade.menuCabecalho} aria-label={`Abrir menu da coluna ${rotuloColuna(k)}`} onClick={(e) => e.stopPropagation()}><MoreVertical /></button>}>
+                trigger={<button type="button" className={cn(grade.menuCabecalho, temEstado && grade.menuAtivo)} aria-label={`Abrir menu da coluna ${rotuloColuna(k)}`} onClick={(e) => e.stopPropagation()}><MoreVertical /></button>}>
                 <MenuList onPick={(acao) => {
                   setMenuColuna(null);
-                  if (acao === "fit") autoAjustar(k);
-                  if (acao === "freeze") setCongelada((c) => (c === k ? null : k));
+                  if (acao === "fit") alternarAutoAjuste(k);
+                  if (acao === "freeze") setCongeladas(ehAncora ? 0 : i + 1);
                 }} items={[
-                  { key: "fit", label: "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" /> },
-                  { key: "freeze", label: estaCongelada ? "Descongelar coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" /> }
+                  { key: "fit", label: fitOn ? "Desativar auto ajustar" : "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" /> },
+                  { key: "freeze", label: ehAncora ? "Descongelar colunas" : estaCongelada ? "Congelar até esta coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" /> }
                 ]} />
               </B1Popover>
             </div>
-            <span role="separator" aria-label={`Redimensionar ${rotuloColuna(k)}`} className={grade.alcaResize} onMouseDown={(e) => iniciarResize(e, k)} />
+            <span role="separator" aria-label={`Redimensionar ${rotuloColuna(k)}`} title="Arraste para redimensionar · duplo clique para auto ajustar"
+              className={grade.alcaResize}
+              onMouseDown={(e) => iniciarResize(e, k)}
+              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!autoFitKeys.has(k)) alternarAutoAjuste(k); else aplicarAutoAjuste(k); }} />
           </th>;
         })}
       </tr></thead>
@@ -526,11 +589,13 @@ export function ItensDaCentral({
           return <tr key={i} className={cn(grade.linha, ativa && grade.linhaMarcada, pendente(i) && grade.linhaComErro)}
             aria-selected={ativa} data-testid={daOrigem?.testIdDaLinha ? daOrigem.testIdDaLinha(it) : tid("linha")}
             onClick={() => setSelecionado(i)}>
-            {colunasVisiveis.map((k) => {
+            {colunasVisiveis.map((k, ci) => {
               const td = celula(k, it, i, ativa);
               const erro = erroDe(i, k);
+              const congelada = ci < congeladas;
               return React.cloneElement(td, {
-                className: cn(td.props.className, congelada === k && grade.congelada),
+                className: cn(td.props.className, congelada && grade.congelada),
+                style: { ...(td.props.style as React.CSSProperties | undefined), ...(congelada ? { left: leftsCongeladas[k] ?? 0 } : {}) },
                 ...(layout ? dataCampo(k) : {}),
                 ...(erro ? { "aria-invalid": true as const, title: erro, "data-erro": erro } : {})
               });
