@@ -1,10 +1,26 @@
 "use client";
 import * as React from "react";
+import { createPortal } from "react-dom";
 import * as DialogP from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
 import { Button } from "./button";
+
+/**
+ * Fundo escuro atrás de listagens flutuantes (decisão 353) — mesma classe `.mg-overlay` do Dialog.
+ * Z-index 9999: abaixo de `cmd-panel` / `.pesquisaFlutuante` (10000), acima do shell.
+ */
+export function ListingScrim({ aberto, onFechar, testId = "listagem-fundo" }: {
+  aberto: boolean; onFechar: () => void; testId?: string;
+}) {
+  if (!aberto || typeof document === "undefined") return null;
+  return createPortal(
+    <div className="mg-overlay" style={{ zIndex: 9999 }} aria-hidden data-testid={testId}
+      onMouseDown={(e) => { e.preventDefault(); onFechar(); }} />,
+    document.body
+  );
+}
 
 /**
  * Overlays oficiais (docs/UI-STANDARD.md › Primitives visuais), todos sobre @radix-ui/react-dialog (role=dialog,

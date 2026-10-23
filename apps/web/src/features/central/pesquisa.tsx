@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { cn, num } from "@/lib/utils";
 import { api, qs } from "@/lib/api";
+import { ListingScrim } from "@/components/ui/overlays";
 import { MSG_LISTA_FALHOU } from "@/components/ui/ref-select";
 import { opcaoDoProduto, usePesquisaDeProdutos, type PaginaDaPesquisa } from "./pesquisa-de-produtos";
 import grade from "./grade.module.css";
@@ -196,11 +197,8 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
       {daPesquisa.isFetchingNextPage ? "Carregando…" : "Mostrar mais"}
     </button>}
   </div>;
-  /** Fundo escuro como o diálogo de colunas (decisão 353) — fecha ao clicar fora do painel. */
-  const fundo = <div className="mg-overlay" data-testid={testId ? `${testId}-fundo` : undefined} aria-hidden
-    onMouseDown={(e) => { e.preventDefault(); onFechar(); }} />;
+  const fundo = <ListingScrim aberto onFechar={onFechar} testId={testId ? `${testId}-fundo` : "listagem-fundo"} />;
   // Flutuante no body (como RefSelect): não recorta na coluna de itens nem fica sob Dados principais.
-  if (modo === "flutuante" && typeof document !== "undefined") return createPortal(<>{fundo}{corpo}</>, document.body);
-  if (typeof document !== "undefined") return <>{createPortal(fundo, document.body)}{corpo}</>;
-  return corpo;
+  if (modo === "flutuante" && typeof document !== "undefined") return <>{fundo}{createPortal(corpo, document.body)}</>;
+  return <>{fundo}{corpo}</>;
 }

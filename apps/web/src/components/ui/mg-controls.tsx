@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ChevronDown, ChevronLeft, ChevronRight, Calendar, X, Check, Info, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
+import { ListingScrim } from "./overlays";
 
 /* ================================================================================================
    Controles do MODELO BASE1 (docs/PERSONALIZACAO.md): seletor de opções (cmd-select), calendário (modelo-base),
@@ -53,12 +54,15 @@ export function MgSelect({ value, onChange, options, placeholder = "Selecione", 
   const setOpen = (o: boolean) => { if (disabled) return; setOpenState(o); onOpenChange?.(o); if (!o) setSearch(""); };
   const cur = options.find((o) => o.value === value);
   const filtered = search ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase())) : options;
-  return <Popover.Root open={open} onOpenChange={setOpen}>
-    <Popover.Trigger asChild><CmdDisplay id={id} name={name} data-testid={testId} aria-label={ariaLabel} aria-expanded={open} disabled={disabled} empty={!cur} placeholder={placeholder} onClear={allowEmpty ? () => onChange("") : undefined} className={className} wrapClassName={wrapClassName}>{cur?.label}</CmdDisplay></Popover.Trigger>
-    <Popover.Portal><Popover.Content align={align} sideOffset={4} className={cn("cmd-panel z-[10000] w-[var(--radix-popover-trigger-width)] min-w-[220px] outline-none", panelClassName)} onOpenAutoFocus={(e) => { if (options.length <= 8) e.preventDefault(); }}>
-      <CmdPanel options={filtered} value={value} search={search} onSearch={setSearch} searchable={options.length > 8} autoFocus={options.length > 8} onPick={(o) => { onChange(o.value); setOpen(false); }} />
-    </Popover.Content></Popover.Portal>
-  </Popover.Root>;
+  return <>
+    <ListingScrim aberto={open} onFechar={() => setOpen(false)} />
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild><CmdDisplay id={id} name={name} data-testid={testId} aria-label={ariaLabel} aria-expanded={open} disabled={disabled} empty={!cur} placeholder={placeholder} onClear={allowEmpty ? () => onChange("") : undefined} className={className} wrapClassName={wrapClassName}>{cur?.label}</CmdDisplay></Popover.Trigger>
+      <Popover.Portal><Popover.Content align={align} sideOffset={4} className={cn("cmd-panel z-[10000] w-[var(--radix-popover-trigger-width)] min-w-[220px] outline-none", panelClassName)} onOpenAutoFocus={(e) => { if (options.length <= 8) e.preventDefault(); }}>
+        <CmdPanel options={filtered} value={value} search={search} onSearch={setSearch} searchable={options.length > 8} autoFocus={options.length > 8} onPick={(o) => { onChange(o.value); setOpen(false); }} />
+      </Popover.Content></Popover.Portal>
+    </Popover.Root>
+  </>;
 }
 
 /* ---------- calendário ---------- */
