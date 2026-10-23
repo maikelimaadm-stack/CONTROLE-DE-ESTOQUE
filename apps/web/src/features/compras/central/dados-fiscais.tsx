@@ -124,7 +124,7 @@ function vistaDoRateio(e: EstadoDaCriacao) {
 type DimensaoDoRateio = "natureza" | "centro";
 
 /** Grade da tabelinha: referência · valor · % · remover — nome com piso largo (Natureza / Centro). */
-const GRADE_RATEIO = "grid grid-cols-[minmax(14rem,1.6fr)_96px_64px_28px] items-center gap-1.5";
+const GRADE_RATEIO = "grid grid-cols-[minmax(14rem,1.6fr)_96px_64px_25px] items-center gap-1.5";
 
 /**
  * Tabelinha independente (Natureza ou Centro): título + “+”, cabeçalhos na grade, linha com inputs, rodapé Total/Restante.
