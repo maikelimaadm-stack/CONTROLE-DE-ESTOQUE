@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Copy, FileText, Grid3x3, Lock, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, FileText, Grid3x3, Lock, Plus, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
 import { cn, brl, numeroBR, dateBR } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -13,6 +13,7 @@ import { useFonteDaPesquisaDeProdutos } from "./pesquisa-de-produtos";
 import { CampoDaCentral } from "./campo";
 import { ConfigurarColunas } from "./configurar-colunas";
 import { BotaoAmpliar } from "./moldura";
+import { recomputarDescontoAposBruto, sincronizarDesconto } from "./desconto-da-linha";
 import estilos from "./moldura.module.css";
 import grade from "./grade.module.css";
 import { maximoDaQuantidade, type ChaveCampoDoItem, type ChaveColunaDoItem, type LayoutDosItens, type OpcaoReal, type Preferencia, type PropsDosItens,
@@ -24,7 +25,7 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * ITENS DA CENTRAL — o MOTOR (VISUAL-UX-04): duas VISÕES (e as duas juntas) do MESMO `items`.
  *
  * Cópia fiel da grade/formulário da criação (VISUAL-UX-01 R1, VISUAL-UX-02): fonte única (`items`/`onChange` da
- * página, nenhuma cópia), marcação por círculo, item corrente de Duplicar/Remover, Configurar colunas sem persistência,
+ * página, nenhuma cópia), marcação pela linha (sem checkbox), Duplicar/Remover sempre visíveis, Configurar colunas sem persistência,
  * unidade do produto só para exibir e `efeitosDoEstoque` sempre montado (o custo médio do unitário vazio não depende da
  * coluna Estoque estar à vista; `custoMedioNoUnitario={false}` desliga só a escrita, e a leitura continua).
  *
@@ -54,11 +55,11 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  */
 
 /**
- * A linha nova: quantidade 1, unitário 0, gera estoque; com armazém padrão, só o `warehouse_id` a mais. `emBranco`
- * (OPERACOES-01 F5b): quantidade e unitário VAZIOS — o resto igual.
+ * A linha nova: quantidade e unitário VAZIOS até haver produto (decisão 347); ao escolher o produto a qtd vira 1.
+ * `emBranco` permanece na assinatura (OPERACOES-01 F5b) e hoje é o comportamento único.
  */
-const linhaNova = (armazem?: string, emBranco = false): ItemRow => ({
-  product_id: "", quantity: emBranco ? "" : "1", unit_value: emBranco ? "" : "0", generate_stock: true, ...(armazem ? { warehouse_id: armazem } : {})
+const linhaNova = (armazem?: string, _emBranco = false): ItemRow => ({
+  product_id: "", quantity: "", unit_value: "", generate_stock: true, ...(armazem ? { warehouse_id: armazem } : {})
 });
 
 /** Colunas da grade. `largura` é a do protótipo; Produto é a coluna elástica (mínimo). */
@@ -77,8 +78,8 @@ const COLUNAS: Record<ChaveColunaDoItem, { rotulo: string; largura: number; nume
   lote: { rotulo: "Lote", largura: 110 },
   validade: { rotulo: "Validade", largura: 112 }
 };
-/** A coluna do círculo de seleção, do desenho. */
-const LARGURA_SELECAO = 36;
+/** Largura mínima ao redimensionar coluna da grade. */
+const LARGURA_MIN_COLUNA = 48;
 /**
  * A ordem de sempre (as nove de hoje), com o Local antes do produto (decisão 280: é o local que decide o saldo; o
  * Código fica junto do Produto). `saldo`, `lote` e `validade` só entram quando ligados.
@@ -140,12 +141,13 @@ function UnidadeTravada({ produto }: { produto?: string }) {
 }
 
 /** A célula de pesquisa da grade (produto, armazém): o botão do desenho, com a lupa à esquerda. */
-function CelulaDeReferencia({ recurso, id, conhecido, vazio, erro, aberto, onAbrir, rotuloAcao, testId }: {
+function CelulaDeReferencia({ recurso, id, conhecido, vazio, erro, aberto, onAbrir, rotuloAcao, testId, tabulavel }: {
   recurso: string; id?: string; conhecido?: OpcaoReal; vazio: string; erro?: boolean; aberto: boolean; onAbrir: (el: HTMLElement) => void;
-  rotuloAcao: (o: OpcaoReal | null) => string; testId: string;
+  rotuloAcao: (o: OpcaoReal | null) => string; testId: string; tabulavel?: boolean;
 }) {
   const o = useRotulo(recurso, id || undefined, conhecido);
   return <button type="button" className={grade.celulaBotao} aria-haspopup="listbox" aria-expanded={aberto} aria-label={rotuloAcao(o)}
+    tabIndex={tabulavel === false ? -1 : 0}
     data-testid={testId} onClick={(e) => { e.stopPropagation(); onAbrir(e.currentTarget.closest("td") ?? e.currentTarget); }}>
     <span className={o ? undefined : erro ? grade.celulaErro : grade.celulaVazia}>{o?.label ?? vazio}</span>
     <span className={grade.celulaIcone} aria-hidden><Search /></span>
@@ -234,7 +236,9 @@ export function ItensDaCentral({
   const [pesquisa, setPesquisa] = React.useState<{ linha: number; campo: "product_id" | "warehouse_id"; ancora: HTMLElement | null; modo: "flutuante" | "fluxo" } | null>(null);
   /** Rótulos das escolhas feitas nesta sessão — só apresentação, nunca entra no payload. */
   const [conhecidos, setConhecidos] = React.useState<Record<string, OpcaoReal>>({});
-  const circulos = React.useRef<(HTMLButtonElement | null)[]>([]);
+  /** Larguras redimensionadas na sessão (decisão 347) — sem persistência. */
+  const [larguras, setLarguras] = React.useState<Partial<Record<ChaveColunaDoItem, number>>>({});
+  const raizItens = React.useRef<HTMLDivElement | null>(null);
   const colunasPadrao = React.useCallback(() => (layout ? padrao(chavesDoLayout(layout)) : padrao(chavesColunas)), [layout, chavesDoLayout, chavesColunas]);
   const camposPadrao = React.useCallback(() => (layout ? padrao(camposDoLayout(layout)) : padrao(chavesCampos)), [layout, camposDoLayout, chavesCampos]);
   const [colunas, setColunas] = React.useState<Preferencia<ChaveColunaDoItem>[]>(colunasPadrao);
@@ -276,7 +280,14 @@ export function ItensDaCentral({
   /** A linha marcada pode sair: sem as travas, a regra de sempre; com elas, nunca o item salvo (`fixa`). */
   const podeRemoverA = (i: number) => podeRemover && !travas(items[i]).fixa;
 
-  const atualizar = (i: number, chave: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [chave]: v } : it)));
+  const atualizar = (i: number, chave: string, v: unknown) => onChange(items.map((it, j) => {
+    if (j !== i) return it;
+    const prox = { ...it, [chave]: v };
+    if (chave === "quantity" || chave === "unit_value") return { ...prox, ...recomputarDescontoAposBruto(prox) };
+    return prox;
+  }));
+  const atualizarDesconto = (i: number, campo: "discount" | "discount_percent", v: string) =>
+    onChange(items.map((it, j) => (j === i ? { ...it, ...sincronizarDesconto(it, campo, v) } : it)));
   const adicionar = () => {
     if (!podeAdicionar) return;
     // rótulo vazio não vira "conhecido": a célula lê o rótulo do cadastro
@@ -287,7 +298,7 @@ export function ItensDaCentral({
     onChange([...items, linhaNova(armazemPadrao?.id, linhaNovaEmBranco)]); setSelecionado(items.length);
   };
   const duplicar = () => {
-    if (!podeAdicionar) return;
+    if (!podeAdicionar || corrente < 0) return;
     const c = corrente;
     const original = items[c];
     if (!original) return;
@@ -297,7 +308,7 @@ export function ItensDaCentral({
   };
   const remover = () => {
     const c = corrente;
-    if (!podeRemoverA(c)) return;
+    if (c < 0 || !podeRemoverA(c)) return;
     if (!items[c]) return;
     onChange(items.filter((_, j) => j !== c));
     setPesquisa(null);
@@ -306,7 +317,16 @@ export function ItensDaCentral({
   const escolher = (o: OpcaoReal) => {
     if (!pesquisa) return;
     setConhecidos((c) => ({ ...c, [o.id]: o }));
-    atualizar(pesquisa.linha, pesquisa.campo, o.id);
+    const i = pesquisa.linha;
+    const campo = pesquisa.campo;
+    onChange(items.map((it, j) => {
+      if (j !== i) return it;
+      if (campo === "product_id") {
+        const qtd = it.quantity === "" || it.quantity == null ? "1" : it.quantity;
+        return { ...it, product_id: o.id, quantity: qtd };
+      }
+      return { ...it, [campo]: o.id };
+    }));
     setPesquisa(null);
   };
   const fechar = React.useCallback(() => setPesquisa(null), []);
@@ -320,23 +340,48 @@ export function ItensDaCentral({
     sentido: pesquisaDeProduto?.sentido ?? "entrada",
     soControlaEstoque: pesquisaDeProduto?.soControlaEstoque
   });
-  const marcarEFocar = (i: number) => { setSelecionado(i); requestAnimationFrame(() => circulos.current[i]?.focus()); };
 
-  const tecladoDoCirculo = (e: React.KeyboardEvent<HTMLButtonElement>, i: number) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); if (i + 1 < items.length) marcarEFocar(i + 1); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); if (i > 0) marcarEFocar(i - 1); }
-  };
+  // Clique fora da região de itens desmarca a linha (decisão 347). A pesquisa flutuante vai no body (portal).
+  React.useEffect(() => {
+    if (sel < 0) return;
+    const tidPesquisa = tid("pesquisa");
+    const fora = (e: MouseEvent) => {
+      const alvo = e.target as Node;
+      if (raizItens.current?.contains(alvo)) return;
+      if (alvo instanceof Element && alvo.closest(`[data-testid="${tidPesquisa}"]`)) return;
+      setSelecionado(-1);
+    };
+    document.addEventListener("mousedown", fora);
+    return () => document.removeEventListener("mousedown", fora);
+  }, [sel, prefixoTestid]);
+
   const cliqueNaGrade = (e: React.MouseEvent<HTMLDivElement>) => {
     const alvo = e.target as Element;
-    if (!alvo.closest("tr[aria-selected]") && sel >= 0) setSelecionado(-1);
+    if (!alvo.closest("tr[data-testid]") && sel >= 0) setSelecionado(-1);
+  };
+
+  const iniciarResize = (e: React.MouseEvent, k: ChaveColunaDoItem) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const th = (e.currentTarget as HTMLElement).closest("th");
+    if (!th) return;
+    const x0 = e.clientX;
+    const w0 = th.getBoundingClientRect().width;
+    const move = (ev: MouseEvent) => {
+      const w = Math.max(LARGURA_MIN_COLUNA, Math.round(w0 + ev.clientX - x0));
+      setLarguras((m) => ({ ...m, [k]: w }));
+    };
+    const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
   };
 
   const subtotal = items.reduce((a, it) => a + totalDaLinhaExibido(it), 0);
   const item = atual >= 0 ? items[atual] : undefined;
 
   const colunasVisiveis = colunas.filter((c) => c.visivel && ligada(c.chave) && (!permitidas || permitidas.has(c.chave))).map((c) => c.chave);
-  // largura mínima DERIVADA das colunas visíveis (o círculo + cada coluna), nunca contada à mão
-  const larguraMinima = LARGURA_SELECAO + colunasVisiveis.reduce((a, k) => a + COLUNAS[k].largura, 0);
+  const larguraDe = (k: ChaveColunaDoItem) => larguras[k] ?? COLUNAS[k].largura;
+  const larguraMinima = colunasVisiveis.reduce((a, k) => a + larguraDe(k), 0);
 
   /** O saldo de ESTOQUE mostrado. Só exibe — quem preenche o custo médio (com `custoMedioNoUnitario`) é `efeitosDoEstoque`. */
   const saldoDoItem = (it: ItemRow) => (reservaEstoque
@@ -354,25 +399,31 @@ export function ItensDaCentral({
         ? <CelulaTravada recurso="products" id={it.product_id} conhecido={conhecidos[it.product_id]} testId={tid("produto")} />
         : <CelulaDeReferencia recurso="products" id={it.product_id} conhecido={conhecidos[it.product_id]} vazio="Selecione o produto" erro={pendente(i)}
           rotuloAcao={(o) => (o ? `Trocar o produto do item ${i + 1}` : `Selecionar o produto do item ${i + 1}`)}
-          aberto={pesquisa?.linha === i && pesquisa.campo === "product_id"} testId={tid("produto")}
+          aberto={pesquisa?.linha === i && pesquisa.campo === "product_id"} testId={tid("produto")} tabulavel={ativa}
           onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "product_id", ancora: el, modo: "flutuante" }); }} />}</td>;
       case "armazem": return <td key={k}>{travas(it).armazem
         ? <CelulaTravada recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} testId={tid("armazem")} />
         : <CelulaDeReferencia recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} vazio="—"
           rotuloAcao={(o) => (o ? `Local de estoque: ${o.label}` : "Local de estoque")}
-          aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId={tid("armazem")}
+          aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId={tid("armazem")} tabulavel={ativa}
           onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} />}</td>;
       case "estoque": return <td key={k} className={cn(grade.numero, grade.estoque)}>{saldoDoItem(it)}</td>;
       case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{numeroBR(maxDaOrigem(it) ?? "0", 4)}</td>;
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
         {ativa && !daOrigem?.quantidadeTravada && !travas(it).quantidade
           ? <EntradaNumero className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} casas={casasDaQuantidade ?? 4} value={it.quantity} onChange={(v) => atualizar(i, "quantity", v)} />
-          : <span data-testid={tid("quantidade")}>{numeroBR(linhaNovaEmBranco ? it.quantity : it.quantity || "0", casasDaQuantidade)}</span>}
+          : <span data-testid={tid("quantidade")}>{numeroBR(it.quantity, casasDaQuantidade)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
-      case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario ? <EntradaNumero className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} casas={6} value={it.unit_value ?? ""} onChange={(v) => atualizar(i, "unit_value", v)} /> : dinheiro(it.unit_value ?? "0")}</td>;
-      case "desconto": return <td key={k} className={grade.numero}>{Number(it.discount || 0) ? dinheiro(it.discount!) : "—"}</td>;
-      case "descontoPercentual": return <td key={k} className={grade.numero}>{Number(it.discount_percent || 0) ? `${numeroBR(it.discount_percent!)}%` : "—"}</td>;
+      case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario
+        ? <EntradaNumero className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} casas={6} value={it.unit_value ?? ""} onChange={(v) => atualizar(i, "unit_value", v)} />
+        : (it.unit_value !== undefined && it.unit_value !== "" ? dinheiro(it.unit_value) : "—")}</td>;
+      case "desconto": return <td key={k} className={grade.numero}>{ativa && !travas(it).desconto
+        ? <EntradaNumero className={grade.entrada} aria-label={`Desconto do item ${i + 1}`} casas={2} value={it.discount ?? ""} onChange={(v) => atualizarDesconto(i, "discount", v)} />
+        : (Number(it.discount || 0) ? dinheiro(it.discount!) : "—")}</td>;
+      case "descontoPercentual": return <td key={k} className={grade.numero}>{ativa && !travas(it).desconto
+        ? <EntradaNumero className={grade.entrada} aria-label={`Desconto % do item ${i + 1}`} casas={4} value={it.discount_percent ?? ""} onChange={(v) => atualizarDesconto(i, "discount_percent", v)} />
+        : (Number(it.discount_percent || 0) ? `${numeroBR(it.discount_percent!, 4)}%` : "—")}</td>;
       case "total": return <td key={k} className={cn(grade.numero, grade.forte)}>{dinheiro(totalDaLinhaExibido(it))}</td>;
       case "lote": {
         const aceita = loteDe(it).lote;
@@ -389,17 +440,17 @@ export function ItensDaCentral({
     }
   };
 
-  const tabulavel = sel >= 0 ? sel : 0;
-
   const tabela = <div className={grade.rolagem} onClick={cliqueNaGrade}>
     <table className={grade.grade} style={{ minWidth: larguraMinima }} aria-label="Itens do documento" data-testid={tid("grade")}>
-      <colgroup><col style={{ width: LARGURA_SELECAO }} />{colunasVisiveis.map((k) => <col key={k} style={COLUNAS[k].elastica ? { minWidth: COLUNAS[k].largura } : { width: COLUNAS[k].largura }} />)}</colgroup>
+      <colgroup>{colunasVisiveis.map((k) => <col key={k} style={COLUNAS[k].elastica ? { minWidth: larguraDe(k) } : { width: larguraDe(k) }} />)}</colgroup>
       <thead><tr>
-        <th scope="col" className={grade.celulaSelecao} aria-label="Seleção" />
-        {colunasVisiveis.map((k) => <th key={k} scope="col" {...dataCampo(k)}>{rotuloColuna(k)}{obrigatoria(k) && !doSistema.has(catalogo(k)) && <span className="req text-red-500"> *</span>}</th>)}
+        {colunasVisiveis.map((k) => <th key={k} scope="col" className={grade.cabecalhoColuna} {...dataCampo(k)}>
+          <span className={grade.cabecalhoRotulo}>{rotuloColuna(k)}{obrigatoria(k) && !doSistema.has(catalogo(k)) && <span className="req text-red-500"> *</span>}</span>
+          <span role="separator" aria-label={`Redimensionar ${rotuloColuna(k)}`} className={grade.alcaResize} onMouseDown={(e) => iniciarResize(e, k)} />
+        </th>)}
       </tr></thead>
       <tbody>
-        {items.length === 0 && <tr><td colSpan={1 + colunasVisiveis.length} className={grade.vazio}>
+        {items.length === 0 && <tr><td colSpan={colunasVisiveis.length || 1} className={grade.vazio}>
           <div className={grade.vazioConteudo}>
             <span>Nenhum item adicionado.</span>
             {podeAdicionar && <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid={tid("adicionar-vazio")} onClick={(e) => { e.stopPropagation(); adicionar(); }}><Plus aria-hidden /></button>}
@@ -408,14 +459,8 @@ export function ItensDaCentral({
         {items.map((it, i) => {
           const ativa = i === sel;
           return <tr key={i} className={cn(grade.linha, ativa && grade.linhaMarcada, pendente(i) && grade.linhaComErro)}
-            aria-selected={ativa} data-testid={daOrigem?.testIdDaLinha ? daOrigem.testIdDaLinha(it) : tid("linha")}>
-            <td className={grade.celulaSelecao}>
-              <button type="button" role="checkbox" aria-checked={ativa} aria-label={`Selecionar item ${i + 1}`} className={grade.circulo} data-testid={tid("selecionar-item")}
-                ref={(el) => { circulos.current[i] = el; }} tabIndex={i === tabulavel ? 0 : -1}
-                onClick={(e) => { e.stopPropagation(); setSelecionado(ativa ? -1 : i); }} onKeyDown={(e) => tecladoDoCirculo(e, i)}>
-                {ativa && <Check aria-hidden strokeWidth={2} />}
-              </button>
-            </td>
+            aria-selected={ativa} data-testid={daOrigem?.testIdDaLinha ? daOrigem.testIdDaLinha(it) : tid("linha")}
+            onClick={() => setSelecionado(i)}>
             {colunasVisiveis.map((k) => {
               const td = celula(k, it, i, ativa);
               if (!layout && !erros) return td;
@@ -450,8 +495,12 @@ export function ItensDaCentral({
   };
   const campoNumerico = (k: "quantidade" | "unitario" | "desconto" | "descontoPercentual", chave: "quantity" | "unit_value" | "discount" | "discount_percent", valor: string, extra: { casas: number; desabilitado?: boolean; dica?: string }) => {
     const d = doCampo(k);
+    const onNum = (v: string) => {
+      if (chave === "discount" || chave === "discount_percent") atualizarDesconto(atual, chave, v);
+      else atualizar(atual, chave, v);
+    };
     return <CampoDaCentral rotulo={d.label} obrigatorio={d.required} erro={d.error} preenchido={valor !== ""} dica={extra.dica} {...(extra.desabilitado ? { estado: "desabilitado" as const } : {})} {...d.attrs}>
-      <EntradaNumero casas={extra.casas} disabled={extra.desabilitado || undefined} value={valor} onChange={(v) => atualizar(atual, chave, v)} />
+      <EntradaNumero casas={extra.casas} disabled={extra.desabilitado || undefined} value={valor} onChange={onNum} />
     </CampoDaCentral>;
   };
   const campoDeTexto = (k: "lote" | "validade", chave: "provider_lot" | "expiration_date", valor: string, aceita: boolean) => {
@@ -512,14 +561,15 @@ export function ItensDaCentral({
     if (v === "formulario") mostrarFormulario();
   };
 
-  return <>
+  const podeDuplicarAgora = podeAdicionar && corrente >= 0;
+  const podeRemoverAgora = corrente >= 0 && podeRemoverA(corrente);
+
+  return <div ref={raizItens} className={grade.raiz}>
     <div className={grade.barra} role="toolbar" aria-label="Itens">
       <BotaoAmpliar regiao="itens" />
-      {podeAdicionar && <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid={tid("adicionar-item")} onClick={adicionar}><Plus aria-hidden /></button>}
-      {corrente >= 0 && <>
-        {podeAdicionar && <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAcaoItem, estilos.dicaInicio)} aria-label="Duplicar item" data-dica="Duplicar item" data-testid={tid("duplicar-item")} onClick={duplicar}><Copy aria-hidden /></button>}
-        {podeRemoverA(corrente) && <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAcaoItem, grade.botaoRemover, estilos.dicaInicio)} aria-label="Remover item" data-dica="Remover item" data-testid={tid("remover-item")} onClick={remover}><Trash2 aria-hidden /></button>}
-      </>}
+      <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid={tid("adicionar-item")} disabled={!podeAdicionar} onClick={adicionar}><Plus aria-hidden /></button>
+      <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAcaoItem, estilos.dicaInicio)} aria-label="Duplicar item" data-dica="Duplicar item" data-testid={tid("duplicar-item")} disabled={!podeDuplicarAgora} onClick={duplicar}><Copy aria-hidden /></button>
+      <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAcaoItem, grade.botaoRemover, estilos.dicaInicio)} aria-label="Remover item" data-dica="Remover item" data-testid={tid("remover-item")} disabled={!podeRemoverAgora} onClick={remover}><Trash2 aria-hidden /></button>
       <span className={grade.espaco} />
       <div className={grade.segmento} role="group" aria-label="Visualização dos itens">
         <button type="button" aria-pressed={visao === "grade"} aria-label="Grade" data-dica="Grade" onClick={() => escolherVisao("grade")}><Grid3x3 aria-hidden /></button>
@@ -550,7 +600,7 @@ export function ItensDaCentral({
       rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar local de estoque"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}
       modo="flutuante" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")}
       produto={pesquisa.campo === "product_id" ? produtoNaPesquisa(pesquisa.linha) : null} />}
-  </>;
+  </div>;
 }
 
 /** O controle da pesquisa no formulário do item: o `CampoDaCentral` injeta `id` e `className`. */

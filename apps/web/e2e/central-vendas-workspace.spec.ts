@@ -531,7 +531,7 @@ const adicionarProduto = (page: Page) => page.getByTestId("central-vendas-adicio
  */
 async function marcarLinha(page: Page, i: number) {
   const linha = linhaDaGrade(page, i);
-  if ((await linha.getAttribute("aria-selected")) !== "true") await linha.getByTestId("central-vendas-selecionar-item").click();
+  if ((await linha.getAttribute("aria-selected")) !== "true") await linha.click();
   await expect(linha, `a linha ${i + 1} está marcada`).toHaveAttribute("aria-selected", "true");
 }
 
@@ -595,12 +595,12 @@ test("W14 — seleção de linha: círculo, teclado (↑ ↓) e nenhuma seleçã
   await adicionarItemComProduto(page, 2);
 
   // Fase B: marca-se pelo círculo da linha (clicar na linha não marca)
-  await linhaDaGrade(page, 0).getByTestId("central-vendas-selecionar-item").click();
+  await linhaDaGrade(page, 0).click();
   await expect(linhaDaGrade(page, 0)).toHaveAttribute("aria-selected", "true");
   await expect(linhaDaGrade(page, 0).getByLabel("Quantidade"), "os campos editáveis aparecem na linha selecionada").toBeVisible();
   await expect(linhaDaGrade(page, 1).getByLabel("Quantidade"), "e só nela").toHaveCount(0);
 
-  await linhaDaGrade(page, 0).getByTestId("central-vendas-selecionar-item").focus();
+  await linhaDaGrade(page, 0).getByTestId("central-vendas-produto").focus();
   await page.keyboard.press("ArrowDown");
   await expect(linhaDaGrade(page, 1)).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => linhaDaGrade(page, 1).evaluate((el) => el === document.activeElement || el.contains(document.activeElement)), { message: "o foco foi junto com a marca" }).toBe(true);

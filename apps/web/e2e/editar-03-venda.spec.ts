@@ -217,7 +217,7 @@ test("E3-4 — pedido ABERTO: muda a quantidade de um item e a observação → 
 
   await abrirConsulta(page, "order", doc);
   await abrirEdicao(page, "order", doc);
-  await linhas(page).nth(0).getByTestId("central-vendas-selecionar-item").click();
+  await linhas(page).nth(0).click();
   await linhas(page).nth(0).getByLabel("Quantidade do item 1").fill("5");
   await (await campoDaObservacao(page)).fill("pedido editado E3-4");
   const patch = await salvarEdicao(page, "order", doc);
@@ -252,7 +252,7 @@ test("E3-5 — venda ABERTA (Confirmação Manual): o item salvo tem o Remover; 
   await expect(page.getByTestId("central-vendas-confirmar"), "sem Confirmar venda na edição").toHaveCount(0);
 
   // O ITEM SALVO SAI (a venda remove item): marcado, o Remover aparece; a linha some.
-  await linhas(page).nth(1).getByTestId("central-vendas-selecionar-item").click();
+  await linhas(page).nth(1).click();
   await expect(page.getByTestId("central-vendas-remover-item"), "o item salvo da venda tem o Remover").toHaveCount(1);
   await page.getByTestId("central-vendas-remover-item").click();
   await expect(linhas(page)).toHaveCount(1);
@@ -364,7 +364,7 @@ test("E3-7 — a venda gerada em partes de um pedido que RESERVA estoque: o item
   await expect(linhaP3.getByTestId("central-vendas-armazem"), "P3 (não controla estoque): a célula de pesquisa").not.toHaveAttribute("data-travado", /.*/);
   for (const l of [linhaP1, linhaP3]) await expect(l.getByTestId("central-vendas-produto"), "o produto da parte, travado").toHaveAttribute("data-travado", "");
   await expect(page.getByTestId("central-vendas-adicionar-item"), "a parte não acrescenta").toHaveCount(0);
-  await linhaP1.getByTestId("central-vendas-selecionar-item").click();
+  await linhaP1.click();
   await expect(page.getByTestId("central-vendas-duplicar-item"), "nem Duplicar").toHaveCount(0);
   await expect(page.getByTestId("central-vendas-remover-item"), "nem Remover").toHaveCount(0);
   // clicar na célula travada não abre a pesquisa
@@ -439,7 +439,7 @@ test("E3-8 — venda ABERTA de TOP com Confirmação Automática: o Salvar se ch
   await expect(identidade(page), "continua editando").toHaveText(`Editar venda ${doc.code}`);
 
   // (2) A QUANTIDADE TAMBÉM: os números da prévia (da venda GRAVADA) não são o efeito — só a política, e a frase.
-  await linhas(page).nth(0).getByTestId("central-vendas-selecionar-item").click();
+  await linhas(page).nth(0).click();
   await linhas(page).nth(0).getByLabel("Quantidade do item 1").fill("3");
   await salvar(page).click();
   await expect(dialogo(page)).toBeVisible();

@@ -117,7 +117,7 @@ async function linhaNovaESubtotal(page: Page, p: string, fmt: (v: string | numbe
   await expect(subtotal, "o rodapé mostra o total da linha: 2,5 × 12,40").toHaveText(fmt(31));
 
   // desmarcada, a célula deixa de ser campo e mostra a quantidade formatada
-  await linha.getByTestId(`${p}-selecionar-item`).click();
+  await linha.click();
   await expect(linha, "a linha foi desmarcada").toHaveAttribute("aria-selected", "false");
   await expect(linha.getByTestId(`${p}-quantidade`), "a célula não ativa mostra a quantidade em pt-BR (2,5)").toHaveText("2,5");
   await expect(subtotal, "desmarcar não muda o subtotal").toHaveText(fmt(31));

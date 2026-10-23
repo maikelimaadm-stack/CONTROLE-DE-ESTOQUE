@@ -215,7 +215,7 @@ async function escolherNoCampo(page: Page, alvo: Locator, nome: string) {
 
 async function entradaDaLinha(linha: Locator, rotulo: string): Promise<Locator> {
   const e = linha.getByLabel(rotulo, { exact: true });
-  if (!(await e.isVisible())) await linha.getByTestId(`${P}-selecionar-item`).click();
+  if (!(await e.isVisible())) await linha.click();
   await expect(e, `a entrada "${rotulo}" está à vista`).toBeVisible();
   return e;
 }

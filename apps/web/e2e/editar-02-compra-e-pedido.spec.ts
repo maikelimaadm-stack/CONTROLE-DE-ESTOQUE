@@ -211,7 +211,7 @@ test("E2-1 — compra ABERTA: Editar → a Central em modo edição com o gravad
   await expect(linhas(page), "os dois itens salvos").toHaveCount(2);
 
   // O ITEM SALVO NÃO SAI (P1): marcado, sem o Remover. A quantidade sem teto (a compra não veio de pedido).
-  await linhas(page).nth(0).getByTestId(`${P}-selecionar-item`).click();
+  await linhas(page).nth(0).click();
   await expect(linhas(page).nth(0)).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId(`${P}-remover-item`), "o item salvo não tem o Remover").toHaveCount(0);
   const quantidade = linhas(page).nth(0).getByLabel("Quantidade do item 1");
@@ -226,7 +226,7 @@ test("E2-1 — compra ABERTA: Editar → a Central em modo edição com o gravad
   await expect(linhas(page)).toHaveCount(2);
 
   // A MUDANÇA: a quantidade de A (5 → 6) e a observação.
-  await linhas(page).nth(0).getByTestId(`${P}-selecionar-item`).click();
+  await linhas(page).nth(0).click();
   await linhas(page).nth(0).getByLabel("Quantidade do item 1").fill("6");
   await abrirObservacao(page, "edicao");
   await expect(page.getByTestId("compras-observacao"), "a observação GRAVADA").toHaveValue("observação gravada");
@@ -277,7 +277,7 @@ test("E2-2 — pedido ABERTO: Salvar sem mudar nada não manda nada (zero PATCH)
   // A EDIÇÃO: a quantidade (10 → 12) e a observação.
   await abrirEdicao(page, "pedido", doc);
   await expect(page.getByTestId("compras-numero-nota"), "o pedido não tem nota").toHaveCount(0);
-  await linhas(page).nth(0).getByTestId(`${P}-selecionar-item`).click();
+  await linhas(page).nth(0).click();
   await expect(page.getByTestId(`${P}-remover-item`), "o item salvo do pedido não tem o Remover").toHaveCount(0);
   await linhas(page).nth(0).getByLabel("Quantidade do item 1").fill("12");
   await abrirObservacao(page, "edicao");
@@ -354,7 +354,7 @@ test("E2-4 — Editar DESABILITADO com o motivo do servidor: pedido com compra v
   expect(limites.itens.map((i) => [i.id, i.quantidadeMaxima]), "premissa no fio: o teto do item é o saldo do pedido (10 − 0 de outras compras)").toEqual([[gerada.itens[0]!.id, "10.0000"]]);
   await expect(linhas(page)).toHaveCount(1);
   await expect(linhas(page).nth(0).getByTestId(`${P}-produto`), "o produto vem do pedido: travado").toHaveAttribute("data-travado", "");
-  await linhas(page).nth(0).getByTestId(`${P}-selecionar-item`).click();
+  await linhas(page).nth(0).click();
   const quantidade = linhas(page).nth(0).getByLabel("Quantidade do item 1");
   await expect(quantidade, "a quantidade com max = o saldo do item do pedido").toHaveAttribute("max", "10.0000");
   await expect(page.getByTestId(`${P}-adicionar-item`), "sem item novo: nada de Adicionar").toHaveCount(0);

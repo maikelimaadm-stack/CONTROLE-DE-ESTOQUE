@@ -118,9 +118,8 @@ async function escolherNaCelula(page: Page, prefixo: string, celula: Locator, no
 
 /** Marca a linha pelo círculo (os campos editáveis moram na linha MARCADA), sem desmarcar se já estiver. */
 async function marcar(linha: Locator) {
-  const circulo = linha.getByTestId(`${P}-selecionar-item`);
-  if ((await circulo.getAttribute("aria-checked")) !== "true") await circulo.click();
-  await expect(circulo).toHaveAttribute("aria-checked", "true");
+  if ((await linha.getAttribute("aria-selected")) !== "true") await linha.click();
+  await expect(linha).toHaveAttribute("aria-selected", "true");
 }
 
 /**

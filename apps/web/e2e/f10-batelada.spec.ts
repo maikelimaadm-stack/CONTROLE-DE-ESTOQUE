@@ -41,7 +41,7 @@ test("F10-B1 — dieta 60/40 × 100 kg: itens derivados travados ('Pela dieta (k
   await expect(page.getByTestId(`${P}-saldo-da-origem`), "kg × percentual da dieta").toHaveText(["60,0000", "40,0000"]);
   await expect(page.getByTestId(`${P}-grade`).getByRole("columnheader", { name: "Pela dieta (kg)" })).toBeVisible();
   await expect(page.getByTestId(`${P}-adicionar-item`), "itens derivados: sem Adicionar produto").toHaveCount(0);
-  await page.getByTestId(`${P}-selecionar-item`).first().click();
+  await page.getByTestId(`${P}-linha`).first().click();
   await expect(page.getByTestId(`${P}-grade`).getByRole("spinbutton", { name: "Quantidade do item 1" }), "a quantidade é travada").toHaveCount(0);
   await expect(page.getByTestId(`${P}-remover-item`), "nem Remover").toHaveCount(0);
   await expect(page.getByTestId(`${P}-resumo-custo`), "a prévia: 60 × 2,00 + 40 × 5,00").toContainText(/R\$\s320,00/);

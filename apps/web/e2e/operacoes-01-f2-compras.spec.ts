@@ -293,7 +293,7 @@ test("F2C-3 — receber o pedido com a TOP de compra Automática + Permitido: 'S
   await expect(salvar, "receber com a TOP Automática: o Salvar se chama 'Salvar e confirmar'").toHaveAttribute("aria-label", "Salvar e confirmar");
   await expect(salvar).toHaveAttribute("data-dica", "Salvar e confirmar");
   const linha = page.getByTestId(`compras-receber-item-${item}`);
-  await linha.getByTestId(`${P}-selecionar-item`).click();
+  await linha.click();
   await page.getByTestId("compras-itens").getByTestId(`${P}-remover-item`).click();
   await expect(linha, "premissa: a única linha saiu (a aresta é 'Em partes')").toHaveCount(0);
   await salvar.click();

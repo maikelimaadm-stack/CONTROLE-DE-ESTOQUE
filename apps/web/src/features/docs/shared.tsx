@@ -94,7 +94,17 @@ export const monthRange = () => ({ start_date: monthStartISO(), end_date: todayI
  * vale é o do servidor. Exportado para que outra apresentação do mesmo `ItemRow` (a Central de Vendas) mostre o MESMO
  * número que este editor sempre mostrou, em vez de uma segunda fórmula.
  */
-export const totalDaLinhaExibido = (it: ItemRow) => { const g = Number(it.quantity || 0) * Number(it.unit_value || 0); return g - Number(it.discount || 0) - g * Number(it.discount_percent || 0) / 100; };
+/**
+ * Total exibido da linha: qtd × unitário − desconto em R$.
+ * Desconto % e R$ são a mesma coisa sob dois ângulos (decisão 347) — só o valor em R$ entra na conta
+ * (evita descontar duas vezes). Se só houver %, usa-o como fallback (linhas antigas).
+ */
+export const totalDaLinhaExibido = (it: ItemRow) => {
+  const g = Number(it.quantity || 0) * Number(it.unit_value || 0);
+  const abs = Number(it.discount || 0);
+  if (abs) return g - abs;
+  return g - g * Number(it.discount_percent || 0) / 100;
+};
 
 /** Editor de itens (produto, qtd, valor) usado nos documentos de estoque/vendas. */
 export interface ItemRow { product_id: string; warehouse_id?: string; quantity: string; unit_value?: string; cost_center_id?: string; provider_lot?: string; expiration_date?: string; financial_category_id?: string; cost_center?: string; generate_stock?: boolean; discount?: string; discount_percent?: string; description?: string; [k: string]: unknown }

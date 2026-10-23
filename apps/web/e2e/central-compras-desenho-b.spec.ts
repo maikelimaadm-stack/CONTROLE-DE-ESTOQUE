@@ -342,14 +342,13 @@ test("CC-9 — receber pedido no modelo: travas, sem Adicionar produto e sem Dup
   await expect(page.getByTestId(`${P}-duplicar-item`)).toHaveCount(0);
 
   // (4) REMOVER ITEM: marca a linha B e remove (em partes).
-  await linhaB.getByTestId(`${P}-selecionar-item`).click();
+  await linhaB.click();
   await page.getByTestId(`${P}-remover-item`).click();
   await expect(linhaB).toHaveCount(0);
 
   // (5) QUANTIDADE ATÉ O SALDO, armazém, total.
-  const circuloA = linhaA.getByTestId(`${P}-selecionar-item`);
-  if ((await circuloA.getAttribute("aria-checked")) !== "true") await circuloA.click();
-  await expect(circuloA).toHaveAttribute("aria-checked", "true");
+  if ((await linhaA.getAttribute("aria-selected")) !== "true") await linhaA.click();
+  await expect(linhaA).toHaveAttribute("aria-selected", "true");
   const quantidade = linhaA.getByLabel("Quantidade do item 1");
   await expect(quantidade).toHaveAttribute("max", /^10(\.0+)?$/);
   await quantidade.fill("4");

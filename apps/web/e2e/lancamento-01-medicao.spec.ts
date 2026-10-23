@@ -267,7 +267,7 @@ async function escolherNoCampo(page: Page, campo: Locator, nome: string) {
 /** A entrada de uma célula da linha (só existe com a linha marcada): marca a linha quando preciso. */
 async function entradaDaLinha(linha: Locator, rotulo: string): Promise<Locator> {
   const e = linha.getByLabel(rotulo, { exact: true });
-  if (!(await e.isVisible())) await linha.getByTestId(`${P}-selecionar-item`).click();
+  if (!(await e.isVisible())) await linha.click();
   await expect(e, `a entrada "${rotulo}" está à vista`).toBeVisible();
   return e;
 }

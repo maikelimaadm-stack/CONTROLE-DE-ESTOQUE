@@ -1445,8 +1445,7 @@ test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, cor
     await expect(page).toHaveURL(new RegExp(`tipo_operacao_id=${topAjuste}.*lote=${lote}`));
     const linhaCentral = page.getByTestId("central-estoque-linha").first();
     await expect(linhaCentral, "uma linha, a do Saldo").toBeVisible();
-    const circulo = linhaCentral.getByTestId("central-estoque-selecionar-item");
-    if ((await circulo.getAttribute("aria-checked")) !== "true") await circulo.click();
+    if ((await linhaCentral.getAttribute("aria-selected")) !== "true") await linhaCentral.click();
     await expect(linhaCentral.getByLabel("Lote do item 1"), "premissa: o lote veio da linha").toHaveValue(lote);
     await linhaCentral.getByLabel("Quantidade do item 1").fill("4");
     const postAjuste = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/estoque/ajustes");

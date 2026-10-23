@@ -41,7 +41,7 @@ test("E3-C1 — a criação de venda pela Central: o corpo do POST de um cenári
   const preencherLinha = async (i: number, produto: Cadastro, quantidade: string, unitario: string) => {
     await escolherNaCelula(page, linhas(page).nth(i).getByTestId("central-vendas-produto"), produto.nome);
     const linha = linhas(page).nth(i);
-    if ((await linha.getAttribute("aria-selected")) !== "true") await linha.getByTestId("central-vendas-selecionar-item").click();
+    if ((await linha.getAttribute("aria-selected")) !== "true") await linha.click();
     await linha.getByLabel(`Quantidade do item ${i + 1}`).fill(quantidade);
     await linha.getByLabel(`Valor unitário do item ${i + 1}`).fill(unitario);
   };

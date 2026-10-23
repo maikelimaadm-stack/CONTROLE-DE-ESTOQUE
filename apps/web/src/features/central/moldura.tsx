@@ -107,7 +107,7 @@ function Divisor({ eixo, valor, min, max, rotulo, onInicio, onMover, onFim, onTe
   const terminar = () => { if (!inicio.current) return; inicio.current = null; onFim(); };
   return <div
     role="separator"
-    tabIndex={0}
+    tabIndex={-1}
     aria-orientation={eixo}
     aria-label={rotulo}
     aria-valuemin={min}
@@ -239,7 +239,7 @@ export function CentralDeDocumento({ prefixoTestid, titulo, acoes, acoesDireita,
               <span className={estilos.identidade} data-testid={`${prefixoTestid}-identidade`}>
                 {carregando
                   ? <span className={estilos.skLinha} aria-hidden />
-                  : <span className={cn(estilos.identidadeIcone, estilos.dicaFim)} data-tom={identidade.tom} data-dica={identidade.dica} tabIndex={identidade.dica ? 0 : undefined} role={identidade.dica ? "img" : undefined} aria-label={identidade.dica} aria-hidden={identidade.dica ? undefined : true}>{identidade.icone ?? <FilePlus />}</span>}
+                  : <span className={cn(estilos.identidadeIcone, estilos.dicaFim)} data-tom={identidade.tom} data-dica={identidade.dica} role={identidade.dica ? "img" : undefined} aria-label={identidade.dica} aria-hidden={identidade.dica ? undefined : true}>{identidade.icone ?? <FilePlus />}</span>}
                 {/* o nome do documento é o TÍTULO da tela (h1): leitor de tela e atalho de título chegam nele */}
                 <h1 className={cn(estilos.identidadeNome, carregando && "sr-only")} data-codigo={identidade.codigo ? "true" : undefined} data-testid={`${prefixoTestid}-identidade-nome`}>{identidade.nome}</h1>
                 {identidade.situacao && <span className={estilos.identidadeSituacao} data-testid={`${prefixoTestid}-situacao`}>{identidade.situacao}</span>}
