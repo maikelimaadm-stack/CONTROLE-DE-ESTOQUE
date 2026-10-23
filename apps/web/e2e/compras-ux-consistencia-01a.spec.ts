@@ -347,10 +347,12 @@ test("UX1-3 — rateio: grade no painel; Conta Contábil e Safra sempre à vista
   await expect(page.getByTestId(`${P}-dados`).getByTestId("compras-rateio-tipo")).toHaveCount(0);
   await expect(rateio.getByTestId("compras-rateio-tipo"), "sem seletor Como classificar").toHaveCount(0);
   await expect(rateio.getByTestId("compras-classificacao-unica")).toBeVisible();
-  await expect(rateio.getByTestId("compras-rateio-linha-0")).toBeVisible();
-  // Conta Contábil e Safra SEMPRE à vista — sem Detalhes contábeis / dependência
-  await expect(rateio.getByTestId("compras-rateio-linha-0-conta")).toBeVisible();
-  await expect(rateio.getByTestId("compras-rateio-linha-0-safra")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-natureza-linha-0")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-centro-linha-0")).toBeVisible();
+  // Conta Contábil na aba; Safra nos Dados — sem Detalhes contábeis / dependência
+  await expect(rateio.getByTestId("compras-rateio-conta")).toBeVisible();
+  await expect(rateio.getByTestId("compras-safra")).toHaveCount(0);
+  await expect(page.getByTestId(`${P}-dados`).getByTestId("compras-safra")).toBeVisible();
   await expect(rateio.getByTestId("compras-rateio-linha-0-detalhes")).toHaveCount(0);
   await expect(rateio.getByTestId("compras-classificacao-gasto")).toBeVisible();
   await foto(page, pasta, "ux1-3-rateio-por-valor-1440x900");

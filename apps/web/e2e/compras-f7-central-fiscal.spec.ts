@@ -171,7 +171,7 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI e seguro: o total 
   const rateio = await abaDoRateio(page);
   await expect(rateio.getByTestId("compras-itens-classificacao"), "sem itens na aba Rateio").toHaveCount(0);
   await expect(rateio.getByTestId("compras-classificacao-unica")).toBeVisible();
-  await expect(rateio.getByTestId("compras-rateio-linha-0-conta"), "Conta Contábil sempre à vista").toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-conta"), "Conta Contábil à parte na aba").toBeVisible();
   await expect(rateio.getByTestId("compras-classificacao-gasto"), "CAPEX/OPEX como seleção à vista").toBeVisible();
   await expect(rateio.getByTestId("compras-rateio-tipo")).toHaveCount(0);
 

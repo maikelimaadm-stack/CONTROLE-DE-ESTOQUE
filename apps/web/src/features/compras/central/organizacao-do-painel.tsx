@@ -166,7 +166,7 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
   });
 
   const rateioCampos = presentes(RATEIO_CAMPOS);
-  /* RateioEItensDaCriacao / RateioDaConsulta são a autoridade visual — CampoDaCentral com Conta Contábil e Safra à vista.
+  /* RateioEItensDaCriacao / RateioDaConsulta — duas tabelas independentes + Conta Contábil; Safra nos Dados.
      Sem F7 (`!rateioNoPainel`), a aba ainda desenha Natureza/Centro do layout (R01-4). */
   if (rateioNoPainel(e) || rateioCampos.length) abas.push({
     value: valorUnico(ABA_DO_RATEIO), label: ROTULO_DA_ABA_DO_RATEIO,
