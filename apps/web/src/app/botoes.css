@@ -1,11 +1,11 @@
-/* Ações de todos os módulos: mesmas medidas do botão Filtrar de Produtos.
+/* Ações de todos os módulos: mesma régua (decisão 327 — 28px, cinza, ícone 16px).
  * Campos, linhas de menu, abas e calendários mantêm sua própria geometria.
  * !important mantém o padrão diante das variantes locais e utilitários de tamanho.
  */
 :is(.app-button, .tb-btn, .mg-filter-pill__trigger, .itbar .ib, .view-seg button, .mg-nav-btn, .fchip-lim) {
   box-sizing: border-box;
-  height: 24px !important;
-  min-height: 24px !important;
+  height: 28px !important;
+  min-height: 28px !important;
   padding-block: 0 !important;
   font-family: inherit;
   font-size: 12px !important;
@@ -25,13 +25,13 @@
   border-color: #9ca3af !important;
 }
 :is(.tb-btn-icon, .itbar .ib, .view-seg button, .mg-nav-btn) {
-  width: 24px !important;
-  min-width: 24px !important;
+  width: 28px !important;
+  min-width: 28px !important;
   padding: 0 !important;
 }
 :is(.app-button, .tb-btn, .itbar .ib, .view-seg button) svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   color: inherit;
 }
 /* Sem sombras inclusive em hover/foco; o teclado continua com contorno visível. */
@@ -43,7 +43,7 @@ button {
   outline: 2px solid #64748b !important;
   outline-offset: 2px;
 }
-.view-seg { height: 24px; padding: 0; box-shadow: none; }
+.view-seg { height: 28px; padding: 0; box-shadow: none; }
 /* Mesmo contraste, tipografia e afastamento das dicas da Central. */
 .dica-de-acao {
   position: fixed;
@@ -66,4 +66,25 @@ button {
 }
 @media (prefers-reduced-motion: reduce) {
   .dica-de-acao { animation: none; }
+}
+
+/*
+ * Círculos / altura 28px (decisão 327 — Portal de Compras + motor da Central).
+ * Duas classes vencem o `height: 24px !important` de uma classe acima.
+ */
+.app-button.mg-altura-28 {
+  height: 28px !important;
+  min-height: 28px !important;
+}
+.app-button.mg-circulo-28 {
+  width: 28px !important;
+  min-width: 28px !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 !important;
+}
+.app-button.mg-circulo-28 svg,
+.app-button.mg-altura-28 svg {
+  width: 16px !important;
+  height: 16px !important;
 }

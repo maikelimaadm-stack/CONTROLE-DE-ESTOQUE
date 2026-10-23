@@ -240,14 +240,14 @@ export function NovoDocumentoPorTop({ variante, rotuloDoTipo, todosOsGrupos, pre
   if (!grupos.length) return null;
   return <>
     <span className={estilos.dividido}>
-      <DicaDeAcao texto={dicasPadronizadas ? `Novo documento · ${rotuloDoTipo}: escolher a operação` : undefined}><button ref={botaoNovo} type="button" className={cn(estilos.novo, somenteIcone && estilos.novoSoIcone)} data-testid={`${prefixo}-novo`} aria-haspopup="dialog" aria-expanded={aberto}
+      <DicaDeAcao texto={dicasPadronizadas ? `Novo documento · ${rotuloDoTipo}: escolher a operação` : undefined}><button ref={botaoNovo} type="button" className={cn(estilos.novo, somenteIcone && estilos.novoSoIcone, somenteIcone && "mg-circulo-28")} data-testid={`${prefixo}-novo`} aria-haspopup="dialog" aria-expanded={aberto}
         aria-label={`Novo documento · ${rotuloDoTipo}`}
         title={dicasPadronizadas ? undefined : `Novo documento · ${rotuloDoTipo}: escolher a operação`} onClick={abrir}>
         <Plus strokeWidth={2.4} aria-hidden />{!somenteIcone && <span>Novo</span>}
       </button></DicaDeAcao>
       <MenuP.Root modal={false}>
         <DicaDeAcao texto={dicasPadronizadas ? "Escolher a operação do novo documento" : undefined}><MenuP.Trigger asChild>
-          <button type="button" className={estilos.abrirMenu} aria-label="Escolher a operação do novo documento" data-testid={`${prefixo}-novo-menu`}>
+          <button type="button" className={cn(estilos.abrirMenu, somenteIcone && "mg-circulo-28")} aria-label="Escolher a operação do novo documento" data-testid={`${prefixo}-novo-menu`}>
             <ChevronDown strokeWidth={2.4} aria-hidden />
           </button>
         </MenuP.Trigger></DicaDeAcao>

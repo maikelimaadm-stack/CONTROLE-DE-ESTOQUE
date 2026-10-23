@@ -14,8 +14,9 @@ export type { DepoisDeSalvar, ItemRapido, Pendencia } from "./contrato";
 /**
  * BARRA DE AÇÕES DA CENTRAL (motor neutro, VISUAL-UX-04).
  *
- * Apresentação, e só: botões, pílula, Posição do rótulo e indicadores (Salvo, Confirmando…, N pendências). O que cada
- * um FAZ continua na página da espécie; nenhum componente daqui chama API. O prefixo dos testids vem do adaptador.
+ * Apresentação, e só: botões (círculo 28px), avanço só-ícone, Posição do rótulo e indicadores (Salvo, Confirmando…,
+ * N pendências). O que cada um FAZ continua na página da espécie; nenhum componente daqui chama API. O prefixo dos
+ * testids vem do adaptador.
  */
 
 /* ── ícones do desenho (traço 2, 24×24; os caminhos são os do desenho, alguns fora do conjunto lucide) ── */
@@ -51,18 +52,35 @@ export const ConjuntoDireito = ({ children }: PropsDoConjunto) => <span classNam
  */
 export const BotaoDaBarra = React.forwardRef<HTMLButtonElement, PropsDoBotaoDaBarra>(({ rotulo, dica, solido, ocupado, dicaNoFim, className, children, disabled, ...p }, ref) =>
   <button ref={ref} type="button" aria-label={rotulo} data-dica={dica ?? rotulo} aria-busy={ocupado || undefined} disabled={disabled || ocupado}
-    className={cn(estilos.botao, solido && estilos.solido, dicaNoFim ? estilosCentral.dicaFim : estilosCentral.dicaInicio, className)} {...p}>
+    className={cn("mg-circulo-28", estilos.botao, solido && estilos.solido, dicaNoFim ? estilosCentral.dicaFim : estilosCentral.dicaInicio, className)} {...p}>
     {ocupado ? <IconeGirando /> : children}
   </button>);
 BotaoDaBarra.displayName = "BotaoDaBarra";
 
-/** A pílula (`.tbp`): ícone e texto — Confirmar e as ações de avanço da espécie. */
+/** Texto acessível a partir dos filhos (rótulo antigo da pílula) — a tela só mostra o ícone. */
+function textoDosFilhos(node: React.ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textoDosFilhos).join("");
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) return textoDosFilhos(node.props.children);
+  return "";
+}
+
+/**
+ * Ação de avanço (Confirmar, Cancelar, Receber…): o MESMO círculo 28px só-ícone da barra (decisão 327).
+ * `children` vira `aria-label` / dica — nunca texto visível (evita oval de alturas diferentes).
+ */
 export const PilulaDaBarra = React.forwardRef<HTMLButtonElement, PropsDaPilulaDaBarra>(
-  ({ icone, dica, ocupado, perigo, className, children, disabled, ...p }, ref) =>
-    <button ref={ref} type="button" data-dica={dica} aria-busy={ocupado || undefined} disabled={disabled || ocupado}
-      className={cn(estilos.pilula, perigo && estilos.pilulaPerigo, estilosCentral.dicaInicio, className)} {...p}>
-      {ocupado ? <IconeGirando /> : icone}{children}
-    </button>);
+  ({ icone, dica, ocupado, perigo, className, children, disabled, ...p }, ref) => {
+    const rotulo = textoDosFilhos(children).replace(/\s+/g, " ").trim();
+    return (
+      <button ref={ref} type="button" aria-label={rotulo || undefined} data-dica={dica ?? (rotulo || undefined)}
+        aria-busy={ocupado || undefined} disabled={disabled || ocupado}
+        className={cn("mg-circulo-28", estilos.pilula, perigo && estilos.pilulaPerigo, estilosCentral.dicaInicio, className)} {...p}>
+        {ocupado ? <IconeGirando /> : icone}
+      </button>
+    );
+  });
 PilulaDaBarra.displayName = "PilulaDaBarra";
 
 /* ── Posição do rótulo ── */

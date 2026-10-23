@@ -52,12 +52,12 @@
 
 .acao {
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   box-sizing: border-box;
   border-radius: 999px;
   border: 1px solid transparent;
-  background: #f4f6f7;
+  background: #f1f3f4;
   color: #475569;
   display: inline-flex;
   align-items: center;
@@ -262,11 +262,11 @@
 .identidadeNome[data-codigo="true"] { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
 .pontoAlterado { display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: #40de63; flex-shrink: 0; }
 
-/* [Ampliar] de região: só o ícone — sem fundo, sem sombra, sem borda */
+/* [Ampliar] de região: círculo 28px, só ícone — sem fundo, sem sombra, sem borda (decisão 327) */
 .ampliar {
   position: relative;
-  width: 25px;
-  height: 25px;
+  width: 28px;
+  height: 28px;
   box-sizing: border-box;
   flex-shrink: 0;
   border-radius: 999px;
@@ -462,19 +462,19 @@
 .painel[data-recolhido="true"] { height: 39px; }
 .painel[data-recolhido="true"] [role="tabpanel"] { display: none; }
 /* a faixa de 38px (+1 de borda): [Ampliar] à esquerda, abas, … [Recolher] à direita */
-.painelAmpliar { position: absolute; z-index: 1; top: 6.5px; left: 8px; display: flex; }
+.painelAmpliar { position: absolute; z-index: 1; top: 5px; left: 8px; display: flex; }
 .painelAmpliar > button { margin-right: 8px; }
 .painelAcoes { position: absolute; z-index: 1; top: 0; right: 10px; height: 38px; display: flex; align-items: center; gap: 12px; }
 .recolher {
   position: relative;
-  width: 25px;
-  height: 25px;
+  width: 28px;
+  height: 28px;
   box-sizing: border-box;
   border-radius: 999px;
   border: 1px solid transparent;
   background: #f1f3f4;
   color: #475569;
-  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  box-shadow: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -483,12 +483,12 @@
   flex-shrink: 0;
   transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), opacity var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
 }
-.recolher:hover:not(:disabled) { background: #e5e7eb; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
-.recolher:active:not(:disabled) { transform: scale(.9); }
+.recolher:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.recolher:active:not(:disabled) { background: #dde3e8; transform: scale(.9); }
 .recolher:disabled { opacity: .45; cursor: not-allowed; }
 .recolher:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
 .recolherIcone { display: inline-flex; }
-.recolherIcone svg { width: 14px; height: 14px; flex-shrink: 0; }
+.recolherIcone svg { width: 16px; height: 16px; flex-shrink: 0; }
 .recolher[aria-expanded="false"] .recolherIcone { transform: rotate(180deg); }
 .abas { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 /* totais e resumos que ficam FORA do conteúdo das abas (sempre visíveis com o painel expandido) */

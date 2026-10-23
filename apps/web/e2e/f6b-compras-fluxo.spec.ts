@@ -315,7 +315,7 @@ test("F6B-F1 — pelo pedido, na tela: Aprovar para orçamento → dois orçamen
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "finalizado");
   await expect(page.getByTestId(`${P}-situacao`).locator("[data-tone]")).toHaveText("Finalizado");
   await expect(page.getByTestId(`compras-proximo-passo-${c.topCompra.codigo}`), "finalizado: o Receber… habilitado, pelo passo da compra").toBeEnabled();
-  await expect(page.getByTestId(`compras-proximo-passo-${c.topCompra.codigo}`)).toContainText("Receber…");
+  await expect(page.getByTestId(`compras-proximo-passo-${c.topCompra.codigo}`)).toHaveAttribute("aria-label", "Receber…");
   await expect(finalizar, "finalizado: a pílula fica, desabilitada").toBeDisabled();
   await expect(page.getByTestId("compras-novo-orcamento"), "fora do aberto, nada de Novo orçamento").toHaveCount(0);
 

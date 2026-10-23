@@ -33,10 +33,10 @@ const WORKSPACE = "central-vendas";
  */
 const MEDIDAS = {
   barra: { altura: 44, raio: "12px", fundo: "rgb(255, 255, 255)", borda: "rgb(231, 234, 238)" },
-  botaoRedondo: { lado: 25, fundo: "rgb(241, 243, 244)", icone: "rgb(71, 85, 105)", sombra: "rgba(34, 197, 94, 0.3) 0px 2px 6px 0px" },
-  novo: { fundo: "rgb(64, 222, 99)" },
-  pilula: { altura: 25, fonte: "12.5px", peso: "600" },
-  posicaoDoRotulo: { altura: 25 },
+  botaoRedondo: { lado: 28, fundo: "rgb(241, 243, 244)", icone: "rgb(71, 85, 105)", sombra: "none" },
+  novo: { fundo: "rgb(241, 243, 244)" },
+  pilula: { lado: 28 },
+  posicaoDoRotulo: { altura: 28 },
   documento: { raio: "14px" },
   /** O desenho põe `height: 36px` INLINE no cabeçalho (o `--dz-reg: 32px` do CSS não vale para ele) + 1 px de borda:
    *  a caixa medida no desenho é 37. O pedido diz 36 — é o conteúdo; a caixa é 37. */
@@ -189,21 +189,22 @@ test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botõ
   });
   expect.soft(cartao, "o cartão da barra tem raio 12").toEqual({ raio: MEDIDAS.barra.raio, fundo: MEDIDAS.barra.fundo, borda: MEDIDAS.barra.borda });
 
-  // BOTÃO REDONDO (Descartar, criação): 25×25, fundo, ícone e sombra verde
+  // BOTÃO REDONDO (Descartar, criação): 28×28, fundo cinza, sem sombra em repouso (decisão 327)
   const descartar = page.getByTestId("central-vendas-descartar");
   const bd = await caixa(descartar);
-  expect.soft([Math.round(bd.width), Math.round(bd.height)], "botão redondo 25×25").toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
+  expect.soft([Math.round(bd.width), Math.round(bd.height)], "botão redondo 28×28").toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
   const ed = await estilo(descartar, ["background-color", "color", "box-shadow"]);
   expect.soft(ed["background-color"]).toBe(MEDIDAS.botaoRedondo.fundo);
   expect.soft(ed["box-shadow"]).toBe(MEDIDAS.botaoRedondo.sombra);
   expect.soft(await descartar.locator("svg").first().evaluate((s) => getComputedStyle(s).color), "ícone #475569").toBe(MEDIDAS.botaoRedondo.icone);
 
-  // PÍLULA Confirmar venda: 25 px, 12,5 px peso 600
+  // Confirmar venda: o mesmo círculo 28×28 (só ícone)
   const pilula = page.getByTestId("central-vendas-confirmar");
-  expect.soft(Math.round((await caixa(pilula)).height)).toBe(MEDIDAS.pilula.altura);
-  expect.soft(await estilo(pilula, ["font-size", "font-weight"])).toEqual({ "font-size": MEDIDAS.pilula.fonte, "font-weight": MEDIDAS.pilula.peso });
+  const bp = await caixa(pilula);
+  expect.soft([Math.round(bp.width), Math.round(bp.height)], "Confirmar 28×28").toEqual([MEDIDAS.pilula.lado, MEDIDAS.pilula.lado]);
+  await expect(pilula).toHaveAttribute("aria-label", /Confirmar venda/);
 
-  // POSIÇÃO DO RÓTULO: segmentado de 25 px
+  // POSIÇÃO DO RÓTULO: segmentado de 28 px
   expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-posicao-rotulo"))).height)).toBe(MEDIDAS.posicaoDoRotulo.altura);
 
   // DOCUMENTO: cartão raio 14 em volta de Dados principais; cabeçalho de Dados principais
@@ -265,11 +266,11 @@ test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botõ
   const fonteDoValor = await clienteLido.getByText(venda.clientName).first().evaluate((el) => getComputedStyle(el).fontSize);
   expect.soft(fonteDoValor, "valor 12,5 px").toBe(MEDIDAS.campo.valorFonte);
   expect.soft((await medirCaixa(page.getByTestId("top-contexto")))?.fundo, "Tipo de Operação travado na consulta").toBe(MEDIDAS.campo.travada);
-  // botão redondo e Novo verde na consulta
+  // botão redondo e Novo cinza na consulta (decisão 327 — uma cor)
   const dup = page.getByTestId("central-vendas-duplicar");
   const bdup = await caixa(dup);
   expect.soft([Math.round(bdup.width), Math.round(bdup.height)]).toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
-  expect.soft((await estilo(page.getByTestId("central-vendas-novo"), ["background-color"]))["background-color"], "Novo verde").toBe(MEDIDAS.novo.fundo);
+  expect.soft((await estilo(page.getByTestId("central-vendas-novo"), ["background-color"]))["background-color"], "Novo cinza").toBe(MEDIDAS.novo.fundo);
   // ITENS (consulta; a grade da criação é medida no VD-14): barra 36, cabeçalho 28, linha 23, rodapé 32
   const itens = consulta.getByTestId("central-vendas-itens");
   expect.soft(Math.round((await caixa(itens.getByRole("toolbar").first())).height), "barra de itens").toBe(MEDIDAS.itens.barra);
@@ -1082,11 +1083,11 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   await expect(adicionarNoVazio).toHaveAccessibleName("Adicionar produto");
   await expect(itens.getByRole("button", { name: "Adicionar produto", exact: true }), "com zero itens, dois botões com esse nome").toHaveCount(2);
   await expect(itens.getByRole("button", { name: /Adicionar item/ }), "o nome antigo saiu").toHaveCount(0);
-  // o botão do vazio: pílula clara com a sombra verde do desenho (.tb-btn-green), 30 px
+  // o botão do vazio: o mesmo círculo 28 px cinza (decisão 327)
   const ev = await estilo(adicionarNoVazio, ["background-color", "box-shadow"]);
   expect.soft(ev["background-color"], "botão do vazio: fundo claro").toBe(MEDIDAS.botaoRedondo.fundo);
-  expect.soft(ev["box-shadow"], "botão do vazio: sombra verde").toBe(MEDIDAS.botaoRedondo.sombra);
-  expect.soft(Math.round((await caixa(adicionarNoVazio)).height), "botão do vazio: 30 px").toBe(30);
+  expect.soft(ev["box-shadow"], "botão do vazio: sem sombra em repouso").toBe(MEDIDAS.botaoRedondo.sombra);
+  expect.soft(Math.round((await caixa(adicionarNoVazio)).height), "botão do vazio: 28 px").toBe(MEDIDAS.botaoRedondo.lado);
   // sem item corrente, sem Duplicar e sem Remover; Grade e Formulário são DOIS botões ("Grade e formulário" saiu)
   expect(await nomesDaBarraDeItens(barra), "barra sem item corrente").toEqual([expect.stringMatching(/^Ampliar/), "Adicionar produto", "Grade", "Formulário", "Configurar colunas"]);
   await expect(duplicar).toHaveCount(0);
