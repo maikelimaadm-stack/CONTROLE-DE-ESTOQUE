@@ -6,8 +6,12 @@
 const TETO = 480;
 const PISO = 48;
 
-/** Reserva fixa: padding (9+9) + menu ⋮ (16) + faixa dos mini-ícones (até 2×12 + gap) + folga. */
-export const CHROME_DA_COLUNA = 18 + 16 + 27 + 8;
+/**
+ * Reserva fixa (box-sizing:border-box): padding 9+9 + borda + menu ⋮ 20 +
+ * faixa dos mini-ícones (até 2×12 + gap) + gaps do flex + folga.
+ * Garante que o rótulo do cabeçalho caiba mesmo sem dados nas células.
+ */
+export const CHROME_DA_COLUNA = 18 + 2 + 20 + 27 + 6 + 10;
 
 let canvas: HTMLCanvasElement | null = null;
 
@@ -24,6 +28,7 @@ export function medirTextos(textos: readonly string[], font: string, chrome = CH
       max = Math.max(max, ctx.measureText(t).width);
     }
   }
+  // Sem texto de célula, ainda mede o cabeçalho (rótulo está em `textos`).
   return Math.min(TETO, Math.max(PISO, Math.ceil(max) + chrome));
 }
 

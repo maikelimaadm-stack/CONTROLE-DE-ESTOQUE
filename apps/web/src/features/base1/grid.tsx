@@ -17,8 +17,8 @@ export const SELECT_COLUMN_WIDTH = 36;
  * Seleção como no MG: clique na linha seleciona só ela (Ctrl alterna, Shift intervalo); o controle da linha
  * alterna sem desmarcar as demais; duplo clique abre o registro.
  * Congelamento em prefixo: "Congelar" na coluna N congela todas até N; âncora descongela.
- * Auto ajustar é estado (ligado até desligar); mini-ícones no cabeçalho mostram filtro/auto/congelada;
- * duplo clique na alça de resize liga/aplica o auto ajustar.
+ * Auto ajustar é estado (ligado até desligar); mini-ícones: filtro/auto; congelar só na âncora;
+ * ⋮ sem fundo marcado; âncora congelada só com sombra; duplo clique na alça liga/aplica o auto ajustar.
  */
 export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelectClick, onToggle, onToggleAll, onOpen, frozen = 0, onFreeze, onHide, onResize, onAutoFit, onFilter, footer, rowKey, emptyText, scrollToId, filteredKeys, autoFitKeys, referenceHeaders: _referenceHeaders = false, popoverClassName, selecaoSticky = true }: {
   columns: Base1Column[]; rows: Row[]; loading?: boolean; sort?: { key: string; dir: "asc" | "desc" }; onSort?: (key: string) => void;
@@ -106,7 +106,8 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
           const isAnchor = i === frozenCount - 1 && frozenCount > 0;
           const fitOn = Boolean(autoFitKeys?.has(c.key));
           const filterOn = Boolean(filteredKeys?.has(c.key));
-          const temEstado = filterOn || fitOn || isFrozen;
+          /** Mini-ícones: filtro/auto; congelar só na âncora (não nas colunas à esquerda). */
+          const temIcones = filterOn || fitOn || isAnchor;
           return (
           <th key={c.key} ref={(el) => { ths.current[c.key] = el; }} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : { minWidth: 110 }), ...(isFrozen ? { left: lefts[c.key] ?? leftBase, zIndex: 4 } : {}) }} className={cn("group relative", isFrozen && "is-frozen", isAnchor && "is-frozen-anchor", c.align === "right" && "!text-right")}>
             <div className="flex h-[30px] items-center gap-1">
@@ -114,10 +115,10 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
                 <span className="truncate">{c.label}</span>
                 {sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 shrink-0 text-[var(--mg-accent)]" /> : <ArrowDown className="h-3 w-3 shrink-0 text-[var(--mg-accent)]" />)}
               </button>
-              {temEstado && <span className="th-estado" aria-hidden>
+              {temIcones && <span className="th-estado" aria-hidden>
                 {filterOn && <Filter className="th-estado-icone" strokeWidth={2.25} />}
                 {fitOn && <Scaling className="th-estado-icone" strokeWidth={2.25} />}
-                {isFrozen && <PanelLeft className="th-estado-icone" strokeWidth={2.25} />}
+                {isAnchor && <PanelLeft className="th-estado-icone" strokeWidth={2.25} />}
               </span>}
               {(() => {
                 const rotuloFreeze = isAnchor ? "Descongelar colunas" : isFrozen ? "Congelar até esta coluna" : "Congelar coluna";
@@ -128,7 +129,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
                   ...(c.hideable === false ? [] : [{ key: "hide", label: "Ocultar coluna", icon: <EyeOff className="h-4 w-4" />, disabled: !onHide || columns.length <= 1 }])
                 ];
                 if (!itens.length) return null;
-                return <B1Popover className={cn("w-52 p-1", popoverClassName)} align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className={cn("th-menu", temEstado && "is-on")}><MoreVertical className="h-3 w-3" strokeWidth={2.25} /></button>}>
+                return <B1Popover className={cn("w-52 p-1", popoverClassName)} align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className="th-menu"><MoreVertical className="h-3 w-3" strokeWidth={2.25} /></button>}>
                   <MenuList onPick={(k) => {
                     setMenuFor(null);
                     if (k === "filter") onFilter?.(c.key);

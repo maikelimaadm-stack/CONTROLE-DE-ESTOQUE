@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Copy, FileText, Grid3x3, Lock, MoreVertical, PanelLeft, Plus, Scaling, Search, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, EyeOff, FileText, Grid3x3, Lock, MoreVertical, PanelLeft, Plus, Scaling, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
 import { cn, brl, num, dateBR } from "@/lib/utils";
 import { fonteDaCelula, medirTextos } from "@/lib/largura-coluna";
@@ -473,63 +473,69 @@ export function ItensDaCentral({
     }
   };
 
-  /**
-   * Textos da coluna a partir dos dados (não do DOM) — estável entre cliques.
-   * Evita input ativo / ícones do cabeçalho alterarem a medida.
-   */
+  /** Textos visíveis da coluna (rótulo + células) — canvas, igual ao Base1Grid do Portal. */
   const textosDaColuna = (k: ChaveColunaDoItem): string[] => {
     const out = [rotuloColuna(k)];
-    const casasQ = casasDaQuantidade ?? 2;
-    for (const it of items) {
-      let t = "";
-      switch (k) {
-        case "codigo": t = conhecidos[it.product_id]?.code ?? ""; break;
-        case "produto": t = conhecidos[it.product_id]?.label ?? ""; break;
-        case "armazem": t = it.warehouse_id ? (conhecidos[it.warehouse_id]?.label ?? "") : ""; break;
-        case "estoque": t = ""; break;
-        case "saldo": t = num(maxDaOrigem(it) ?? "0", casasQ); break;
-        case "quantidade": t = num(it.quantity, casasQ); break;
-        case "unitario": t = it.unit_value !== undefined && it.unit_value !== "" ? (semSimboloDeMoeda ? num(it.unit_value, 2) : brl(it.unit_value)) : ""; break;
-        case "desconto": t = Number(it.discount || 0) ? dinheiro(it.discount!) : ""; break;
-        case "descontoPercentual": t = Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : ""; break;
-        case "total": t = dinheiro(totalDaLinhaExibido(it)); break;
-        case "lote": t = it.provider_lot ?? ""; break;
-        case "validade": t = it.expiration_date ? dateBR(it.expiration_date) : ""; break;
-      }
-      t = String(t).replace(/\s+/g, " ").trim();
+    const idx = colunasVisiveis.indexOf(k);
+    const corpo = tabelaRef.current?.tBodies[0];
+    if (idx < 0 || !corpo) return out;
+    for (const row of Array.from(corpo.rows)) {
+      const td = row.cells[idx];
+      if (!td) continue;
+      const input = td.querySelector("input") as HTMLInputElement | null;
+      const bruto = input ? `${input.value} ${td.innerText || ""}` : (td.innerText || td.textContent || "");
+      const t = bruto.replace(/\s+/g, " ").trim();
       if (t && t !== "—") out.push(t);
-    }
-    // estoque / rótulos ainda não resolvidos: complementa com o texto visível da célula
-    if (k === "estoque" || out.length <= 1) {
-      const idx = colunasVisiveis.indexOf(k);
-      const table = tabelaRef.current;
-      if (idx >= 0 && table?.tBodies[0]) {
-        for (const row of Array.from(table.tBodies[0].rows)) {
-          const td = row.cells[idx];
-          if (!td) continue;
-          const cell = td.querySelector("input, [contenteditable]") as HTMLElement | null;
-          const bruto = cell && "value" in cell ? String((cell as HTMLInputElement).value || "") : (td.innerText || td.textContent || "");
-          const t = bruto.replace(/\s+/g, " ").trim();
-          if (t && t !== "—") out.push(t);
-        }
-      }
     }
     return out;
   };
 
-  const aplicarAutoAjuste = (k: ChaveColunaDoItem) => {
+  const larguraPorConteudo = (k: ChaveColunaDoItem) => {
     const th = tabelaRef.current?.tHead?.rows[0]?.cells[colunasVisiveis.indexOf(k)] ?? null;
-    const w = medirTextos(textosDaColuna(k), fonteDaCelula(th));
+    return medirTextos(textosDaColuna(k), fonteDaCelula(th));
+  };
+
+  /** Grava largura no estado e no DOM (col/th/tabela) — mesma trava width=min=max do resize. */
+  const gravarLargura = (k: ChaveColunaDoItem, w: number) => {
+    const px = `${w}px`;
+    const col = colsRef.current[k];
+    if (col) col.style.width = col.style.minWidth = col.style.maxWidth = px;
+    const th = tabelaRef.current?.tHead?.rows[0]?.cells[colunasVisiveis.indexOf(k)] as HTMLElement | undefined;
+    if (th) th.style.width = th.style.minWidth = th.style.maxWidth = px;
+    const table = tabelaRef.current;
+    if (table) {
+      let soma = 0;
+      for (const chave of colunasVisiveis) {
+        soma += chave === k ? w : larguraDe(chave);
+      }
+      table.style.width = table.style.minWidth = `${soma}px`;
+    }
     setLarguras((m) => (m[k] === w ? m : { ...m, [k]: w }));
   };
 
-  const alternarAutoAjuste = (k: ChaveColunaDoItem) => {
-    setAutoFitKeys((s) => {
-      const n = new Set(s);
-      if (n.has(k)) { n.delete(k); return n; }
-      n.add(k);
-      queueMicrotask(() => aplicarAutoAjuste(k));
-      return n;
+  /** Liga = mede + grava + ícone; desliga = só tira o estado (largura fica). Igual Base1Grid. */
+  const aplicarAutoAjuste = (k: ChaveColunaDoItem, jaLigado: boolean) => {
+    if (jaLigado) {
+      setAutoFitKeys((s) => { const n = new Set(s); n.delete(k); return n; });
+      return;
+    }
+    gravarLargura(k, larguraPorConteudo(k));
+    setAutoFitKeys((s) => { const n = new Set(s); n.add(k); return n; });
+  };
+
+  const reaplicarOuLigar = (k: ChaveColunaDoItem) => {
+    gravarLargura(k, larguraPorConteudo(k));
+    if (!autoFitKeys.has(k)) setAutoFitKeys((s) => { const n = new Set(s); n.add(k); return n; });
+  };
+
+  const ocultarColuna = (k: ChaveColunaDoItem) => {
+    setColunas((cs) => {
+      const visiveisAgora = cs.filter((c) => c.visivel && ligada(c.chave) && (!permitidas || permitidas.has(c.chave)));
+      if (visiveisAgora.length <= 1) return cs;
+      const idx = colunasVisiveis.indexOf(k);
+      setCongeladas((n) => (idx >= 0 && idx < n ? n - 1 : n));
+      setAutoFitKeys((s) => { if (!s.has(k)) return s; const n = new Set(s); n.delete(k); return n; });
+      return cs.map((c) => (c.chave === k ? { ...c, visivel: false } : c));
     });
   };
 
@@ -560,31 +566,34 @@ export function ItensDaCentral({
           const estaCongelada = i < congeladas;
           const ehAncora = estaCongelada && i === congeladas - 1;
           const fitOn = autoFitKeys.has(k);
-          const temEstado = fitOn || estaCongelada;
-          return <th key={k} scope="col" className={cn(grade.cabecalhoColuna, estaCongelada && grade.congelada)}
+          /** Mini-ícones: auto; congelar só na âncora (não nas colunas à esquerda). */
+          const temIcones = fitOn || ehAncora;
+          return <th key={k} scope="col" className={cn(grade.cabecalhoColuna, estaCongelada && grade.congelada, ehAncora && grade.congeladaAncora)}
             style={{ width: w, minWidth: w, maxWidth: w, ...(estaCongelada ? { left: leftsCongeladas[k] ?? 0 } : {}) }} {...dataCampo(k)}>
             <div className={grade.cabecalhoLinha}>
               <span className={grade.cabecalhoRotulo}>{rotuloColuna(k)}{obrigatoria(k) && !doSistema.has(catalogo(k)) && <span className="req text-red-500"> *</span>}</span>
-              {temEstado && <span className={grade.iconesEstado} aria-hidden>
+              {temIcones && <span className={grade.iconesEstado} aria-hidden>
                 {fitOn && <Scaling className={grade.iconeEstado} strokeWidth={2.25} />}
-                {estaCongelada && <PanelLeft className={grade.iconeEstado} strokeWidth={2.25} />}
+                {ehAncora && <PanelLeft className={grade.iconeEstado} strokeWidth={2.25} />}
               </span>}
               <B1Popover className="w-52 p-1" align="start" open={menuColuna === k} onOpenChange={(o) => setMenuColuna(o ? k : null)}
-                trigger={<button type="button" className={cn(grade.menuCabecalho, temEstado && grade.menuAtivo)} aria-label={`Abrir menu da coluna ${rotuloColuna(k)}`} onClick={(e) => e.stopPropagation()}><MoreVertical className={grade.iconeEstado} strokeWidth={2.25} /></button>}>
+                trigger={<button type="button" className={grade.menuCabecalho} aria-label={`Abrir menu da coluna ${rotuloColuna(k)}`} onClick={(e) => e.stopPropagation()}><MoreVertical className={grade.iconeEstado} strokeWidth={2.25} /></button>}>
                 <MenuList onPick={(acao) => {
                   setMenuColuna(null);
-                  if (acao === "fit") alternarAutoAjuste(k);
+                  if (acao === "fit") aplicarAutoAjuste(k, fitOn);
                   if (acao === "freeze") setCongeladas(ehAncora ? 0 : i + 1);
+                  if (acao === "hide") ocultarColuna(k);
                 }} items={[
                   { key: "fit", label: fitOn ? "Desativar auto ajustar" : "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" /> },
-                  { key: "freeze", label: ehAncora ? "Descongelar colunas" : estaCongelada ? "Congelar até esta coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" /> }
+                  { key: "freeze", label: ehAncora ? "Descongelar colunas" : estaCongelada ? "Congelar até esta coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" /> },
+                  { key: "hide", label: "Ocultar coluna", icon: <EyeOff className="h-4 w-4" />, disabled: colunasVisiveis.length <= 1 }
                 ]} />
               </B1Popover>
             </div>
             <span role="separator" aria-label={`Redimensionar ${rotuloColuna(k)}`} title="Arraste para redimensionar · duplo clique para auto ajustar"
               className={grade.alcaResize}
               onMouseDown={(e) => iniciarResize(e, k)}
-              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!autoFitKeys.has(k)) alternarAutoAjuste(k); else aplicarAutoAjuste(k); }} />
+              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); reaplicarOuLigar(k); }} />
           </th>;
         })}
       </tr></thead>
@@ -604,8 +613,9 @@ export function ItensDaCentral({
               const td = celula(k, it, i, ativa);
               const erro = erroDe(i, k);
               const congelada = ci < congeladas;
+              const ancora = congelada && ci === congeladas - 1;
               return React.cloneElement(td, {
-                className: cn(td.props.className, congelada && grade.congelada),
+                className: cn(td.props.className, congelada && grade.congelada, ancora && grade.congeladaAncora),
                 style: { ...(td.props.style as React.CSSProperties | undefined), ...(congelada ? { left: leftsCongeladas[k] ?? 0 } : {}) },
                 ...(layout ? dataCampo(k) : {}),
                 ...(erro ? { "aria-invalid": true as const, title: erro, "data-erro": erro } : {})

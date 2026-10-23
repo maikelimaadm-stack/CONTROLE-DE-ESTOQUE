@@ -88,7 +88,7 @@
 }
 /* Cabeçalho: ícone puro — sem círculo, sem sombra, sem borda no active */
 .portal :global(.th-menu),
-.portal :global(.th-menu:is(:hover, :active, .is-on, [data-state="open"])) {
+.portal :global(.th-menu:is(:hover, :active, [data-state="open"])) {
   width: 20px !important;
   min-width: 20px !important;
   height: 20px !important;
@@ -100,14 +100,9 @@
   background: transparent !important;
   color: var(--mg-icon, #64748b) !important;
 }
-.portal :global(.th-menu:hover),
-.portal :global(.th-menu.is-on) {
+.portal :global(.th-menu:hover) {
   background: var(--mg-gray-fill, #f1f3f4) !important;
   color: var(--mg-accent, #22a85c) !important;
-}
-.portal :global(.th-menu.is-on) {
-  background: rgba(64, 222, 99, .18) !important;
-  color: #15803d !important;
 }
 .portal :global(.th-menu svg) {
   width: 12px !important;
