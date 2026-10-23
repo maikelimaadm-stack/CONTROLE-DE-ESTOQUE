@@ -123,7 +123,7 @@ export function Base1List(props: Base1ListProps) {
   const [headerFilters, setHeaderFilters] = React.useState<Record<string, FiltroAtivo>>({});
   const [headerOpen, setHeaderOpen] = React.useState<string | null>(null);
   const [headerOrder, setHeaderOrder] = React.useState<{ key: string; dir: "asc" | "desc" } | null>(null);
-  /** Auto ajustar ligado por coluna até o usuário desativar ou redimensionar à mão (decisão 350). */
+  /** Auto ajustar ligado por coluna até o usuário desativar ou redimensionar à mão (decisão 349). */
   const [autoFitKeys, setAutoFitKeys] = React.useState<Set<string>>(() => new Set());
   const [values, setValues] = React.useState<FilterValues>(defaultValues ?? {});
   const [applied, setApplied] = React.useState<{ search: string; params: Record<string, string> }>({ search: "", params: toParams(filters, defaultValues ?? {}) });

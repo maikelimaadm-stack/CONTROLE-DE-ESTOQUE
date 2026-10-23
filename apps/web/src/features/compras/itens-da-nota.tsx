@@ -18,6 +18,7 @@ import { varianteDeCompra } from "./variantes";
  *
  * Decisão 339: barra só com ações (sem título "Itens" / código / aviso); ampliar = ícone da Central;
  * divisor = linha + grip da Central. Sem toolbar de listagem, sem faixa de filtros.
+ * Decisão 350: Ampliar no canto esquerdo; altura do painel persistida na sessão (página do Portal).
  *
  * A leitura é a da consulta do documento (`/api/compras/<segmento>/<id>`), a MESMA porta da tela de detalhe: a
  * tela não inventa recorte e não decide acesso — a linha só aparece para quem já pode lê-la, e a porta reaplica
@@ -128,8 +129,15 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
   const onSort = (k: string) => setSort((s) => s?.key === k && s.dir === "asc" ? { key: k, dir: "desc" } : { key: k, dir: "asc" });
 
   return <section data-testid="compras-itens-da-nota" aria-label="Itens do documento selecionado" className={recolhido ? "itpan recolhido" : maximizado ? "itpan cheio" : "itpan"} style={maximizado ? undefined : { height: recolhido ? 34 : altura }}>
-    {/* Barra só de ações — sem título/código/aviso (decisão 339). */}
+    {/* Barra: Ampliar no canto esquerdo; demais ações à direita (decisão 350). */}
     <div className="itbar">
+      <span className="grp">
+        <DicaDeAcao texto={maximizado ? "Restaurar layout" : "Ampliar Itens"}>
+          <button type="button" className="ib" data-testid="itens-maximizar" aria-label={maximizado ? "Restaurar layout" : "Ampliar Itens"} aria-pressed={maximizado} onClick={onMaximizar}>
+            <IconeAmpliar restaurar={maximizado} />
+          </button>
+        </DicaDeAcao>
+      </span>
       <span style={{ flexGrow: 1 }} />
       {documento && itens.length > 0 && !recolhido && <>
         {Object.keys(filtros).length > 0 && <button type="button" className="fchip-lim" onClick={() => setFiltros({})}><X className="h-3 w-3" /> Limpar filtros</button>}
@@ -142,11 +150,6 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
         onMudar={(k, ocultar) => setOcultas((p) => { const n = new Set(p); if (ocultar) n.add(k); else n.delete(k); return n; })}
         onRestaurar={() => { setOcultas(new Set()); setColWidths({}); setOrdem([]); setCongeladas(0); setAutoFitKeys(new Set()); }} onFechar={() => setMenuColunas(false)} />}
       <span className="grp">
-        <DicaDeAcao texto={maximizado ? "Restaurar layout" : "Ampliar Itens"}>
-          <button type="button" className="ib" data-testid="itens-maximizar" aria-label={maximizado ? "Restaurar layout" : "Ampliar Itens"} aria-pressed={maximizado} onClick={onMaximizar}>
-            <IconeAmpliar restaurar={maximizado} />
-          </button>
-        </DicaDeAcao>
         <DicaDeAcao texto={recolhido ? "Abrir o painel" : "Recolher o painel"}>
           <button type="button" className="ib" data-testid="itens-recolher" aria-expanded={!recolhido} aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={onRecolher}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button>
         </DicaDeAcao>

@@ -11,7 +11,23 @@ import { NovoDocumentoPorTop } from "@/features/sales/lancador-unificado";
 import type { LinhaDeLancamento } from "@/features/sales/launcher-operacoes";
 import { DocumentosDeCompraList } from "@/features/compras/documentos-compra-list";
 import { ItensDaNota } from "@/features/compras/itens-da-nota";
-import { ALTURA_PADRAO_DOS_ITENS, DivisorEntreTabelas } from "@/features/compras/divisor-entre-tabelas";
+import { ALTURA_PADRAO_DOS_ITENS, ALTURA_RECOLHIDA_DOS_ITENS, DivisorEntreTabelas } from "@/features/compras/divisor-entre-tabelas";
+
+/** Altura do painel de itens do Portal — sessão do navegador (decisão 350). */
+const CHAVE_ALTURA_ITENS = "erp:compras:portal-itens-altura";
+
+function lerAlturaDosItens(): number {
+  try {
+    const n = Number(sessionStorage.getItem(CHAVE_ALTURA_ITENS));
+    if (Number.isFinite(n) && n > ALTURA_RECOLHIDA_DOS_ITENS) return Math.round(n);
+  } catch { /* sem storage */ }
+  return ALTURA_PADRAO_DOS_ITENS;
+}
+
+function gravarAlturaDosItens(altura: number) {
+  if (altura <= ALTURA_RECOLHIDA_DOS_ITENS) return;
+  try { sessionStorage.setItem(CHAVE_ALTURA_ITENS, String(Math.round(altura))); } catch { /* sem storage */ }
+}
 import type { Row } from "@/features/docs/shared";
 import { useTopsDeCompras, variantesDeCompra } from "@/features/compras/variantes";
 import { useFinalizacaoEOrcamento, type EstadoDaCapacidade } from "@/features/compras/pedido-e-orcamento";
@@ -102,12 +118,23 @@ function Documentos() {
   const [selecionado, setSelecionado] = React.useState<Row | null>(null);
   const aoSelecionar = React.useCallback((rows: Row[]) => { setSelecionado(rows.length === 1 ? rows[0]! : null); }, []);
   React.useEffect(() => { setSelecionado(null); }, [atual]);
-  // A DIVISÃO entre as duas tabelas é do usuário: o divisor arrasta a altura do painel de itens (estado de tela).
-  const [alturaDosItens, setAlturaDosItens] = React.useState(ALTURA_PADRAO_DOS_ITENS);
+  // A DIVISÃO entre as duas tabelas é do usuário; a altura fica na sessão (decisão 350).
+  const [alturaDosItens, setAlturaDosItens] = React.useState(lerAlturaDosItens);
   const [itensRecolhidos, setItensRecolhidos] = React.useState(false);
   const [maximizado, setMaximizado] = React.useState(false);
-  const dividir = (altura: number) => { setAlturaDosItens(altura); setItensRecolhidos(altura <= 34); };
-  const recolher = () => { setMaximizado(false); setItensRecolhidos((v) => !v); if (alturaDosItens <= 34) setAlturaDosItens(ALTURA_PADRAO_DOS_ITENS); };
+  const dividir = (altura: number) => {
+    setAlturaDosItens(altura);
+    setItensRecolhidos(altura <= ALTURA_RECOLHIDA_DOS_ITENS);
+    gravarAlturaDosItens(altura);
+  };
+  const recolher = () => {
+    setMaximizado(false);
+    setItensRecolhidos((v) => !v);
+    if (alturaDosItens <= ALTURA_RECOLHIDA_DOS_ITENS) {
+      const restaurada = lerAlturaDosItens();
+      setAlturaDosItens(restaurada);
+    }
+  };
   return <div data-testid="compras-documentos" data-especie={atual} className={`${botoes.portal} compras-paineis flex min-h-0 flex-1 flex-col overflow-hidden`}>
     <div data-compras-mestre hidden={maximizado} className={maximizado ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
       <DocumentosDeCompraList especie={atual} barra={barra} onSelecionar={aoSelecionar} />
