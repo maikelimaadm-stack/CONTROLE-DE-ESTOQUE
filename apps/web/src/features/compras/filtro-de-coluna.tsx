@@ -56,12 +56,21 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
   const [v2, setV2] = React.useState(atual?.v2 ?? "");
   const [busca, setBusca] = React.useState("");
   const [pos, setPos] = React.useState<React.CSSProperties>({ visibility: "hidden" });
+  const painel = React.useRef<HTMLDivElement>(null);
   const fechar = React.useRef(onFechar); fechar.current = onFechar;
   React.useEffect(() => {
     const teclado = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); fechar.current(); } };
+    // Fora do painel (e da âncora do cabeçalho) fecha — sem overlay `fixed inset-0` (ui-audit / decisão de primitives).
+    const fora = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (painel.current?.contains(t)) return;
+      if (document.querySelector(ancora)?.closest("th")?.contains(t)) return;
+      fechar.current();
+    };
     document.addEventListener("keydown", teclado);
-    return () => document.removeEventListener("keydown", teclado);
-  }, []);
+    document.addEventListener("mousedown", fora);
+    return () => { document.removeEventListener("keydown", teclado); document.removeEventListener("mousedown", fora); };
+  }, [ancora]);
   React.useLayoutEffect(() => {
     const el = document.querySelector(ancora)?.closest("th");
     if (!el) return;
@@ -81,8 +90,7 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
   };
   const ph = tipo === "data" ? "dd/mm/aaaa" : tipo === "num" ? "Número" : "Valor";
   // portal no body: um ancestral com transform desloca o position:fixed para longe do cabeçalho
-  return createPortal(<div className="b1ref">
-    <button type="button" aria-label="Fechar o filtro" tabIndex={-1} className="fixed inset-0 z-[59] cursor-default" onClick={onFechar} />
+  return createPortal(<div className="b1ref" ref={painel}>
     <div className="pop fpop" role="menu" aria-label={`Filtrar coluna ${rotulo}`} style={pos}>
       <button type="button" className="fmi" disabled={!atual} onClick={() => onAplicar(null)}><FilterX size={14} /><span className="fval-l">Limpar filtro de “{rotulo}”</span></button>
       <span className="opt-sep" aria-hidden="true" />

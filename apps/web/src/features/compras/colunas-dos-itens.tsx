@@ -1,10 +1,10 @@
 "use client";
 import * as React from "react";
-import { createPortal } from "react-dom";
 import { GripVertical, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Dialog } from "@/components/ui";
 
-/** Duas listas do HTML: clique transfere, arraste transfere ou muda a ordem. */
+/** Duas listas do HTML: clique transfere, arraste transfere ou muda a ordem. Overlay = Dialog oficial (ui-audit). */
 export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestaurar, onFechar, titulo = "Colunas dos itens" }: {
   colunas: { key: string; label: string }[]; ocultas: Set<string>;
   onMudar: (key: string, ocultar: boolean) => void; onOrdenar: (keys: string[]) => void;
@@ -13,23 +13,6 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
   const [busca, setBusca] = React.useState("");
   const [arrastada, setArrastada] = React.useState<string | null>(null);
   const [alvo, setAlvo] = React.useState<string | null>(null);
-  const dialogo = React.useRef<HTMLDivElement>(null);
-  const fechar = React.useRef(onFechar); fechar.current = onFechar;
-  React.useEffect(() => {
-    const anterior = document.activeElement as HTMLElement | null;
-    dialogo.current?.querySelector<HTMLInputElement>("input")?.focus();
-    const teclado = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); fechar.current(); }
-      if (e.key !== "Tab") return;
-      const botoes = dialogo.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input, [tabindex="0"]');
-      if (!botoes?.length) return;
-      const primeiro = botoes[0]!, ultimo = botoes[botoes.length - 1]!;
-      if (e.shiftKey && document.activeElement === primeiro) { e.preventDefault(); ultimo.focus(); }
-      if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primeiro.focus(); }
-    };
-    document.addEventListener("keydown", teclado);
-    return () => { document.removeEventListener("keydown", teclado); anterior?.focus(); };
-  }, []);
   const livres = colunas.filter((c) => ocultas.has(c.key));
   const usadas = colunas.filter((c) => !ocultas.has(c.key));
   const soltar = (e: React.DragEvent, ocultar: boolean, antes?: string) => {
@@ -66,26 +49,21 @@ export function ColunasDosItens({ colunas, ocultas, onMudar, onOrdenar, onRestau
     })}
     {!itens.some((c) => c.label.toLowerCase().includes(busca.toLowerCase())) && <span className="dvaz">{vazio}</span>}
   </div>;
-  return createPortal(<div className="b1ref">
-    <div className="mdl" onClick={(e) => { if (e.target === e.currentTarget) onFechar(); }}>
-      <div className="mdlc" ref={dialogo} role="dialog" aria-modal="true" aria-label={titulo}>
-        <div className="mdl-h"><span className="mdl-t">{titulo}</span><span style={{ flexGrow: 1 }} />
-          <button type="button" className="tb-btn tb-btn-out sm" onClick={onRestaurar}>Restaurar padrão</button>
-          <button type="button" className="rm" aria-label="Fechar" onClick={onFechar}><X size={14} /></button>
-        </div>
-        <div className="mdl-b">
-          <label className="cfgb"><Search size={14} /><input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar coluna nas duas listas…" aria-label="Procurar coluna" />
-            {busca && <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => setBusca("")}><X size={12} /></button>}
-          </label>
-          <div className="dcol">
-            <div className="dbox"><span className="dbox-h">Disponíveis<span className="bd t-plain">{livres.length}</span></span>{lista(livres, false, busca ? "Nenhuma coluna com esse texto." : "Todas as colunas estão na tabela.")}</div>
-            <div className="dbox"><span className="dbox-h">Na tabela<span className="bd t-positive">{usadas.length}</span></span>{lista(usadas, true, "Nenhuma coluna com esse texto.")}</div>
-          </div>
-        </div>
-        <div className="mdl-f"><span className="ltmp" style={{ flexGrow: 1, paddingLeft: 6 }}>Arraste para ordenar ou mover entre as listas · <b>{usadas.length}</b> de {colunas.length}</span>
-          <button type="button" className="tb-btn novo sm" onClick={onFechar}>Pronto</button>
-        </div>
+  return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title={titulo} size="lg" profile="large"
+    description="Escolha e ordene as colunas da tabela"
+    footer={<div className="b1ref flex w-full items-center gap-2">
+      <span className="ltmp" style={{ flexGrow: 1, paddingLeft: 6 }}>Arraste para ordenar ou mover entre as listas · <b>{usadas.length}</b> de {colunas.length}</span>
+      <button type="button" className="tb-btn tb-btn-out sm" onClick={onRestaurar}>Restaurar padrão</button>
+      <button type="button" className="tb-btn novo sm" onClick={onFechar}>Pronto</button>
+    </div>}>
+    <div className="b1ref">
+      <label className="cfgb"><Search size={14} /><input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar coluna nas duas listas…" aria-label="Procurar coluna" />
+        {busca && <button type="button" className="xlim" aria-label="Limpar busca" onClick={() => setBusca("")}><X size={12} /></button>}
+      </label>
+      <div className="dcol" style={{ minHeight: 320 }}>
+        <div className="dbox"><span className="dbox-h">Disponíveis<span className="bd t-plain">{livres.length}</span></span>{lista(livres, false, busca ? "Nenhuma coluna com esse texto." : "Todas as colunas estão na tabela.")}</div>
+        <div className="dbox"><span className="dbox-h">Na tabela<span className="bd t-positive">{usadas.length}</span></span>{lista(usadas, true, "Nenhuma coluna com esse texto.")}</div>
       </div>
     </div>
-  </div>, document.body);
+  </Dialog>;
 }
