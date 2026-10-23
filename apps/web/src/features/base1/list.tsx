@@ -2,7 +2,8 @@
 import * as React from "react";
 import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
-import { Plus, Pencil, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw, Paperclip, LayoutGrid, ListChecks } from "lucide-react";
+import { Plus, Pencil, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw, Paperclip, LayoutGrid, ListChecks } from "lucide-react";
+import { IconeRaio } from "@/features/central/barra";
 import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { getSession } from "@/lib/api";
@@ -306,7 +307,7 @@ export function Base1List(props: Base1ListProps) {
       setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } }));
     }} />
     <span className="relative inline-flex">
-      <B1Popover open={maisOpcoesOpen} onOpenChange={setMaisOpcoesOpen} className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><MoreHorizontal className="h-4 w-4" /></IconBtn>}><MenuList items={menuItems} onPick={(k) => { setMaisOpcoesOpen(false); onMenu(k); }} /></B1Popover>
+      <B1Popover open={maisOpcoesOpen} onOpenChange={setMaisOpcoesOpen} className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><IconeRaio /></IconBtn>}><MenuList items={menuItems} onPick={(k) => { setMaisOpcoesOpen(false); onMenu(k); }} /></B1Popover>
       <CardsLayoutPopover open={cardsLayoutOpen} onOpenChange={setCardsLayoutOpen} value={prefs.view.cardsPerRow ?? 4}
         onChange={(n) => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: n } }))}
         onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: undefined } }))} />
