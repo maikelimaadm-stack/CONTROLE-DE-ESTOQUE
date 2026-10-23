@@ -330,3 +330,24 @@
   color: #475569 !important;
   box-shadow: 0 2px 6px rgba(34, 197, 94, .30) !important;
 }
+/* Setas entre Disponíveis × Na tabela: sem círculo/cor (decisão 343). */
+:global(.b1-portal-compras.mg-dialog) :global(.dmid-btn),
+:global(.b1-portal-compras.mg-dialog) :global(.dmid-btn:hover),
+:global(.b1-portal-compras.mg-dialog) :global(.dmid-btn:active) {
+  width: 28px !important;
+  min-width: 28px !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #64748b !important;
+}
+:global(.b1-portal-compras.mg-dialog) :global(.dmid-btn:hover) { color: #0f172a !important; }
+:global(.b1-portal-compras.mg-dialog) :global(.dmid-btn svg) {
+  width: 18px !important;
+  height: 18px !important;
+  color: inherit !important;
+}

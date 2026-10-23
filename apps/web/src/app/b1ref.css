@@ -18,8 +18,12 @@
 /* Listas fixas: os dois quadrinhos não mudam de tamanho ao pesquisar (decisão 343). */
 .b1ref .dcol{display:flex;gap:8px;align-items:stretch;flex:1 1 auto;min-height:0;height:100%}
 .b1ref .dbox{flex:1 1 0;min-width:0;min-height:0;height:100%;display:flex;flex-direction:column;border:1px solid #eef1f4;border-radius:11px;padding:8px;overflow:hidden}
-.b1ref .dmid{flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:0 2px}
-.b1ref .dmid .tb-btn{width:25px;min-width:25px;height:25px;min-height:25px;padding:0}
+.b1ref .dmid{flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:0 2px}
+/* Setas do meio: só o ícone, sem círculo/cor/sombra (decisão 343). */
+.b1ref .dmid-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;color:#64748b;cursor:pointer}
+.b1ref .dmid-btn:hover{color:#0f172a;background:transparent;box-shadow:none}
+.b1ref .dmid-btn:active{transform:none;background:transparent;box-shadow:none}
+.b1ref .dmid-btn svg{width:18px;height:18px;flex-shrink:0}
 /* Cabeçalhos das listas: sentença (sem maiúsculas); linhas com traço de tabela (decisão 339). */
 .b1ref .dbox-h{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;color:#475569;padding:4px 6px 8px;border-bottom:1px solid #eef1f4;margin-bottom:2px;flex-shrink:0}
 .b1ref .dbox-l{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column}

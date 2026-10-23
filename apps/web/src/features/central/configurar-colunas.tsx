@@ -146,10 +146,10 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, rot
             {listaUi(livres, false, qa, qa ? "Nenhuma coluna com esse texto." : "Todas as colunas estão na tabela.")}
           </div>
           <div className="dmid" aria-label="Mover colunas">
-            <button type="button" className="tb-btn tb-btn-icon" title="Usar todas" aria-label="Usar todas" onClick={usarTodas}><ChevronsRight className="h-4 w-4" /></button>
-            <button type="button" className="tb-btn tb-btn-icon" title="Usar coluna selecionada" aria-label="Usar coluna selecionada" onClick={usarSel}><ChevronRight className="h-4 w-4" /></button>
-            <button type="button" className="tb-btn tb-btn-icon" title="Remover coluna selecionada" aria-label="Remover coluna selecionada" onClick={removerSel}><ChevronLeft className="h-4 w-4" /></button>
-            <button type="button" className="tb-btn tb-btn-icon" title="Remover todas (mantém a primeira)" aria-label="Remover todas (mantém a primeira)" onClick={removerTodas}><ChevronsLeft className="h-4 w-4" /></button>
+            <button type="button" className="dmid-btn" title="Usar todas" aria-label="Usar todas" onClick={usarTodas}><ChevronsRight /></button>
+            <button type="button" className="dmid-btn" title="Usar coluna selecionada" aria-label="Usar coluna selecionada" onClick={usarSel}><ChevronRight /></button>
+            <button type="button" className="dmid-btn" title="Remover coluna selecionada" aria-label="Remover coluna selecionada" onClick={removerSel}><ChevronLeft /></button>
+            <button type="button" className="dmid-btn" title="Remover todas (mantém a primeira)" aria-label="Remover todas (mantém a primeira)" onClick={removerTodas}><ChevronsLeft /></button>
           </div>
           <div className="dbox">
             {busca(qu, setQu, "Procurar na tabela")}

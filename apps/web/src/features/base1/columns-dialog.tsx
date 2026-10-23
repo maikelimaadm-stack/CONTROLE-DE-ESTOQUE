@@ -56,10 +56,10 @@ export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, o
           </div>
         </div>
         <div className="dmid" aria-label="Mover colunas">
-          <button type="button" className="tb-btn tb-btn-icon" title="Usar todas" aria-label="Usar todas" onClick={setTodas}><ChevronsRight className="h-4 w-4" /></button>
-          <button type="button" className="tb-btn tb-btn-icon" title="Usar coluna selecionada" aria-label="Usar coluna selecionada" onClick={() => sel && add(sel)}><ChevronRight className="h-4 w-4" /></button>
-          <button type="button" className="tb-btn tb-btn-icon" title="Remover coluna selecionada" aria-label="Remover coluna selecionada" onClick={() => sel && remove(sel)}><ChevronLeft className="h-4 w-4" /></button>
-          <button type="button" className="tb-btn tb-btn-icon" title="Remover todas (mantém a primeira)" aria-label="Remover todas (mantém a primeira)" onClick={setMinimas}><ChevronsLeft className="h-4 w-4" /></button>
+          <button type="button" className="dmid-btn" title="Usar todas" aria-label="Usar todas" onClick={setTodas}><ChevronsRight /></button>
+          <button type="button" className="dmid-btn" title="Usar coluna selecionada" aria-label="Usar coluna selecionada" onClick={() => sel && add(sel)}><ChevronRight /></button>
+          <button type="button" className="dmid-btn" title="Remover coluna selecionada" aria-label="Remover coluna selecionada" onClick={() => sel && remove(sel)}><ChevronLeft /></button>
+          <button type="button" className="dmid-btn" title="Remover todas (mantém a primeira)" aria-label="Remover todas (mantém a primeira)" onClick={setMinimas}><ChevronsLeft /></button>
         </div>
         <div className="dbox">
           {busca(qu, setQu, "Procurar na tabela")}
