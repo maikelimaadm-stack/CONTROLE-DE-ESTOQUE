@@ -3,7 +3,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { Check, FilterX, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SeletorDeOperador } from "@/components/ui";
+import { CalendarioDePeriodo, SeletorDeOperador } from "@/components/ui";
 
 /**
  * Filtro de cabeçalho do painel de itens — o `fpop` do HTML de referência (padrão Excel): limpar, condição
@@ -91,7 +91,7 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
       </div>
       {op && <div className="fcond">
         <input className="fin" value={v1} onChange={(e) => setV1(e.target.value)} placeholder={ph} aria-label="Valor da condição" />
-        {op === "entre" && <><span className="fe">e</span><input className="fin" value={v2} onChange={(e) => setV2(e.target.value)} placeholder={ph} aria-label="Segundo valor da condição" /></>}
+        {op === "entre" && <>{tipo === "data" ? <CalendarioDePeriodo inicio={v1} fim={v2} onInicio={setV1} onFim={setV2} formato="br" /> : <span className="fe">e</span>}<input className="fin" value={v2} onChange={(e) => setV2(e.target.value)} placeholder={ph} aria-label="Segundo valor da condição" /></>}
       </div>}
       <span className="opt-sep" aria-hidden="true" />
       <label className="cfgb" style={{ margin: "0 8px 6px", height: 28 }}><Search size={14} />

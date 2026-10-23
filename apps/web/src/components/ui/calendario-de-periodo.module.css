@@ -1,0 +1,27 @@
+.gatilho {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--mg-text-2);
+  cursor: pointer;
+}
+.gatilho:hover, .gatilho[data-state="open"] { background: var(--mg-gray-fill); color: var(--mg-accent); }
+.gatilho:focus-visible { outline: 2px solid var(--mg-accent); outline-offset: 2px; }
+.painel:global(.mg-dp-panel) {
+  width: min(560px, calc(100vw - 16px));
+  height: auto;
+  max-height: var(--radix-popover-content-available-height);
+  overflow: auto;
+  outline: none;
+}
+.calendarios { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mes { min-width: 0; }
+.mes + .mes { border-left: 1px solid var(--mg-gray-fill); }
+.rotulo { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px 4px; font-size: 12px; font-weight: 600; color: var(--mg-text-1); }
+.rotulo span { font-size: 11px; font-weight: 400; color: var(--mg-text-2); }
+.celula { display: flex; align-items: center; }
+.intervalo { background: var(--mg-accent-light); }

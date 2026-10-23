@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, FilterX, Search, X, Loader2 } from "lucide-react";
-import { DicaDeAcao, SeletorDeOperador } from "@/components/ui";
+import { CalendarioDePeriodo, DicaDeAcao, SeletorDeOperador } from "@/components/ui";
 import { FILTER_OPERATORS, operatorArity, isListOperator } from "@agro/shared";
 import { api, qs } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -73,7 +73,7 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
         </div>
       </> : <div className="fcond">
         <input className="fin" type={inputType} aria-label={arity === 2 ? `${f.label} de` : f.label} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value, values: [] })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} autoFocus />
-        {arity === 2 && <><span className="fe">e</span><input className="fin" type={inputType} aria-label={`${f.label} até`} value={draft.value2 ?? ""} onChange={(e) => setDraft({ ...draft, value2: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} /></>}
+        {arity === 2 && <>{f.kind === "date" ? <CalendarioDePeriodo inicio={draft.value} fim={draft.value2 ?? ""} onInicio={(value) => setDraft((d) => ({ ...d, value, values: [] }))} onFim={(value2) => setDraft((d) => ({ ...d, value2 }))} /> : <span className="fe">e</span>}<input className="fin" type={inputType} aria-label={`${f.label} até`} value={draft.value2 ?? ""} onChange={(e) => setDraft({ ...draft, value2: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} /></>}
       </div>}
       <div className="fpop-f"><span className="grow" /><PillBtn tone="gray" onClick={() => setOpen(false)}>Cancelar</PillBtn><PillBtn onClick={apply}>Aplicar</PillBtn></div>
     </div></div>
@@ -94,7 +94,7 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
           </div>
         </> : <div className="mt-2 flex gap-1">
           <RoundInput type={inputType} aria-label={arity === 2 ? `${f.label} de` : f.label} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value, values: [] })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} autoFocus />
-          {arity === 2 && <RoundInput type={inputType} aria-label={`${f.label} até`} value={draft.value2 ?? ""} onChange={(e) => setDraft({ ...draft, value2: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} />}
+          {arity === 2 && <>{f.kind === "date" && <CalendarioDePeriodo inicio={draft.value} fim={draft.value2 ?? ""} onInicio={(value) => setDraft((d) => ({ ...d, value, values: [] }))} onFim={(value2) => setDraft((d) => ({ ...d, value2 }))} />}<RoundInput type={inputType} aria-label={`${f.label} até`} value={draft.value2 ?? ""} onChange={(e) => setDraft({ ...draft, value2: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") apply(); }} /></>}
         </div>}
     </div>
     <div className="flex gap-2 px-3 py-2.5"><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => setOpen(false)}>Cancelar</PillBtn><PillBtn className="flex-1 justify-center" onClick={apply}>OK</PillBtn></div>
