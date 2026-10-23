@@ -220,8 +220,8 @@ export function ItensSalvos({
     {!item ? <div className={grade.formVazio}>Nenhum item neste documento.</div> : <>
       <div className={grade.formNav}>
         <span className={grade.formNavTitulo} data-testid={`${prefixoTestid}-item-posicao`}>Item {i + 1} de {itens.length}</span>
-        <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoItem)} aria-label="Item anterior" data-dica="Item anterior" disabled={i <= 0} onClick={() => setAtual(i - 1)}><ChevronLeft aria-hidden /></button>
-        <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoItem)} aria-label="Próximo item" data-dica="Próximo item" disabled={i >= itens.length - 1} onClick={() => setAtual(i + 1)}><ChevronRight aria-hidden /></button>
+        <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoItem)} aria-label="Item anterior" data-dica="Item anterior" disabled={i <= 0} onClick={() => setAtual(i - 1)}><ChevronLeft aria-hidden /></button>
+        <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoItem)} aria-label="Próximo item" data-dica="Próximo item" disabled={i >= itens.length - 1} onClick={() => setAtual(i + 1)}><ChevronRight aria-hidden /></button>
       </div>
       <div className={grade.formCampos}>
         {camposVisiveis.map((c) => <CampoLeitura key={c.chave} rotulo={c.rotulo} adorno={c.adorno} valor={c.valor(item)} />)}
@@ -235,7 +235,7 @@ export function ItensSalvos({
   return <>
     <div className={grade.barra} role="toolbar" aria-label="Itens">
       <BotaoAmpliar regiao="itens" />
-      <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar produto" data-dica="Somente leitura" disabled><Plus aria-hidden /></button>
+      <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar produto" data-dica="Somente leitura" disabled><Plus aria-hidden /></button>
       <span className={grade.espaco} />
       <div className={grade.segmento} role="group" aria-label="Visualização dos itens">
         <button type="button" aria-pressed={visao === "grade"} aria-label="Grade" data-dica="Grade" onClick={() => escolherVisao("grade")}><Grid3x3 aria-hidden /></button>

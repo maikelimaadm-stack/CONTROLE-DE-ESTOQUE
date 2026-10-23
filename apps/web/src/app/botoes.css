@@ -72,19 +72,19 @@ button {
  * Círculos / altura 28px (decisão 327 — Portal de Compras + motor da Central).
  * Duas classes vencem o `height: 24px !important` de uma classe acima.
  */
-.app-button.mg-altura-28 {
+.app-button.app-altura-28 {
   height: 28px !important;
   min-height: 28px !important;
 }
-.app-button.mg-circulo-28 {
+.app-button.app-circulo-28 {
   width: 28px !important;
   min-width: 28px !important;
   height: 28px !important;
   min-height: 28px !important;
   padding: 0 !important;
 }
-.app-button.mg-circulo-28 svg,
-.app-button.mg-altura-28 svg {
+.app-button.app-circulo-28 svg,
+.app-button.app-altura-28 svg {
   width: 16px !important;
   height: 16px !important;
 }

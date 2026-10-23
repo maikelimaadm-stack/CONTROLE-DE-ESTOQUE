@@ -57,7 +57,7 @@ export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMonta
   // lê diferente do que a tela mostra quebra quem navega por voz ("clicar em Tipo Venda").
   return <MenuP.Root modal={false}>
     <DicaDeAcao texto={dicasPadronizadas ? "Tipo de documento" : undefined}><MenuP.Trigger asChild>
-      <button ref={gatilho} type="button" className={cn(estilos.tipo, dicasPadronizadas && "mg-altura-28")} title={dicasPadronizadas ? undefined : "Tipo de documento"}
+      <button ref={gatilho} type="button" className={cn(estilos.tipo, dicasPadronizadas && "app-altura-28")} title={dicasPadronizadas ? undefined : "Tipo de documento"}
         data-testid={`${prefixo}-tipo`} data-valor={valor || TODOS}>
         <span className={estilos.tipoPrefixo}>Tipo</span>{" "}
         <span className={estilos.tipoValor}>{atual}</span>

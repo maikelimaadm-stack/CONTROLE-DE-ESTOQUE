@@ -31,7 +31,7 @@ export function FilterBar({ filters, f, set, reset, onApply, visible, saved, onS
   const shown = visible ? filters.filter((x) => visible.includes(x.name)) : filters;
   const [saveOpen, setSaveOpen] = React.useState(false); const [saveName, setSaveName] = React.useState("");
   const cls = "!h-7 !rounded-full !shadow-none w-40 text-[12px]";
-  // faixa de filtros no MODELO BASE1 (mg-rail): pílulas cinza com rótulo, botões Filtrar / Limpar
+  // faixa de filtros no MODELO BASE1 (modelo-base): pílulas cinza com rótulo, botões Filtrar / Limpar
   return <form className="mg-rail mg-card mb-2 flex-wrap no-print" onSubmit={(e) => { e.preventDefault(); onApply(); }}>
     {shown.map((x) => <label key={x.name} className="flex items-center gap-1.5"><span className="whitespace-nowrap text-[11px] text-[var(--mg-text-2)]">{x.label}</span>
       {x.type === "date" ? <Input type="date" className={cls} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} /> : x.type === "select" ? <MgSelect className={cn(cls, "!bg-[var(--mg-gray-fill)]")} value={f[x.name] ?? ""} onChange={(v) => set(x.name, v)} allowEmpty placeholder="Todos" options={x.options ?? []} /> : x.type === "ref" ? <RefSelect resource={x.resource!} value={f[x.name] ?? null} onChange={(v) => set(x.name, v ?? "")} placeholder="Todos" filter={x.extra} className={cls} /> : <Input className={cn(cls, "w-52")} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} />}

@@ -68,7 +68,7 @@ function ImportarXml() {
   if (!pode) return null;
   return <>
     <DicaDeAcao texto="Importar documento de compra pelo arquivo XML">
-      <button type="button" className={`${botoes.importar} mg-circulo-28`} data-testid="compras-importar-xml" aria-label="Importar XML" onClick={() => mudarUrl(true)}>
+      <button type="button" className={`${botoes.importar} app-circulo-28`} data-testid="compras-importar-xml" aria-label="Importar XML" onClick={() => mudarUrl(true)}>
         <FileUp strokeWidth={2.2} aria-hidden />
       </button>
     </DicaDeAcao>

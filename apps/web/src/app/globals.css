@@ -102,7 +102,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 
 /* --- grade (emp-table-pro) --- */
 .mg-grid-wrap { overflow: auto; }
-/* painel que preenche a altura (mg-view-stack do MG): cabeçalho da grade e rodapé fixos, só os dados rolam */
+/* painel que preenche a altura (modelo-base do MG): cabeçalho da grade e rodapé fixos, só os dados rolam */
 .mg-shell--fill { display: flex; flex-direction: column; min-height: 0; }
 .mg-shell--fill > .mg-grid-wrap, .mg-shell--fill > .mg-shell__scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .mg-shell--fill > .mg-summary { flex-shrink: 0; }
@@ -124,7 +124,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-summary__item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mg-pill-select { height: var(--mg-btn-h); border-radius: 999px; background: var(--mg-gray-fill); border: 1px solid transparent; padding: 0 28px 0 12px; font-size: 12px; font-weight: 600; color: var(--mg-text-1); appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235b6b80' stroke-width='2'><path d='m6 9 6 6 6-6'/></svg>"); background-repeat: no-repeat; background-position: right 10px center; }
 
-/* --- formulário: campo do modelo base (fg / mg-prototype-field do MG) ---
+/* --- formulário: campo do modelo base (fg / modelo-base do MG) ---
    vazio (edição): cinza sem borda, rótulo 12px centralizado · preenchido/foco: rótulo 9px no topo, valor na base,
    fundo branco com borda #E7EAEE · foco: só o anel interno · travado: #e9edf2 texto cinza · visualização: #f6f8fa */
 .mg-field { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--mg-field-h); min-height: var(--mg-field-h); border-radius: var(--mg-radius-control); border: 1px solid transparent; background: var(--mg-gray-fill); box-shadow: var(--mg-field-edge-shadow); transition: background .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s cubic-bezier(.2,.8,.2,1), border-color .22s cubic-bezier(.2,.8,.2,1); }
@@ -174,7 +174,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .cmd-option__code { color: var(--mg-text-3); font-weight: 500; }
 .cmd-panel__empty { padding: 12px; font-size: 12px; color: var(--mg-text-3); text-align: center; }
 
-/* --- calendário (mg-dp do MG): 320×320, dias circulares, meses/anos por níveis --- */
+/* --- calendário (modelo-base do MG): 320×320, dias circulares, meses/anos por níveis --- */
 .mg-dp-icon { position: absolute; right: 10px; top: 50%; width: 14px; height: 14px; margin-top: -7px; color: var(--mg-text-3); pointer-events: none; z-index: 1; } .mg-dp-icon svg { width: 14px; height: 14px; }
 .mg-dp-panel { width: 280px; height: 280px; display: flex; flex-direction: column; box-sizing: border-box; background: #fff; border: 1px solid var(--mg-gray-fill); border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.12); overflow: hidden; animation: mg-dp-slide .18s ease; z-index: 10001; }
 @keyframes mg-dp-slide { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
@@ -216,7 +216,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 @keyframes validationDotPulse { 0% { opacity: 1; } 50% { opacity: .45; } 100% { opacity: 1; } }
 @keyframes validationDotPing { 0% { transform: scale(1); opacity: .55; } 70% { transform: scale(2.2); opacity: 0; } 100% { transform: scale(2.2); opacity: 0; } }
 
-/* --- transições (mg-motion do MG): troca de painel/visão com fade suave; navegação entre registros instantânea --- */
+/* --- transições (modelo-base do MG): troca de painel/visão com fade suave; navegação entre registros instantânea --- */
 @keyframes mg-motion-panel-fade { from { opacity: .88; } to { opacity: 1; } }
 @keyframes mg-motion-text-in { from { opacity: 0; } to { opacity: 1; } }
 .mg-motion-panel--animate { animation: mg-motion-panel-fade .22s cubic-bezier(.2,.8,.2,1) both; }
@@ -227,7 +227,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-card.is-selected { background: var(--mg-selection-bg); box-shadow: inset 0 0 0 1px var(--mg-focus-border); }
 .mg-record-fav-btn { color: var(--mg-icon); } .mg-record-fav-btn.is-active { color: var(--mg-accent); }
 
-/* --- painéis do registro: abas horizontais (seg-control) ou lista lateral (mg-panel-list) --- */
+/* --- painéis do registro: abas horizontais (seg-control) ou lista lateral (modelo-base) --- */
 .mg-panel-tabs-rail { display: flex; align-items: stretch; gap: 6px; min-height: 36px; }
 .mg-panel-tabs-rail__leading { display: inline-flex; align-items: center; padding-right: 4px; }
 .mg-nav-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; border: 1px solid transparent; background: var(--mg-gray-fill); color: var(--mg-icon); cursor: pointer; transition: background .12s, box-shadow .22s; } .mg-nav-btn:hover { background: var(--mg-gray-fill2); }
@@ -246,7 +246,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .seg-tab.active::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; background: #000; border-radius: 2px; display: block !important; }
 .mg-tabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #d0d5dc; box-shadow: inset 0 1px 0 rgba(15,23,42,.05); }
 
-/* --- checkbox do modelo base (mg-cards-config-menu__check / emp-table-select-check do MG): círculo, verde quando marcado --- */
+/* --- checkbox do modelo base (modelo-base__check / emp-table-select-check do MG): círculo, verde quando marcado --- */
 .mg-check { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; border: 1.5px solid var(--mg-divider); background: var(--mg-bg-card); box-shadow: 0 1px 2px rgba(15,23,42,.06); cursor: pointer; transition: background .22s cubic-bezier(.2,.8,.2,1), border-color .22s cubic-bezier(.2,.8,.2,1); vertical-align: middle; }
 .mg-check.is-checked, .mg-check.is-indeterminate { background: var(--mg-accent); border-color: var(--mg-accent); box-shadow: 0 1px 3px rgba(15,23,42,.14); }
 .mg-check__input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
@@ -260,7 +260,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-grid th.is-frozen-anchor, .mg-grid td.is-frozen-anchor { box-shadow: inset -2px 0 0 0 var(--mg-accent), 4px 0 8px -4px rgba(0,0,0,.18); }
 .mg-grid { min-width: 100%; }
 
-/* --- pesquisa (mg-desktop-search / mg-search-pill / mg-search-dropdown do MG) --- */
+/* --- pesquisa (modelo-base / modelo-base / modelo-base do MG) --- */
 .mg-desktop-search { position: relative; display: flex; align-items: center; justify-content: center; width: var(--mg-btn-h); height: var(--mg-btn-h); flex-shrink: 0; }
 .mg-desktop-search__trigger { position: relative; z-index: 1; transition: opacity .22s; }
 .mg-desktop-search.is-open .mg-desktop-search__trigger { opacity: 0; pointer-events: none; }
@@ -374,10 +374,10 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .ws-overview-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .ws-scroll { min-height: 0; flex: 1 1 auto; overflow: auto; }
 
-/* ===== faixa de filtros (mg-filter-pills-rail do MG): recolher = conteúdo encolhe com animação; a linha permanece ===== */
+/* ===== faixa de filtros (modelo-base do MG): recolher = conteúdo encolhe com animação; a linha permanece ===== */
 .mg-pills-rail__content { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; max-width: 100%; opacity: 1; transform-origin: left center; transition: max-width .26s cubic-bezier(.2,.8,.2,1), opacity .22s, transform .26s cubic-bezier(.2,.8,.2,1); overflow: hidden; }
 .mg-pills-rail.is-collapsed .mg-pills-rail__content { max-width: 0; opacity: 0; transform: scaleX(.96); pointer-events: none; }
-/* ===== tabelas simples (detalhes, painéis, editores de itens) com o cabeçalho do modelo (mg-grid) ===== */
+/* ===== tabelas simples (detalhes, painéis, editores de itens) com o cabeçalho do modelo (modelo-base) ===== */
 .table-dense thead th { height: 30px; padding: 0 9px; background: #fff; color: #334155; font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: 0; border-bottom: 1px solid var(--mg-divider); border-right: 1px solid var(--mg-divider); }
 .table-dense thead th:last-child { border-right: 0; }
 .table-dense tbody td { height: 30px; padding: 0 9px; font-size: 12.5px; color: var(--mg-text-1); border-bottom: 1px solid var(--mg-divider); border-right: 1px solid var(--mg-divider); }
@@ -385,7 +385,7 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .table-dense tbody tr:nth-child(even) td { background: #fafbfc; }
 .table-dense tbody tr:hover td { background: var(--mg-selection-bg, #f1f8f4); }
 .table-dense tbody td .mg-input, .table-dense tbody td .cmd-display { height: 26px; }
-/* ===== campo padrão (mg-field) nos formulários de lançamento: valor detectado por CSS (:has) ===== */
+/* ===== campo padrão (modelo-base) nos formulários de lançamento: valor detectado por CSS (:has) ===== */
 .mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)), .mg-field--auto:has(textarea:not(:placeholder-shown)), .mg-field--auto:has(select), .mg-field--auto:has(.cmd-display:not(.is-empty)), .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)) { --mg-auto-has-value: 1; }
 .mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)) .mg-field__label, .mg-field--auto:has(textarea:not(:placeholder-shown)) .mg-field__label, .mg-field--auto:has(select) .mg-field__label, .mg-field--auto:has(.cmd-display:not(.is-empty)) .mg-field__label, .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)) .mg-field__label { align-self: start; padding: 4px 10px 0; font-size: 9px; line-height: 1; }
 .mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(textarea:not(:placeholder-shown)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(select) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(.cmd-display:not(.is-empty)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field) { padding-top: 17px !important; padding-bottom: 5px !important; }
@@ -402,7 +402,7 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .mg-field--auto:has(textarea) .mg-field__control { height: auto; }
 .mg-field--auto:has(textarea) .mg-field__control textarea { height: auto !important; min-height: 64px; padding: 20px 10px 8px !important; }
 
-/* selo de seleção do card (mg-emp-card__select-badge do MG) */
+/* selo de seleção do card (modelo-base__select-badge do MG) */
 .b1-card__badge { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; background: var(--mg-accent); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 .b1-card:focus-visible { outline: 2px solid var(--mg-focus-border); outline-offset: 1px; }
 /* anexos: lista + prévia lado a lado */

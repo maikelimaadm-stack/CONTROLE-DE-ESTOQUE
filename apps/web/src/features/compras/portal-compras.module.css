@@ -6,9 +6,7 @@
  * Modo de visão: só Tabela/Cards, no mesmo trilho do Posição do rótulo (decisão 328).
  */
 .portal {
-  --mg-btn-h: 28px;
   --portal-espaco: 6px;
-  --mg-toolbar-h: 42px;
   --portal-acao-bg: #f1f3f4;
   --portal-acao-fg: #475569;
   --portal-acao-hover: #e8ecef;
@@ -19,11 +17,17 @@
   flex-shrink: 0;
   gap: var(--portal-espaco);
 }
+/* Espaço e altura da barra/trilhos: seletores estruturais (sem repetir prefixo herdado). */
 .contexto,
-.portal :is(:global(.mg-toolbar), :global(.mg-toolbar > .ml-auto), :global(.mg-rail), :global(.mg-pills-rail__content), :global(.mg-pills-rail__content > .overflow-x-auto), :global(.itbar .grp)) {
+.portal :global([data-testid="b1-list"] > div:nth-child(1)),
+.portal :global([data-testid="b1-list"] > div:nth-child(1) > .ml-auto),
+.portal :global([data-testid="b1-list"] > div:nth-child(2)),
+.portal :global([data-testid="b1-list"] > div:nth-child(2) > div:nth-child(2)),
+.portal :global([data-testid="b1-list"] > div:nth-child(2) > div:nth-child(2) > .overflow-x-auto),
+.portal :global(.itbar .grp) {
   gap: var(--portal-espaco);
 }
-.portal :global(.mg-toolbar) { height: auto; }
+.portal :global([data-testid="b1-list"] > div:nth-child(1)) { height: auto; }
 .contexto > button { border-radius: 999px; }
 
 /* Tabela | Cards — trilho 28px + polegar 22px (igual Posição do rótulo da Central). */

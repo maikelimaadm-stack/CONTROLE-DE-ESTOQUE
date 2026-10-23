@@ -403,7 +403,7 @@ export function ItensDaCentral({
         {items.length === 0 && <tr><td colSpan={1 + colunasVisiveis.length} className={grade.vazio}>
           <div className={grade.vazioConteudo}>
             <span>Nenhum item adicionado.</span>
-            {podeAdicionar && <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoAdicionar)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid={tid("adicionar-vazio")} onClick={(e) => { e.stopPropagation(); adicionar(); }}><Plus aria-hidden /></button>}
+            {podeAdicionar && <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid={tid("adicionar-vazio")} onClick={(e) => { e.stopPropagation(); adicionar(); }}><Plus aria-hidden /></button>}
           </div>
         </td></tr>}
         {items.map((it, i) => {
@@ -483,8 +483,8 @@ export function ItensDaCentral({
     {!item ? <div className={grade.formVazio}>Nenhum item adicionado.</div> : <>
       <div className={grade.formNav}>
         <span className={grade.formNavTitulo} data-testid={tid("item-posicao")}>Item {atual + 1} de {items.length}</span>
-        <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoItem)} aria-label="Item anterior" data-dica="Item anterior" disabled={atual <= 0} onClick={() => { setPesquisa(null); setSelecionado(atual - 1); }}><ChevronLeft aria-hidden /></button>
-        <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoItem)} aria-label="Próximo item" data-dica="Próximo item" disabled={atual >= items.length - 1} onClick={() => { setPesquisa(null); setSelecionado(atual + 1); }}><ChevronRight aria-hidden /></button>
+        <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoItem)} aria-label="Item anterior" data-dica="Item anterior" disabled={atual <= 0} onClick={() => { setPesquisa(null); setSelecionado(atual - 1); }}><ChevronLeft aria-hidden /></button>
+        <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoItem)} aria-label="Próximo item" data-dica="Próximo item" disabled={atual >= items.length - 1} onClick={() => { setPesquisa(null); setSelecionado(atual + 1); }}><ChevronRight aria-hidden /></button>
         {!item.product_id && <span className={grade.selo} data-testid={tid("item-novo")}>novo</span>}
       </div>
       <div className={grade.formCampos}>
@@ -520,10 +520,10 @@ export function ItensDaCentral({
   return <>
     <div className={grade.barra} role="toolbar" aria-label="Itens">
       <BotaoAmpliar regiao="itens" />
-      {podeAdicionar && <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid={tid("adicionar-item")} onClick={adicionar}><Plus aria-hidden /></button>}
+      {podeAdicionar && <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid={tid("adicionar-item")} onClick={adicionar}><Plus aria-hidden /></button>}
       {corrente >= 0 && <>
-        {podeAdicionar && <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoAcaoItem, estilos.dicaInicio)} aria-label="Duplicar item" data-dica="Duplicar item" data-testid={tid("duplicar-item")} onClick={duplicar}><Copy aria-hidden /></button>}
-        {podeRemoverA(corrente) && <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoAcaoItem, grade.botaoRemover, estilos.dicaInicio)} aria-label="Remover item" data-dica="Remover item" data-testid={tid("remover-item")} onClick={remover}><Trash2 aria-hidden /></button>}
+        {podeAdicionar && <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAcaoItem, estilos.dicaInicio)} aria-label="Duplicar item" data-dica="Duplicar item" data-testid={tid("duplicar-item")} onClick={duplicar}><Copy aria-hidden /></button>}
+        {podeRemoverA(corrente) && <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAcaoItem, grade.botaoRemover, estilos.dicaInicio)} aria-label="Remover item" data-dica="Remover item" data-testid={tid("remover-item")} onClick={remover}><Trash2 aria-hidden /></button>}
       </>}
       <span className={grade.espaco} />
       <div className={grade.segmento} role="group" aria-label="Visualização dos itens">

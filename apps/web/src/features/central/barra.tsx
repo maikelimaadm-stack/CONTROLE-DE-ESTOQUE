@@ -52,7 +52,7 @@ export const ConjuntoDireito = ({ children }: PropsDoConjunto) => <span classNam
  */
 export const BotaoDaBarra = React.forwardRef<HTMLButtonElement, PropsDoBotaoDaBarra>(({ rotulo, dica, solido, ocupado, dicaNoFim, className, children, disabled, ...p }, ref) =>
   <button ref={ref} type="button" aria-label={rotulo} data-dica={dica ?? rotulo} aria-busy={ocupado || undefined} disabled={disabled || ocupado}
-    className={cn("mg-circulo-28", estilos.botao, solido && estilos.solido, dicaNoFim ? estilosCentral.dicaFim : estilosCentral.dicaInicio, className)} {...p}>
+    className={cn("app-circulo-28", estilos.botao, solido && estilos.solido, dicaNoFim ? estilosCentral.dicaFim : estilosCentral.dicaInicio, className)} {...p}>
     {ocupado ? <IconeGirando /> : children}
   </button>);
 BotaoDaBarra.displayName = "BotaoDaBarra";
@@ -76,7 +76,7 @@ export const PilulaDaBarra = React.forwardRef<HTMLButtonElement, PropsDaPilulaDa
     return (
       <button ref={ref} type="button" aria-label={rotulo || undefined} data-dica={dica ?? (rotulo || undefined)}
         aria-busy={ocupado || undefined} disabled={disabled || ocupado}
-        className={cn("mg-circulo-28", estilos.pilula, perigo && estilos.pilulaPerigo, estilosCentral.dicaInicio, className)} {...p}>
+        className={cn("app-circulo-28", estilos.pilula, perigo && estilos.pilulaPerigo, estilosCentral.dicaInicio, className)} {...p}>
         {ocupado ? <IconeGirando /> : icone}
       </button>
     );

@@ -53,7 +53,7 @@ export function MenuList({ items, onPick }: { items: { key: string; label: strin
   return <div className="flex flex-col">{items.map((i) => <button key={i.key} type="button" role="menuitem" disabled={i.disabled} onClick={() => onPick(i.key)} className={cn("flex h-[30px] items-center gap-2 rounded-lg px-2 text-left text-[12.5px] text-slate-700 hover:bg-[var(--mg-bg-page)] disabled:opacity-40", i.danger && "text-red-600")}>{i.icon && <span className="text-[var(--mg-icon)]">{i.icon}</span>}{i.label}</button>)}</div>;
 }
 
-/** Caixa de pesquisa em pílula (mg-search do MG). */
+/** Caixa de pesquisa em pílula (modelo-base do MG). */
 export const RoundInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => (
   <input ref={ref} className={cn("h-7 w-full rounded-full border border-transparent bg-[var(--mg-gray-fill)] px-3 text-[12px] placeholder:text-slate-400 focus:border-[var(--mg-focus-border)] focus:bg-white focus:outline-none", className)} {...p} />
 ));

@@ -332,7 +332,7 @@ export function Base1List(props: Base1ListProps) {
       {rightSlot}
     </div>
     {/* faixa de chips de filtro */}
-    {/* faixa de filtros (mg-filter-pills-rail do MG): o botão recolhe/expande o CONTEÚDO da faixa com animação; a linha nunca some */}
+    {/* faixa de filtros (modelo-base do MG): o botão recolhe/expande o CONTEÚDO da faixa com animação; a linha nunca some */}
     <div className={cn("mg-rail mg-card no-print mg-pills-rail", showChips ? "is-expanded" : "is-collapsed")}>
       <IconBtn size="sm" aria-label={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} title={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} active={showChips} aria-expanded={showChips} onClick={() => setShowChips((v) => !v)}>{showChips ? <ListX className="h-4 w-4" /> : <ListPlus className="h-4 w-4" />}</IconBtn>
       <div className="mg-pills-rail__content" aria-hidden={!showChips}>
@@ -357,7 +357,7 @@ export function Base1List(props: Base1ListProps) {
             onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n - deslocamentoIdentidade, colunasDoUsuario.length)) }))} onHide={(k) => updCols((c) => { if (k === CHAVE_COLUNA_ID_GLOBAL) return c; const keys = colunasDoUsuario.map((x) => x.key); const idx = keys.indexOf(k); const fz = c.frozen ?? 0; return { ...c, visible: keys.filter((x) => x !== k), frozen: idx >= 0 && idx < fz ? fz - 1 : fz }; })} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
             onFilter={(k) => { if (props.referenceHeaders) { setHeaderOpen(k); return; } const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}
             footer={!headerActive && footerTotals && totals ? comColunaDeIdentidade(footerTotals(totals), deslocamentoIdentidade) : undefined} /></div>}
-        {/* rodapé (mg-records-summary) */}
+        {/* rodapé (modelo-base) */}
         <div className="mg-summary no-print">
           <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {selected.size}</span><span className="mg-summary__item">Listados: {allRows.length}</span><span className="mg-summary__item">Filtrados: {headerActive ? `${rows.length} carregados` : total}</span><span className="mg-summary__item">Totais: {filtersActive ? grand.data ?? "…" : total}</span>{summaryExtra?.(totals)}</div>
           <span className="flex items-center gap-2">

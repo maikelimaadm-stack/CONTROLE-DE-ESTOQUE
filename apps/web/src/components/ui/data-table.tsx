@@ -48,7 +48,7 @@ export interface DataTableProps<T> {
   footer?: React.ReactNode; onExport?: (format: "csv" | "xlsx") => void; selectable?: boolean; selected?: Set<string>; onSelect?: (ids: Set<string>) => void; onRowClick?: (row: T) => void; compact?: boolean; caption?: string; emptyText?: string;
 }
 /**
- * Tabela paginada no MODELO BASE1 (mesma grade `mg-grid` do Base1List: seleção circular, menus de coluna, linhas de 26 px,
+ * Tabela paginada no MODELO BASE1 (mesma grade `modelo-base` do Base1List: seleção circular, menus de coluna, linhas de 26 px,
  * rodapé Selecionados/Listados/Filtrados/Totais com pílula de quantidade). Clique seleciona; duplo clique abre.
  */
 export function DataTable<T extends Record<string, unknown>>({ columns, rows, total, page = 1, pageSize = 20, onPage, onPageSize, sort, onSort, loading, rowKey, actions, footer, onExport, selected, onSelect, onRowClick, caption, emptyText }: DataTableProps<T>) {

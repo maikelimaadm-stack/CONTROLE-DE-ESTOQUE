@@ -22,7 +22,7 @@ export function ConfigurarColunas<K extends string>({ prefixoTestid, titulo, sub
   const mover = (i: number, d: -1 | 1) => { const j = i + d; if (j < 0 || j >= lista.length) return; const n = lista.slice(); [n[i], n[j]] = [n[j]!, n[i]!]; onLista(n); };
   return <PopoverP.Root open={aberta} onOpenChange={setAberta}>
     <PopoverP.Trigger asChild>
-      <button type="button" className={cn("mg-circulo-28", grade.botao, estilos.dicaFim)} aria-label="Configurar colunas" data-dica="Configurar colunas" data-testid={`${prefixoTestid}-configurar`}><Columns3 aria-hidden /></button>
+      <button type="button" className={cn("app-circulo-28", grade.botao, estilos.dicaFim)} aria-label="Configurar colunas" data-dica="Configurar colunas" data-testid={`${prefixoTestid}-configurar`}><Columns3 aria-hidden /></button>
     </PopoverP.Trigger>
     <PopoverP.Content side="bottom" align="end" sideOffset={11} collisionPadding={8} className={grade.config} aria-label={titulo} data-testid={`${prefixoTestid}-configuracao`}>
       <div className={grade.configCabecalho}><span className={grade.configTitulo}>{titulo}</span><span className={grade.configSub}>{subtitulo}</span></div>

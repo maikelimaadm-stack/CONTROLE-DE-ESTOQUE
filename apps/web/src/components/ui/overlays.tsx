@@ -15,9 +15,9 @@ export type OverlaySize = "sm" | "md" | "lg" | "xl";
 /**
  * Perfil dimensional (altura) do Dialog — docs/UI-STANDARD.md › Overlays:
  *   compact   altura pelo conteúdo, limitada (confirmações, formulários curtos)
- *   content   altura pelo conteúdo até --mg-dialog-max-h (formulários comuns estáticos)
- *   standard  frame fixo --mg-dialog-h-standard (conteúdo assíncrono/variável: o frame nasce no tamanho final)
- *   large     frame fixo --mg-dialog-h-large (grades, histórico, anexos, formulários extensos)
+ *   content   altura pelo conteúdo até --modelo-base (formulários comuns estáticos)
+ *   standard  frame fixo --modelo-base (conteúdo assíncrono/variável: o frame nasce no tamanho final)
+ *   large     frame fixo --modelo-base (grades, histórico, anexos, formulários extensos)
  *   workspace frame quase viewport (fluxos complexos) — nunca para CRUD simples
  * Padrão por largura: sm → compact · md → content · lg → large · xl → workspace. Header e footer são fixos; só o
  * corpo rola — o frame não muda de altura entre LoadingState, ErrorState, EmptyState e conteúdo.

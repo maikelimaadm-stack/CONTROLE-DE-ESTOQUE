@@ -165,7 +165,7 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
       </div>)}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1 text-[12px]">
-        <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoAdicionar)} aria-label="Adicionar parcela" title="Adicionar parcela"
+        <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar)} aria-label="Adicionar parcela" title="Adicionar parcela"
           data-testid="compras-parcela-adicionar" disabled={!e.ajustarParcelas || linhas.length >= 120}
           onClick={() => definir([...linhas, { vencimento: "", valor: "", observacao: "", entrada: false }])}><Plus aria-hidden /></button>
         <span data-testid="compras-parcelas-quantidade" className="text-slate-600">{quantidade} {quantidade === 1 ? "parcela" : "parcelas"}</span>

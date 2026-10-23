@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
 
 /* ================================================================================================
-   Controles do MODELO BASE1 (docs/PERSONALIZACAO.md): seletor de opções (cmd-select), calendário (mg-dp),
+   Controles do MODELO BASE1 (docs/PERSONALIZACAO.md): seletor de opções (cmd-select), calendário (modelo-base),
    avisos (erp-toast-panel) e pílula de obrigatórios (form-validation-status).
    ================================================================================================ */
 
@@ -37,7 +37,7 @@ export function CmdPanel({ options, value, onPick, search, onSearch, searchable 
   </div>;
 }
 
-/** Gatilho do seletor (cmd-display + chevron), para uso dentro de um campo `.mg-field`. */
+/** Gatilho do seletor (cmd-display + chevron), para uso dentro de um campo `.modelo-base`. */
 export const CmdDisplay = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { placeholder?: string; empty?: boolean; onClear?: () => void; wrapClassName?: string }>(({ className, placeholder = "Selecione", empty, onClear, children, disabled, wrapClassName, ...p }, ref) => (
   <span className={cn("relative flex w-full min-w-0 items-center", wrapClassName)}>
     <button ref={ref} type="button" role="combobox" disabled={disabled} className={cn("cmd-display", empty && "is-empty", className)} {...p}>{empty ? <span className="cmd-display-placeholder">{placeholder}</span> : children}</button>

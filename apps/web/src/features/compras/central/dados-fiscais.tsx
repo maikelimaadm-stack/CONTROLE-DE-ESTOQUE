@@ -152,7 +152,7 @@ function TabelaDoRateioIndependente({
       <p className="text-[12px] font-semibold text-slate-700">
         {titulo} <span className="text-rose-600" aria-hidden>*</span>
       </p>
-      <button type="button" className={cn("mg-circulo-28", grade.botao, grade.botaoAdicionar)}
+      <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar)}
         data-testid={`${prefixo}-adicionar`} disabled={partes.length >= 50}
         aria-label={`Adicionar ${dimensao === "natureza" ? "natureza" : "centro de custo"}`}
         title="Adicionar" onClick={onAdicionar}>
