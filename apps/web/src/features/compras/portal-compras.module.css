@@ -110,7 +110,8 @@
   color: var(--portal-acao-fg) !important;
   box-shadow: var(--portal-sombra) !important;
 }
-.portal :global(.tipo svg) {
+.portal :global(.tipo svg),
+.portal :global(.tipo .seta11) {
   color: var(--portal-acao-fg) !important;
 }
 .portal :global(.tipo:hover),
