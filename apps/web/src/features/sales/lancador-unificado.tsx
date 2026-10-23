@@ -3,7 +3,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import * as MenuP from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronDown, Plus, Search } from "lucide-react";
-import { Button, Dialog, LoadingState } from "@/components/ui";
+import { Button, Dialog, DicaDeAcao, LoadingState } from "@/components/ui";
 import { COPY } from "@/lib/copy";
 import { cn } from "@/lib/utils";
 import { MensagemTop, podeLancar } from "./tipo-operacao-select";
@@ -126,7 +126,8 @@ export function NovoDocumentoDeVenda({ variante, rotuloDoTipo }: {
  * os de cima, inteiros. O portal dá só o que é dele — os grupos de TOPs (perguntados à porta operacional DELE), o
  * prefixo dos `data-testid` e a rota de lançamento. Vendas continua passando pelos mesmos valores de antes.
  */
-export function NovoDocumentoPorTop({ variante, rotuloDoTipo, todosOsGrupos, prefixo, rota }: {
+export function NovoDocumentoPorTop({ variante, rotuloDoTipo, todosOsGrupos, prefixo, rota, dicasPadronizadas = false }: {
+  dicasPadronizadas?: boolean;
   variante: string;
   rotuloDoTipo: string;
   /** Os grupos do portal, um por variante (o hook de TOPs do portal). */
@@ -237,16 +238,16 @@ export function NovoDocumentoPorTop({ variante, rotuloDoTipo, todosOsGrupos, pre
   if (!grupos.length) return null;
   return <>
     <span className={estilos.dividido}>
-      <button ref={botaoNovo} type="button" className={estilos.novo} data-testid={`${prefixo}-novo`} aria-haspopup="dialog" aria-expanded={aberto}
-        title={`Novo documento · ${rotuloDoTipo}: escolher a operação`} onClick={abrir}>
+      <DicaDeAcao texto={dicasPadronizadas ? `Novo documento · ${rotuloDoTipo}: escolher a operação` : undefined}><button ref={botaoNovo} type="button" className={estilos.novo} data-testid={`${prefixo}-novo`} aria-haspopup="dialog" aria-expanded={aberto}
+        title={dicasPadronizadas ? undefined : `Novo documento · ${rotuloDoTipo}: escolher a operação`} onClick={abrir}>
         <Plus strokeWidth={2.4} aria-hidden /><span>Novo</span>
-      </button>
+      </button></DicaDeAcao>
       <MenuP.Root modal={false}>
-        <MenuP.Trigger asChild>
+        <DicaDeAcao texto={dicasPadronizadas ? "Escolher a operação do novo documento" : undefined}><MenuP.Trigger asChild>
           <button type="button" className={estilos.abrirMenu} aria-label="Escolher a operação do novo documento" data-testid={`${prefixo}-novo-menu`}>
             <ChevronDown strokeWidth={2.4} aria-hidden />
           </button>
-        </MenuP.Trigger>
+        </MenuP.Trigger></DicaDeAcao>
         <MenuP.Portal>
           <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuOperacoes)} aria-label="Nova operação" data-testid={`${prefixo}-novo-operacoes`}
             // "Escolher operação…": o menu devolve o foco ao `Novo` e SÓ ENTÃO a janela abre — assim a

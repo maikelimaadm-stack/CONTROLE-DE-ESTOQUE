@@ -314,7 +314,7 @@ export function Base1List(props: Base1ListProps) {
       <div className="mg-pills-rail__content" aria-hidden={!showChips}>
       <IconBtn size="sm" aria-label="Rolar filtros para a esquerda" onClick={() => scrollStrip(-240)}><ChevronLeft className="h-4 w-4" /></IconBtn>
       <div ref={stripRef} className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none]">
-        {chips.map((f) => <FilterChip key={f.key} f={f} value={values[f.key]} open={openChip === f.key} onOpenChange={(o) => setOpenChip(o ? f.key : null)} distinct={distinctFor(f)} scope={chipScope}
+        {chips.map((f) => <FilterChip key={f.key} referenceStyle={props.referenceHeaders} f={f} value={values[f.key]} open={openChip === f.key} onOpenChange={(o) => setOpenChip(o ? f.key : null)} distinct={distinctFor(f)} scope={chipScope}
           onApply={(v) => { const nv = { ...values, [f.key]: v }; setValues(nv); apply(nv, search); }} onClear={() => { const nv = { ...values, [f.key]: emptyValue(f) }; setValues(nv); apply(nv, search); }} />)}
         {chips.length === 0 && <span className="px-2 text-[11.5px] text-slate-400">Esta tela não possui filtros por coluna.</span>}
       </div>

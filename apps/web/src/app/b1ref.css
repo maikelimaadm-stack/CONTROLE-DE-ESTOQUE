@@ -58,6 +58,9 @@
 .b1ref .fselb-l{flex-grow:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .b1ref .fselb-c{flex-shrink:0;display:inline-flex;color:#5b6b80}
 .b1ref .fsell{margin:0 10px 8px;max-height:176px;overflow:auto;box-sizing:border-box;border:1px solid #eef1f4;border-radius:10px;background:#fff;padding:3px}
+/* Faixa superior de Compras: mesma composição do filtro de cabeçalho, sem posição fixa. */
+.b1ref .fchip-painel{display:flex;flex-direction:column;max-height:min(498px,calc(100dvh - 100px));overflow:auto;padding-top:4px}
+.b1ref .fchip-painel .fpop-l{max-height:208px}
 /* Lista flutuante: não aumenta nem faz rolar o painel de filtro. */
 .b1ref .foperadores{z-index:10001;margin:0;width:var(--radix-select-trigger-width);max-height:min(240px,var(--radix-select-content-available-height));box-shadow:0 8px 24px rgba(16,24,40,.12)}
 .b1ref .foperadores .fopt[data-highlighted]{background:#f4f6f7;color:#0f172a;outline:none}

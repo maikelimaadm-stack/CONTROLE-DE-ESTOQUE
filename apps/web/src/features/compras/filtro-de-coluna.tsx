@@ -1,9 +1,9 @@
 "use client";
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, FilterX, Search } from "lucide-react";
+import { Check, FilterX, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import * as Select from "@radix-ui/react-select";
+import { SeletorDeOperador } from "@/components/ui";
 
 /**
  * Filtro de cabeçalho do painel de itens — o `fpop` do HTML de referência (padrão Excel): limpar, condição
@@ -87,20 +87,7 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
       <button type="button" className="fmi" disabled={!atual} onClick={() => onAplicar(null)}><FilterX size={14} /><span className="fval-l">Limpar filtro de “{rotulo}”</span></button>
       <span className="opt-sep" aria-hidden="true" />
       <div className="fcond">
-        <Select.Root value={op || "sem"} onValueChange={(v) => setOp(v === "sem" ? "" : v)}>
-          <Select.Trigger className="fselb" aria-label="Condição">
-            <span className="fselb-l"><Select.Value /></span><Select.Icon className="fselb-c"><ChevronDown size={14} /></Select.Icon>
-          </Select.Trigger>
-          <Select.Portal><div className="b1ref">
-            <Select.Content position="popper" sideOffset={4} className="fsell foperadores" aria-label="Condição" onEscapeKeyDown={(e) => e.stopPropagation()}>
-              <Select.Viewport>
-                {ops.map(([k, l]) => <Select.Item key={k} value={k || "sem"} className={cn("fopt", k === op && "on")}>
-                  <span className="fopt-c"><Select.ItemIndicator><Check size={12} /></Select.ItemIndicator></span><Select.ItemText>{l}</Select.ItemText>
-                </Select.Item>)}
-              </Select.Viewport>
-            </Select.Content>
-          </div></Select.Portal>
-        </Select.Root>
+        <SeletorDeOperador valor={op || "sem"} opcoes={ops.map(([value, label]) => ({ value: value || "sem", label }))} onChange={(v) => setOp(v === "sem" ? "" : v)} />
       </div>
       {op && <div className="fcond">
         <input className="fin" value={v1} onChange={(e) => setV1(e.target.value)} placeholder={ph} aria-label="Valor da condição" />

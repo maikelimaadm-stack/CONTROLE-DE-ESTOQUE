@@ -17,7 +17,7 @@ import { useTopsDeCompras, variantesDeCompra } from "@/features/compras/variante
 import { useFinalizacaoEOrcamento, type EstadoDaCapacidade } from "@/features/compras/pedido-e-orcamento";
 import { useImportacaoXml } from "@/features/compras/importacao/capacidade";
 import { DialogoImportarXml } from "@/features/compras/importacao/enviar-xml";
-import { Button } from "@/components/ui";
+import { Button, DicaDeAcao } from "@/components/ui";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import estilos from "@/features/sales/portal-vendas.module.css";
 import botoes from "@/features/compras/portal-compras.module.css";
@@ -66,7 +66,7 @@ function ImportarXml() {
   };
   if (!pode) return null;
   return <>
-    <Button size="sm" variant="outline" data-testid="compras-importar-xml" onClick={() => mudarUrl(true)}>Importar XML</Button>
+    <DicaDeAcao texto="Importar documento de compra pelo arquivo XML"><Button size="sm" variant="outline" data-testid="compras-importar-xml" onClick={() => mudarUrl(true)}>Importar XML</Button></DicaDeAcao>
     <DialogoImportarXml aberto={aberto} onFechar={() => mudarUrl(false)} solicitacaoId={aberto ? sp.get("solicitacao_id") || null : null} />
   </>;
 }
@@ -87,8 +87,8 @@ function Documentos() {
   const rotuloDoTipo = opcoes.find((o) => o.value === atual)?.label ?? TODOS_OS_TIPOS;
   const focarTipo = React.useRef(false);
   const barra = <span className={`${estilos.contexto} ${botoes.contexto}`} role="group" aria-label="Contexto operacional">
-    <SeletorDeTipoDeDocumento prefixo="compras" valor={atual} opcoes={opcoes} focarAoMontar={focarTipo} onChange={(v) => { focarTipo.current = true; setEspecie(v); }} />
-    <NovoDocumentoPorTop variante={atual} rotuloDoTipo={rotuloDoTipo} todosOsGrupos={grupos.filter((g) => g.variante.variante !== "orcamento")} prefixo="compras" rota={rotaDeLancamentoDeCompra} />
+    <SeletorDeTipoDeDocumento dicasPadronizadas prefixo="compras" valor={atual} opcoes={opcoes} focarAoMontar={focarTipo} onChange={(v) => { focarTipo.current = true; setEspecie(v); }} />
+    <NovoDocumentoPorTop dicasPadronizadas variante={atual} rotuloDoTipo={rotuloDoTipo} todosOsGrupos={grupos.filter((g) => g.variante.variante !== "orcamento")} prefixo="compras" rota={rotaDeLancamentoDeCompra} />
     <ImportarXml />
   </span>;
   // MESTRE-DETALHE: o documento selecionado na grade abre os PRODUTOS dele no painel de baixo (sem sair da lista).
