@@ -126,8 +126,10 @@ export function NovoDocumentoDeVenda({ variante, rotuloDoTipo }: {
  * os de cima, inteiros. O portal dá só o que é dele — os grupos de TOPs (perguntados à porta operacional DELE), o
  * prefixo dos `data-testid` e a rota de lançamento. Vendas continua passando pelos mesmos valores de antes.
  */
-export function NovoDocumentoPorTop({ variante, rotuloDoTipo, todosOsGrupos, prefixo, rota, dicasPadronizadas = false }: {
+export function NovoDocumentoPorTop({ variante, rotuloDoTipo, todosOsGrupos, prefixo, rota, dicasPadronizadas = false, somenteIcone = false }: {
   dicasPadronizadas?: boolean;
+  /** Só o ícone `+` (sem a palavra "Novo"); o nome fica em `aria-label` / dica. Portal de Compras (decisão 327). */
+  somenteIcone?: boolean;
   variante: string;
   rotuloDoTipo: string;
   /** Os grupos do portal, um por variante (o hook de TOPs do portal). */
@@ -238,9 +240,10 @@ export function NovoDocumentoPorTop({ variante, rotuloDoTipo, todosOsGrupos, pre
   if (!grupos.length) return null;
   return <>
     <span className={estilos.dividido}>
-      <DicaDeAcao texto={dicasPadronizadas ? `Novo documento · ${rotuloDoTipo}: escolher a operação` : undefined}><button ref={botaoNovo} type="button" className={estilos.novo} data-testid={`${prefixo}-novo`} aria-haspopup="dialog" aria-expanded={aberto}
+      <DicaDeAcao texto={dicasPadronizadas ? `Novo documento · ${rotuloDoTipo}: escolher a operação` : undefined}><button ref={botaoNovo} type="button" className={cn(estilos.novo, somenteIcone && estilos.novoSoIcone)} data-testid={`${prefixo}-novo`} aria-haspopup="dialog" aria-expanded={aberto}
+        aria-label={`Novo documento · ${rotuloDoTipo}`}
         title={dicasPadronizadas ? undefined : `Novo documento · ${rotuloDoTipo}: escolher a operação`} onClick={abrir}>
-        <Plus strokeWidth={2.4} aria-hidden /><span>Novo</span>
+        <Plus strokeWidth={2.4} aria-hidden />{!somenteIcone && <span>Novo</span>}
       </button></DicaDeAcao>
       <MenuP.Root modal={false}>
         <DicaDeAcao texto={dicasPadronizadas ? "Escolher a operação do novo documento" : undefined}><MenuP.Trigger asChild>

@@ -1,26 +1,22 @@
-/* Dimensões e cores vêm do padrão global de ações (botoes.css). */
+/*
+ * PORTAL DE COMPRAS — botões da barra (decisão 327).
+ *
+ * Uma cor, um tamanho, um estilo: o cinza `#f1f3f4` / ícone `#475569` dos `IconBtn` da listagem
+ * e dos círculos da Central. Sem verde especial no Novo; Importar XML é só ícone.
+ */
 .portal {
-  --mg-btn-h: 24px;
+  --mg-btn-h: 28px;
   --portal-espaco: 6px;
   --mg-toolbar-h: 42px;
+  --portal-acao-bg: #f1f3f4;
+  --portal-acao-fg: #475569;
+  --portal-acao-hover: #e8ecef;
+  --portal-acao-fg-hover: #0f172a;
 }
 .contexto > button,
 .contexto > span > button {
   flex-shrink: 0;
   gap: var(--portal-espaco);
-}
-.contexto > button,
-.contexto > span > button:first-child { padding-inline: 11px; }
-.contexto > span > button:last-child {
-  width: 24px;
-  min-width: 24px;
-  padding: 0;
-}
-.contexto > span:has(> button) {
-  height: 24px;
-  margin-left: 0;
-  background: #f1f3f4;
-  box-shadow: none;
 }
 .contexto,
 .portal :is(:global(.mg-toolbar), :global(.mg-toolbar > .ml-auto), :global(.mg-rail), :global(.mg-pills-rail__content), :global(.mg-pills-rail__content > .overflow-x-auto), :global(.itbar .grp), :global(.view-seg)) {
@@ -35,3 +31,75 @@
 }
 .portal :global(.view-seg button),
 .contexto > button { border-radius: 999px; }
+
+/* Tipo: mesmo fundo cinza das outras ações (não o branco com borda). */
+.portal :global(.tipo) {
+  height: 28px;
+  border-color: transparent;
+  background: var(--portal-acao-bg);
+  color: var(--portal-acao-fg);
+}
+.portal :global(.tipo:hover),
+.portal :global(.tipo[data-state="open"]) {
+  background: var(--portal-acao-hover);
+  color: var(--portal-acao-fg-hover);
+  border-color: transparent;
+  box-shadow: none;
+}
+.portal :global(.tipoPrefixo) { color: #94a3b8; }
+.portal :global(.tipoValor) { color: inherit; font-weight: 600; }
+
+/* Novo dividido: cinza (não verde), ícones 16px. */
+.portal :global(.dividido) {
+  height: 28px;
+  margin-left: 0;
+  background: var(--portal-acao-bg);
+  box-shadow: none;
+}
+.portal :global(.novo),
+.portal :global(.abrirMenu) {
+  color: var(--portal-acao-fg);
+  background: transparent;
+}
+.portal :global(.abrirMenu) {
+  width: 28px;
+  border-left-color: #e2e8f0;
+}
+.portal :global(.novo svg),
+.portal :global(.abrirMenu svg) {
+  width: 16px;
+  height: 16px;
+}
+.portal :global(.novo:hover),
+.portal :global(.abrirMenu:hover),
+.portal :global(.novo[aria-expanded="true"]),
+.portal :global(.abrirMenu[data-state="open"]) {
+  background: var(--portal-acao-hover);
+  color: var(--portal-acao-fg-hover);
+}
+.portal :global(.novo:active),
+.portal :global(.abrirMenu:active) {
+  background: #dde3e8;
+}
+
+/* Importar XML: círculo 28px, só ícone. */
+.importar {
+  composes: app-button from global;
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--portal-acao-bg);
+  color: var(--portal-acao-fg);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1);
+}
+.importar:hover { background: var(--portal-acao-hover); color: var(--portal-acao-fg-hover); }
+.importar:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.importar svg { width: 16px; height: 16px; flex-shrink: 0; }

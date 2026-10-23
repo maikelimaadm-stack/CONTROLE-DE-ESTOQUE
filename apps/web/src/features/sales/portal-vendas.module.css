@@ -69,6 +69,9 @@
   white-space: nowrap;
 }
 .novo svg { width: 14px; height: 14px; }
+/* Portal de Compras (decisão 327): só o `+`, mesma altura do círculo da seta. */
+.novoSoIcone { width: 28px; padding: 0; justify-content: center; gap: 0; }
+.novoSoIcone svg { width: 16px; height: 16px; }
 .abrirMenu {
   composes: app-button from global;
   width: 28px;

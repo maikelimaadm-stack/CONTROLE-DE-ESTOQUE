@@ -403,7 +403,7 @@ export function ItensDaCentral({
         {items.length === 0 && <tr><td colSpan={1 + colunasVisiveis.length} className={grade.vazio}>
           <div className={grade.vazioConteudo}>
             <span>Nenhum item adicionado.</span>
-            {podeAdicionar && <button type="button" className={grade.botaoTexto} data-testid={tid("adicionar-vazio")} onClick={(e) => { e.stopPropagation(); adicionar(); }}><Plus aria-hidden />Adicionar produto</button>}
+            {podeAdicionar && <button type="button" className={cn(grade.botao, grade.botaoAdicionar)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid={tid("adicionar-vazio")} onClick={(e) => { e.stopPropagation(); adicionar(); }}><Plus aria-hidden /></button>}
           </div>
         </td></tr>}
         {items.map((it, i) => {
