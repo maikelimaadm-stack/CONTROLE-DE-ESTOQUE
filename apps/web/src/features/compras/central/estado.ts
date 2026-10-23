@@ -48,6 +48,7 @@ import {
 import {
   aberturaDoDocumento, acaoEditar, campoTravadoNaEdicao, corpoDaEdicao, itensNaEdicao, motivoDaTravaNaEdicao, mudouAlgo, travasDaLinhaNaTela, type AcaoEditar
 } from "./edicao";
+import { cabeNoDocumento, linhasDoProdutoCruzado } from "./rateio-independente";
 import {
   dicaDaTop, localConfirmadoNaEmpresa, localDasLinhasNovasNoPortao, localDoCadastroDoProduto, mesmoId, omissaoDoCorpo, padraoDaTopInvalido,
   padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, portaoDoLocalDoProduto, travadoPelaTop, type CampoDoPadraoDaTop,
@@ -492,6 +493,17 @@ export interface EstadoDaCriacao {
   ativarRateioPorValor: (patch?: Partial<LinhaDoRateioDaCompra>, extra?: LinhaDoRateioDaCompra) => void;
   /** UX: linhas por valor → classificação única (1ª linha vira o par do documento). */
   usarClassificacaoUnica: () => void;
+  /**
+   * UX (decisão 325): aplica a vista independente Natureza × Centro → linhas do corpo.
+   * `forcarPorValor` (ex.: “+” numa tabela) impede voltar ao modo documento nesta edição.
+   */
+  aplicarRateioIndependente: (
+    naturezas: { id: string; percentual: string }[],
+    centros: { id: string; percentual: string }[],
+    contaId: string,
+    safraId: string,
+    opts?: { forcarPorValor?: boolean },
+  ) => void;
   /** A classificação de UM item: gera estoque / imobilizado (natureza/centro do item só em legado por_produto). */
   mudarClassificacaoDoItem: (k: number, p: { geraEstoque?: boolean; imobilizado?: boolean; natureza?: string; centro?: string }) => void;
 
@@ -726,6 +738,26 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
       categoria_financeira_id: primeira?.categoriaId ?? "",
       centro_custo_id: primeira?.centroId ?? "",
     }));
+  };
+  const aplicarRateioIndependente = (
+    naturezas: { id: string; percentual: string }[],
+    centros: { id: string; percentual: string }[],
+    contaId: string,
+    safraId: string,
+    opts?: { forcarPorValor?: boolean },
+  ) => {
+    const n = naturezas.length ? naturezas : [{ id: "", percentual: "100" }];
+    const c = centros.length ? centros : [{ id: "", percentual: "100" }];
+    const documento = rateio.tipo !== "por_valor"
+      && !opts?.forcarPorValor
+      && cabeNoDocumento(n, c, contaId, safraId);
+    if (documento) {
+      setRateio(rateioDoDocumento());
+      setH((o) => ({ ...o, categoria_financeira_id: n[0]!.id, centro_custo_id: c[0]!.id }));
+      return;
+    }
+    setRateio({ tipo: "por_valor", linhas: linhasDoProdutoCruzado(n, c, contaId, safraId) });
+    setH((o) => ({ ...o, categoria_financeira_id: "", centro_custo_id: "" }));
   };
   /* A classificação mora na LINHA (a mesma lista que a grade edita). Item que deixa de gerar estoque perde o local:
      "não gera estoque" com local seria dois sinais contraditórios (o servidor recusa). */
@@ -1190,7 +1222,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     cabecalho: h, mudar, itens, setItens, ajustarParcelas, setAjustarParcelas, plano, setPlano, totalItens, totalExibido, lote,
     mostrarFiscal, editarFiscal, mostrarRateio, editarRateio, dadosFiscaisAtivos, fiscal, mudarFiscal,
     rateio, mudarTipoDoRateio, mudarLinhaDoRateio, adicionarLinhaDoRateio, removerLinhaDoRateio,
-    ativarRateioPorValor, usarClassificacaoUnica, mudarClassificacaoDoItem,
+    ativarRateioPorValor, usarClassificacaoUnica, aplicarRateioIndependente, mudarClassificacaoDoItem,
     layoutAtivo, layout, layoutQ, layoutPendente, layoutNaoCarregado, layoutVale, padroes, regras, regrasPendente, exigidosPelaRegra, condicoesPermitidas,
     zonas, forcados: desenho?.forcados ?? new Set<string>(), cfg,
     rotulo: (c, hoje) => cfg.get(c)?.rotulo || hoje,

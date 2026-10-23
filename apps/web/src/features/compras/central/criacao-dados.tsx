@@ -15,6 +15,7 @@ import estilosCv from "@/features/central/moldura.module.css";
 import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
 import { opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
 import { dicaDaIdentidadeNaEdicao } from "./edicao";
+import { SafraDaCriacao } from "./dados-fiscais";
 import { CAMPOS_DOS_DADOS_PRINCIPAIS } from "./organizacao-do-painel";
 import { fiscalNoPainel } from "./rateio-no-rodape";
 
@@ -173,6 +174,7 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
       <ColunaDeCampos>
         {top}
         {corpo}
+        {e.editarRateio && <SafraDaCriacao e={e} />}
       </ColunaDeCampos>
     </div>
   </>;
