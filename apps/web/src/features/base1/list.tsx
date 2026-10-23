@@ -68,6 +68,11 @@ export interface Base1ListProps {
    * Filtro de cabeçalho (`referenceHeaders`) e busca da toolbar seguem disponíveis quando ligados.
    */
   semFaixaDeFiltros?: boolean;
+  /**
+   * Portal de Compras (decisão 332): barra de ações dentro do mesmo painel da grade/cards,
+   * sem vão nem segundo card entre botões e tabela.
+   */
+  barraIntegrada?: boolean;
   extraMenu?: { key: string; label: string; icon?: React.ReactNode; onClick: () => void }[];
   /** botões adicionais ao lado de "Novo" (ex.: Importar XML) */
   extraToolbar?: React.ReactNode;
@@ -106,7 +111,7 @@ function comColunaDeIdentidade(rodape: React.ReactNode, deslocamento: number): R
  * rodapé com contadores e "Carregar mais". Preferências por usuário (padrão da organização opcional).
  */
 export function Base1List(props: Base1ListProps) {
-  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, semModoRegistro, semFaixaDeFiltros, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra, csvName } = props;
+  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, semModoRegistro, semFaixaDeFiltros, barraIntegrada, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra, csvName } = props;
   const colInfo = React.useMemo(() => columns.map((c) => ({ key: c.key, label: c.label })), [columns]);
   const filterInfo = React.useMemo<ListFilterInfo[]>(() => filters.map((f) => ({ key: f.key, label: f.label, kind: f.kind })), [filters]);
   const p = useListPrefs(moduleId, colInfo, filterInfo);
@@ -326,9 +331,12 @@ export function Base1List(props: Base1ListProps) {
       {entity && <AttachmentsDialog open={attachDlg} onOpenChange={setAttachDlg} entity={entity} entityId={recordRow ? rowId(recordRow) : null} title={title} />}
     </div>;
   }
-  return <div className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", props.className)} data-testid="b1-list">
-    {/* barra superior */}
-    <div className="mg-toolbar mg-card flex-wrap no-print">
+  const toolbar = (
+    <div
+      className={cn("mg-toolbar flex-wrap no-print", barraIntegrada ? "shrink-0 border-b" : "mg-card")}
+      style={barraIntegrada ? { borderColor: "var(--mg-divider)" } : undefined}
+      data-testid="b1-toolbar"
+    >
       {canCreate !== false && (onNew || Record) && <PillBtn onClick={newRecord}><Plus className="h-4 w-4" /> {props.createLabel ?? "Novo"}</PillBtn>}
       {props.extraToolbar}
       {one && (Record || onOpen) && <PillBtn tone="gray" onClick={() => { enterRecord(one); if (Record) setRecMode("edit"); }}><Pencil className="h-3.5 w-3.5" /> Editar</PillBtn>}
@@ -336,6 +344,10 @@ export function Base1List(props: Base1ListProps) {
       {canDelete && onDelete && selectedRows.length > 0 && <PillBtn tone="red" onClick={() => setDelRow(one ?? selectedRows[0]!)}><Trash2 className="h-4 w-4" /> Excluir{selectedRows.length > 1 ? ` (${selectedRows.length})` : ""}</PillBtn>}
       {rightSlot}
     </div>
+  );
+  return <div className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", props.className)} data-testid="b1-list">
+    {/* barra superior — decisão 332: em Compras mora dentro do painel da grade */}
+    {!barraIntegrada && toolbar}
     {/* faixa de filtros (modelo-base): recolhe/expande o conteúdo; decisão 331 — Compras omite a linha inteira */}
     {!semFaixaDeFiltros && <div className={cn("mg-rail mg-card no-print mg-pills-rail", showChips ? "is-expanded" : "is-collapsed")}>
       <IconBtn size="sm" aria-label={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} title={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} active={showChips} aria-expanded={showChips} onClick={() => setShowChips((v) => !v)}>{showChips ? <ListX className="h-4 w-4" /> : <ListPlus className="h-4 w-4" />}</IconBtn>
@@ -354,6 +366,7 @@ export function Base1List(props: Base1ListProps) {
     {/* corpo */}
     <div className="flex min-h-0 flex-1 gap-2">
       <div className="mg-shell mg-shell--fill min-w-0 flex-1">
+        {barraIntegrada && toolbar}
         {q.error && <div className="p-2"><ErrorBox error={q.error} /></div>}
         {view === "cards"
           ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={colunasDosCards} fields={cardFieldsExibidos} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelectClick={onSelectClick} actions={rowActions} favorites={favorites} onFavorite={toggleFavorite} scrollToId={scrollToId} /></div>

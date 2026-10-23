@@ -17,17 +17,14 @@
   flex-shrink: 0;
   gap: var(--portal-espaco);
 }
-/* Espaço e altura da barra/trilhos: seletores estruturais (sem repetir prefixo herdado). */
+/* Espaço e altura da barra (decisão 332: toolbar dentro do painel da grade — testid estável). */
 .contexto,
-.portal :global([data-testid="b1-list"] > div:nth-child(1)),
-.portal :global([data-testid="b1-list"] > div:nth-child(1) > .ml-auto),
-.portal :global([data-testid="b1-list"] > div:nth-child(2)),
-.portal :global([data-testid="b1-list"] > div:nth-child(2) > div:nth-child(2)),
-.portal :global([data-testid="b1-list"] > div:nth-child(2) > div:nth-child(2) > .overflow-x-auto),
+.portal :global([data-testid="b1-toolbar"]),
+.portal :global([data-testid="b1-toolbar"] > .ml-auto),
 .portal :global(.itbar .grp) {
   gap: var(--portal-espaco);
 }
-.portal :global([data-testid="b1-list"] > div:nth-child(1)) { height: auto; }
+.portal :global([data-testid="b1-toolbar"]) { height: auto; }
 .contexto > button { border-radius: 999px; }
 
 /* Tabela | Cards — trilho 28px + polegar 22px (igual Posição do rótulo da Central). */
