@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Copy, EyeOff, FileText, Grid3x3, Lock, MoreVertical, PanelLeft, Plus, Scaling, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
 import { cn, brl, num, dateBR } from "@/lib/utils";
-import { fonteDaCelula, medirTextos } from "@/lib/largura-coluna";
+import { CHROME_ICONE_NA_CELULA, fonteDaCelula, medirTextos } from "@/lib/largura-coluna";
 import { api } from "@/lib/api";
 import { EntradaNumero, Input } from "@/components/ui";
 import { B1Popover, MenuList } from "@/features/base1/ui";
@@ -473,26 +473,51 @@ export function ItensDaCentral({
     }
   };
 
-  /** Textos visíveis da coluna (rótulo + células) — canvas, igual ao Base1Grid do Portal. */
+  /** Textos da coluna: rótulo + dados conhecidos + DOM (produto/armazém com rótulo cheio). */
   const textosDaColuna = (k: ChaveColunaDoItem): string[] => {
     const out = [rotuloColuna(k)];
+    const casasQ = casasDaQuantidade ?? 2;
+    for (const it of items) {
+      let t = "";
+      switch (k) {
+        case "codigo": t = conhecidos[it.product_id]?.code ?? ""; break;
+        case "produto": t = conhecidos[it.product_id]?.label ?? ""; break;
+        case "armazem": t = it.warehouse_id ? (conhecidos[it.warehouse_id]?.label ?? "") : ""; break;
+        case "saldo": t = num(maxDaOrigem(it) ?? "0", casasQ); break;
+        case "quantidade": t = num(it.quantity, casasQ); break;
+        case "unitario": t = it.unit_value !== undefined && it.unit_value !== "" ? (semSimboloDeMoeda ? num(it.unit_value, 2) : brl(it.unit_value)) : ""; break;
+        case "desconto": t = Number(it.discount || 0) ? dinheiro(it.discount!) : ""; break;
+        case "descontoPercentual": t = Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : ""; break;
+        case "total": t = dinheiro(totalDaLinhaExibido(it)); break;
+        case "lote": t = it.provider_lot ?? ""; break;
+        case "validade": t = it.expiration_date ? dateBR(it.expiration_date) : ""; break;
+        default: t = "";
+      }
+      t = String(t).replace(/\s+/g, " ").trim();
+      if (t && t !== "—") out.push(t);
+    }
     const idx = colunasVisiveis.indexOf(k);
     const corpo = tabelaRef.current?.tBodies[0];
-    if (idx < 0 || !corpo) return out;
-    for (const row of Array.from(corpo.rows)) {
-      const td = row.cells[idx];
-      if (!td) continue;
-      const input = td.querySelector("input") as HTMLInputElement | null;
-      const bruto = input ? `${input.value} ${td.innerText || ""}` : (td.innerText || td.textContent || "");
-      const t = bruto.replace(/\s+/g, " ").trim();
-      if (t && t !== "—") out.push(t);
+    if (idx >= 0 && corpo) {
+      for (const row of Array.from(corpo.rows)) {
+        const td = row.cells[idx];
+        if (!td) continue;
+        const rotulo = td.querySelector(`.${grade.celulaBotao} > span:first-child`) as HTMLElement | null;
+        const input = td.querySelector("input") as HTMLInputElement | null;
+        const bruto = rotulo?.textContent || (input ? input.value : "") || td.innerText || td.textContent || "";
+        const t = bruto.replace(/\s+/g, " ").trim();
+        if (t && t !== "—" && t !== "…") out.push(t);
+      }
     }
     return out;
   };
 
   const larguraPorConteudo = (k: ChaveColunaDoItem) => {
     const th = tabelaRef.current?.tHead?.rows[0]?.cells[colunasVisiveis.indexOf(k)] ?? null;
-    return medirTextos(textosDaColuna(k), fonteDaCelula(th));
+    const base = medirTextos(textosDaColuna(k), fonteDaCelula(th));
+    // produto/armazém: lupa ou cadeado na célula
+    if (k === "produto" || k === "armazem") return Math.min(480, base + CHROME_ICONE_NA_CELULA);
+    return base;
   };
 
   /** Grava largura no estado e no DOM (col/th/tabela) — mesma trava width=min=max do resize. */
@@ -513,7 +538,7 @@ export function ItensDaCentral({
     setLarguras((m) => (m[k] === w ? m : { ...m, [k]: w }));
   };
 
-  /** Liga = mede + grava + ícone; desliga = só tira o estado (largura fica). Igual Base1Grid. */
+  /** Menu: liga = mede + marca; desliga = só tira o estado. */
   const aplicarAutoAjuste = (k: ChaveColunaDoItem, jaLigado: boolean) => {
     if (jaLigado) {
       setAutoFitKeys((s) => { const n = new Set(s); n.delete(k); return n; });
@@ -523,10 +548,21 @@ export function ItensDaCentral({
     setAutoFitKeys((s) => { const n = new Set(s); n.add(k); return n; });
   };
 
-  const reaplicarOuLigar = (k: ChaveColunaDoItem) => {
+  /** Duplo clique na alça: só ajusta a largura uma vez — NÃO liga o modo auto ajustar. */
+  const ajustarLarguraUmaVez = (k: ChaveColunaDoItem) => {
     gravarLargura(k, larguraPorConteudo(k));
-    if (!autoFitKeys.has(k)) setAutoFitKeys((s) => { const n = new Set(s); n.add(k); return n; });
   };
+
+  /** Enquanto o modo está ligado, reaplica quando mudam itens/rótulos. */
+  React.useEffect(() => {
+    if (!autoFitKeys.size) return;
+    for (const k of autoFitKeys) {
+      if (!colunasVisiveis.includes(k)) continue;
+      const w = larguraPorConteudo(k);
+      if (larguras[k] !== w) gravarLargura(k, w);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando dados/autofit mudam
+  }, [autoFitKeys, items, conhecidos, colunasVisiveis]);
 
   const ocultarColuna = (k: ChaveColunaDoItem) => {
     setColunas((cs) => {
@@ -590,10 +626,10 @@ export function ItensDaCentral({
                 ]} />
               </B1Popover>
             </div>
-            <span role="separator" aria-label={`Redimensionar ${rotuloColuna(k)}`} title="Arraste para redimensionar · duplo clique para auto ajustar"
+            <span role="separator" aria-label={`Redimensionar ${rotuloColuna(k)}`} title="Arraste para redimensionar · duplo clique para ajustar à largura"
               className={grade.alcaResize}
               onMouseDown={(e) => iniciarResize(e, k)}
-              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); reaplicarOuLigar(k); }} />
+              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); ajustarLarguraUmaVez(k); }} />
           </th>;
         })}
       </tr></thead>

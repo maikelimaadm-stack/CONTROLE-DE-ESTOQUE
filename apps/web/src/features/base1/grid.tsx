@@ -17,8 +17,8 @@ export const SELECT_COLUMN_WIDTH = 36;
  * Seleção como no MG: clique na linha seleciona só ela (Ctrl alterna, Shift intervalo); o controle da linha
  * alterna sem desmarcar as demais; duplo clique abre o registro.
  * Congelamento em prefixo: "Congelar" na coluna N congela todas até N; âncora descongela.
- * Auto ajustar é estado (ligado até desligar); mini-ícones: filtro/auto; congelar só na âncora;
- * ⋮ sem fundo marcado; âncora congelada só com sombra; duplo clique na alça liga/aplica o auto ajustar.
+ * Auto ajustar (menu) é estado contínuo até desligar; duplo clique na alça só ajusta a largura (não liga o modo).
+ * Mini-ícones: filtro/auto; congelar só na âncora; com congeladas, a coluna de seleção também fica sticky.
  */
 export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelectClick, onToggle, onToggleAll, onOpen, frozen = 0, onFreeze, onHide, onResize, onAutoFit, onFilter, footer, rowKey, emptyText, scrollToId, filteredKeys, autoFitKeys, referenceHeaders: _referenceHeaders = false, popoverClassName, selecaoSticky = true }: {
   columns: Base1Column[]; rows: Row[]; loading?: boolean; sort?: { key: string; dir: "asc" | "desc" }; onSort?: (key: string) => void;
@@ -45,7 +45,9 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   const [menuFor, setMenuFor] = React.useState<string | null>(null);
   const pinnedCount = (() => { let n = 0; while (n < columns.length && columns[n]!.pinned === "left") n++; return n; })();
   const frozenCount = Math.max(0, Math.min(Math.max(frozen, pinnedCount), columns.length));
-  const leftBase = selecaoSticky ? SELECT_COLUMN_WIDTH : 0;
+  /** Com colunas congeladas, a seleção também fica sticky (Portal e demais). */
+  const selectCongelado = selecaoSticky || frozenCount > 0;
+  const leftBase = selectCongelado ? SELECT_COLUMN_WIDTH : 0;
   const measure = React.useCallback(() => {
     const out: Record<string, number> = {};
     let acc = leftBase;
@@ -73,16 +75,26 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
     const textos = [c.label, ...rows.map((r) => cellText(c, r)).filter((t) => t && t !== "–" && t !== "—")];
     return medirTextos(textos, fonteDaCelula(th));
   };
-  /** Liga = mede e grava largura + marca estado; desliga = só tira o estado (largura fica). */
+  /** Menu: liga = mede + marca estado; desliga = só tira o estado (largura fica). */
   const aplicarAutoAjuste = (c: Base1Column, jaLigado: boolean) => {
     if (jaLigado) { onAutoFit?.(c.key); return; }
     onResize?.(c.key, larguraPorConteudo(c));
     onAutoFit?.(c.key);
   };
-  const reaplicarOuLigar = (c: Base1Column) => {
+  /** Duplo clique na alça: só ajusta a largura uma vez — NÃO liga o modo auto ajustar. */
+  const ajustarLarguraUmaVez = (c: Base1Column) => {
     onResize?.(c.key, larguraPorConteudo(c));
-    if (!autoFitKeys?.has(c.key)) onAutoFit?.(c.key);
   };
+  /** Enquanto o modo está ligado, reaplica quando mudam linhas/colunas. */
+  React.useEffect(() => {
+    if (!autoFitKeys?.size || !onResize) return;
+    for (const c of columns) {
+      if (!autoFitKeys.has(c.key)) continue;
+      const w = larguraPorConteudo(c);
+      if (c.width !== w) onResize(c.key, w);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mede com rows/columns atuais; evita loop por identidade de onResize
+  }, [autoFitKeys, rows, columns]);
   const startResize = (e: React.MouseEvent, c: Base1Column) => {
     if (e.detail > 1) return;
     e.preventDefault(); e.stopPropagation();
@@ -100,7 +112,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   return <div className="mg-grid-wrap">
     <table className="mg-grid">
       <thead><tr>
-        <th className={cn("th-select", selecaoSticky && "sticky left-0 z-[4]")}><MgCheck aria-label="Selecionar todos" checked={allOn} indeterminate={someOn} onChange={(on) => onToggleAll(on)} /></th>
+        <th className={cn("th-select", selectCongelado && "sticky left-0 z-[4]")}><MgCheck aria-label="Selecionar todos" checked={allOn} indeterminate={someOn} onChange={(on) => onToggleAll(on)} /></th>
         {columns.map((c, i) => {
           const isFrozen = i < frozenCount;
           const isAnchor = i === frozenCount - 1 && frozenCount > 0;
@@ -143,9 +155,9 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
             {c.resizable !== false && <span
               role="separator"
               aria-label={`Redimensionar ${c.label}`}
-              title="Arraste para redimensionar · duplo clique para auto ajustar"
+              title="Arraste para redimensionar · duplo clique para ajustar à largura"
               onMouseDown={(e) => startResize(e, c)}
-              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); reaplicarOuLigar(c); }}
+              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); ajustarLarguraUmaVez(c); }}
               className="absolute right-0 top-0 z-[5] h-full w-1.5 cursor-col-resize touch-none select-none bg-transparent"
             />}
           </th>); })}
@@ -155,7 +167,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
         {!loading && rows.length === 0 && <tr><td colSpan={columns.length + 2} className="!h-24"><Empty text={emptyText} /></td></tr>}
         {rows.map((r, ri) => { const id = key(r); const on = selected.has(id); return (
           <tr key={id} ref={(el) => { trs.current[id] = el; }} data-testid="b1-row" aria-selected={on} className={cn(on && "selected", ri % 2 === 1 ? "odd" : "even")} onClick={(e) => onSelectClick(id, selectClickOf(e))} onDoubleClick={() => onOpen?.(r)}>
-            <td className={cn("td-select", selecaoSticky && "sticky left-0 z-[2]")} style={selecaoSticky ? { background: stickyBg(on, ri) } : undefined} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}><MgCheck aria-label="Selecionar linha" checked={on} onChange={() => onToggle(id)} /></td>
+            <td className={cn("td-select", selectCongelado && "sticky left-0 z-[2]")} style={selectCongelado ? { background: stickyBg(on, ri) } : undefined} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}><MgCheck aria-label="Selecionar linha" checked={on} onChange={() => onToggle(id)} /></td>
             {columns.map((c, i) => { const isFrozen = i < frozenCount; const t = cellText(c, r); return (
               <td key={c.key} title={t} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : {}), ...(isFrozen ? { left: lefts[c.key] ?? leftBase, zIndex: 2, background: stickyBg(on, ri) } : {}) }} className={cn(onOpen && "cursor-pointer", isFrozen && "is-frozen", i === frozenCount - 1 && frozenCount > 0 && "is-frozen-anchor", c.align === "right" && "!text-right tabular-nums")}>{c.render ? c.render(r) : t || <span className="text-slate-400">–</span>}</td>); })}
           </tr>); })}

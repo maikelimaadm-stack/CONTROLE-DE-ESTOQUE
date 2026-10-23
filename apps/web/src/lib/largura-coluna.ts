@@ -13,6 +13,9 @@ const PISO = 48;
  */
 export const CHROME_DA_COLUNA = 18 + 2 + 20 + 27 + 6 + 10;
 
+/** Lupa/cadeado à esquerda nas células de produto/armazém (ícone 13 + gap). */
+export const CHROME_ICONE_NA_CELULA = 13 + 8;
+
 let canvas: HTMLCanvasElement | null = null;
 
 export function medirTextos(textos: readonly string[], font: string, chrome = CHROME_DA_COLUNA): number {
