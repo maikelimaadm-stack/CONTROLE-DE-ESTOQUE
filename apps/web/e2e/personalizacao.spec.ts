@@ -29,8 +29,9 @@ test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta
   await page.getByLabel("Abrir menu da coluna Sigla").click();
   await page.getByRole("menuitem", { name: "Ocultar coluna" }).click();
   await expect(page.locator("th", { hasText: "Sigla" })).toHaveCount(0);
-  // configuração de colunas: coluna volta pela lista "disponíveis"
-  await page.getByLabel("Configurar colunas da tabela").click();
+  // configuração de colunas: pelo Mais opções (decisão 329 — saiu da faixa de filtros)
+  await page.getByLabel("Mais opções").click();
+  await page.getByRole("menuitem", { name: "Configurar colunas" }).click();
   const dlg = page.getByRole("dialog");
   await expect(dlg.getByText("Configuração de colunas")).toBeVisible();
   await dlg.getByRole("button", { name: "Sigla" }).dblclick();
@@ -42,8 +43,13 @@ test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta
   const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes("/api/preferences/") && r.ok() && (r.request().postData() ?? "").includes("cards"));
   await page.getByRole("button", { name: "Cards", exact: true }).click();
   await expect(page.getByTestId("b1-card").first()).toBeVisible();
-  await page.getByLabel("Configurar layout dos cards").click();
+  await page.getByLabel("Mais opções").click();
+  await page.getByRole("menuitem", { name: "Layout dos cards" }).click();
   await page.getByRole("radio", { name: /2 cards por linha/ }).click();
+  await page.getByRole("button", { name: "OK" }).click();
+  await page.getByLabel("Mais opções").click();
+  await page.getByRole("menuitem", { name: "Campos dos cards" }).click();
+  await expect(page.getByText("Campos dos cards").first()).toBeVisible();
   await page.getByRole("button", { name: "OK" }).click();
   await saved;
   // recarrega sem cache local: preferências vêm do servidor

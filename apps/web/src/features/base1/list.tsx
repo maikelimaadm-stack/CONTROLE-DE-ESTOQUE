@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
-import { Plus, Pencil, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw, Paperclip } from "lucide-react";
+import { Plus, Pencil, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw, Paperclip, LayoutGrid, ListChecks } from "lucide-react";
 import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { getSession } from "@/lib/api";
@@ -122,7 +122,9 @@ export function Base1List(props: Base1ListProps) {
   React.useEffect(() => { try { const raw = localStorage.getItem(favKey); setFavorites(new Set(raw ? (JSON.parse(raw) as string[]) : [])); } catch { /* sem storage */ } }, [favKey]);
   const toggleFavorite = (id: string, on: boolean) => setFavorites((f) => { const n = new Set(f); if (on) n.add(id); else n.delete(id); try { localStorage.setItem(favKey, JSON.stringify([...n])); } catch { /* sem storage */ } return n; });
   const [openChip, setOpenChip] = React.useState<string | null>(null);
-  const [colsDlg, setColsDlg] = React.useState(false); const [histDlg, setHistDlg] = React.useState(false); const [attachDlg, setAttachDlg] = React.useState(false); const [scrollToId, setScrollToId] = React.useState<string | null>(null); const lastPick = React.useRef<string | null>(null); const [delRow, setDelRow] = React.useState<Row | null>(null);
+  const [colsDlg, setColsDlg] = React.useState(false); const [maisOpcoesOpen, setMaisOpcoesOpen] = React.useState(false);
+  const [cardsLayoutOpen, setCardsLayoutOpen] = React.useState(false); const [cardFieldsOpen, setCardFieldsOpen] = React.useState(false);
+  const [histDlg, setHistDlg] = React.useState(false); const [attachDlg, setAttachDlg] = React.useState(false); const [scrollToId, setScrollToId] = React.useState<string | null>(null); const lastPick = React.useRef<string | null>(null); const [delRow, setDelRow] = React.useState<Row | null>(null);
   const [sortLocal, setSortLocal] = React.useState<{ key: string; dir: "asc" | "desc" } | null | undefined>();
   const [pageSizeLocal, setPageSizeLocal] = React.useState<number | undefined>();
   const [recIndex, setRecIndex] = React.useState(0); const [recMode, setRecMode] = React.useState<"view" | "edit" | "new">("view"); const [copyFrom, setCopyFrom] = React.useState<Row | null>(null);
@@ -256,7 +258,10 @@ export function Base1List(props: Base1ListProps) {
     { key: "print", label: "Imprimir", icon: <Printer className="h-4 w-4" /> },
     { key: "export", label: exportXlsx ? "Exportar (Excel)" : "Exportar (CSV)", icon: <Download className="h-4 w-4" /> },
     ...(entity ? [{ key: "hist", label: targetHint ? `Histórico (${targetHint.toLowerCase()})` : "Histórico", icon: <History className="h-4 w-4" />, disabled: !target }] : []),
-    { key: "cfg", label: "Configurações", icon: <Settings className="h-4 w-4" /> },
+    // Configurações de layout (decisão 329): saíram da faixa de filtros e moram só aqui.
+    { key: "cfg", label: "Configurar colunas", icon: <Columns3 className="h-4 w-4" /> },
+    { key: "cards-layout", label: "Layout dos cards", icon: <LayoutGrid className="h-4 w-4" />, disabled: view !== "cards" },
+    { key: "card-fields", label: "Campos dos cards", icon: <ListChecks className="h-4 w-4" />, disabled: view !== "cards" },
     { key: "pdf", label: "Exportar PDF", icon: <FileDown className="h-4 w-4" /> },
     ...(reportHref ? [{ key: "report", label: "Relatório personalizado", icon: <FileBarChart className="h-4 w-4" /> }] : []),
     ...(extraMenu ?? []).map((m) => ({ key: m.key, label: m.label, icon: m.icon })),
@@ -269,13 +274,17 @@ export function Base1List(props: Base1ListProps) {
     if (k === "print" || k === "pdf") window.print();
     if (k === "export") { if (exportXlsx) void exportXlsx({ search: applied.search || undefined, filters: applied.params }); else exportCsv(); }
     if (k === "hist" && target) setHistDlg(true);
-    if (k === "cfg") setColsDlg(true);
+    // Fecha o Mais opções antes de abrir diálogo/popover filho (evita dois layers Radix).
+    if (k === "cfg") { setMaisOpcoesOpen(false); setColsDlg(true); }
+    if (k === "cards-layout") { setMaisOpcoesOpen(false); queueMicrotask(() => setCardsLayoutOpen(true)); }
+    if (k === "card-fields") { setMaisOpcoesOpen(false); queueMicrotask(() => setCardFieldsOpen(true)); }
     if (k === "report" && reportHref) location.href = reportHref({ search: applied.search || undefined, filters: applied.params });
     if (k === "org") void p.saveAsOrgDefault();
     if (k === "reset") void p.reset().then(() => { setSortLocal(undefined); setPageSizeLocal(undefined); toast.success("Tela restaurada ao padrão"); });
     extraMenu?.find((m) => m.key === k)?.onClick();
   };
   const attachBtn = entity ? <IconBtn aria-label="Anexos" title={targetHint ? `Anexos — ${targetHint.toLowerCase()}` : "Anexos"} disabled={!target} onClick={() => setAttachDlg(true)} data-testid="b1-attach"><Paperclip className="h-4 w-4" /></IconBtn> : null;
+  const cardFields = prefs.view.cardFields ?? columns.slice(0, 7).map((c) => c.key);
   // em edição/novo (secondaryToolsLocked do MG) ficam só os anexos: pesquisa, alternância de modo e menu somem
   const rightSlot = locked ? <div className="ml-auto flex items-center gap-1.5">{attachBtn}</div> : <div className="ml-auto flex items-center gap-1.5">
     {attachBtn}
@@ -286,10 +295,17 @@ export function Base1List(props: Base1ListProps) {
       if (m === "record") { if (!semModoRegistro) enterRecord(); return; }
       setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } }));
     }} />
-    <B1Popover className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><MoreHorizontal className="h-4 w-4" /></IconBtn>}><MenuList items={menuItems} onPick={onMenu} /></B1Popover>
+    <span className="relative inline-flex">
+      <B1Popover open={maisOpcoesOpen} onOpenChange={setMaisOpcoesOpen} className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><MoreHorizontal className="h-4 w-4" /></IconBtn>}><MenuList items={menuItems} onPick={(k) => { setMaisOpcoesOpen(false); onMenu(k); }} /></B1Popover>
+      <CardsLayoutPopover open={cardsLayoutOpen} onOpenChange={setCardsLayoutOpen} value={prefs.view.cardsPerRow ?? 4}
+        onChange={(n) => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: n } }))}
+        onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: undefined } }))} />
+      <CardFieldsPopover open={cardFieldsOpen} onOpenChange={setCardFieldsOpen} columns={columns} value={cardFields}
+        onChange={(keys) => p.update((x) => ({ ...x, view: { ...x.view, cardFields: keys } }))}
+        onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardFields: undefined } }))} />
+    </span>
   </div>;
   const distinctFor = (f: Base1FilterDef) => distinct && f.mode === "advanced" && f.kind !== "boolean" && !f.options ? (s: string) => distinct(f.key, s) : undefined;
-  const cardFields = prefs.view.cardFields ?? columns.slice(0, 7).map((c) => c.key);
   /**
    * Nos cartões o `#N` é o PRIMEIRO campo exibido (`cardFieldsExibidos`), mas entra no fim da lista de
    * colunas conhecidas de propósito: o cartão elege o título pela primeira coluna que não seja o código, e
@@ -328,9 +344,6 @@ export function Base1List(props: Base1ListProps) {
       </div>
       <IconBtn size="sm" aria-label="Rolar filtros para a direita" onClick={() => scrollStrip(240)}><ChevronRight className="h-4 w-4" /></IconBtn>
       <IconBtn size="sm" aria-label="Limpar todos os filtros" title="Limpar todos os filtros" onClick={clearAll} disabled={!filtersActive} className={cn(filtersActive && "text-red-600")}><FilterX className="h-4 w-4" /></IconBtn>
-      <span className="mx-1 h-5 w-px bg-[var(--mg-divider)]" />
-      {view === "cards" ? <><CardsLayoutPopover value={prefs.view.cardsPerRow ?? 4} onChange={(n) => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: n } }))} onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: undefined } }))} /><CardFieldsPopover columns={columns} value={cardFields} onChange={(keys) => p.update((x) => ({ ...x, view: { ...x.view, cardFields: keys } }))} onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardFields: undefined } }))} /></>
-        : <IconBtn size="sm" aria-label="Configurar colunas da tabela" title="Configurar colunas da tabela" onClick={() => setColsDlg(true)}><Columns3 className="h-4 w-4" /></IconBtn>}
       </div>
     </div>
     {headerActive && <div className="flex items-center gap-2 text-[11.5px] text-slate-500"><span>Filtro de cabeçalho: {rows.length} de {loadedRows.length} documentos carregados</span><button type="button" className="fchip-lim" onClick={() => setHeaderFilters({})}>Limpar filtros de cabeçalho</button></div>}

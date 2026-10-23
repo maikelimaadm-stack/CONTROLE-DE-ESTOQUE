@@ -99,7 +99,7 @@ test.describe("ID Global na listagem", () => {
     // o usuário reduz as colunas em uso: a identidade NÃO é uma delas e não pode desaparecer com a escolha
     // (o caso não precisa de estado inicial limpo — a asserção vale a partir de qualquer configuração)
     await page.getByLabel("Mais opções").first().click();
-    await page.getByRole("menuitem", { name: "Configurações" }).click();
+    await page.getByRole("menuitem", { name: "Configurar colunas" }).click();
     await expect(page.getByText("Configuração de colunas")).toBeVisible();
     await page.getByRole("button", { name: "Remover todas (mantém a primeira)" }).click();
     await page.getByRole("button", { name: "OK" }).click();

@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { Bookmark, Check, LayoutGrid, ListChecks, MoreVertical } from "lucide-react";
+import { Bookmark, Check, MoreVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Spinner, Empty } from "@/components/ui";
 import { B1Popover, IconBtn, PillBtn, RadioRow, CheckRow } from "./ui";
@@ -48,22 +48,33 @@ export function Base1Cards({ rows, columns, fields, perRow, loading, onOpen, sel
 
 const PER_ROW: { n: 1 | 2 | 3 | 4; hint: string }[] = [{ n: 1, hint: "Até 5 campos por linha no card" }, { n: 2, hint: "Até 2 campos por linha no card" }, { n: 3, hint: "1 campo por linha no card" }, { n: 4, hint: "1 campo por linha no card" }];
 
+/** Âncora invisível: o popover abre pelo menu "Mais opções" (decisão 329), sem botão na faixa. */
+const AncoraInvisivel = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>((p, ref) =>
+  <button ref={ref} type="button" tabIndex={-1} aria-hidden className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0" {...p} />);
+AncoraInvisivel.displayName = "AncoraInvisivel";
+
 /** Popover "Configurar layout dos cards" (cards por linha) com Restaurar / Ok. */
-export function CardsLayoutPopover({ value, onChange, onRestore }: { value: 1 | 2 | 3 | 4; onChange: (n: 1 | 2 | 3 | 4) => void; onRestore: () => void }) {
-  const [open, setOpen] = React.useState(false); const [draft, setDraft] = React.useState(value);
+export function CardsLayoutPopover({ value, onChange, onRestore, open, onOpenChange }: {
+  value: 1 | 2 | 3 | 4; onChange: (n: 1 | 2 | 3 | 4) => void; onRestore: () => void;
+  open: boolean; onOpenChange: (o: boolean) => void;
+}) {
+  const [draft, setDraft] = React.useState(value);
   React.useEffect(() => { if (open) setDraft(value); }, [open, value]);
-  return <B1Popover open={open} onOpenChange={setOpen} trigger={<IconBtn aria-label="Configurar layout dos cards" title="Configurar layout dos cards" active={open}><LayoutGrid className="h-4 w-4" /></IconBtn>}
-    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); setOpen(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); setOpen(false); }}>OK</PillBtn></>}>
+  return <B1Popover open={open} onOpenChange={onOpenChange} title="Layout dos cards" trigger={<AncoraInvisivel aria-label="Configurar layout dos cards" />}
+    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); onOpenChange(false); }}>OK</PillBtn></>}>
     <div role="radiogroup" aria-label="Cards por linha">{PER_ROW.map((o) => <RadioRow key={o.n} checked={draft === o.n} onClick={() => setDraft(o.n)} title={`${o.n} card${o.n > 1 ? "s" : ""} por linha`} hint={o.hint} />)}</div>
   </B1Popover>;
 }
 
 /** Popover "Configurar campos dos cards" (quais colunas aparecem nos cards). */
-export function CardFieldsPopover({ columns, value, onChange, onRestore }: { columns: Base1Column[]; value: string[]; onChange: (keys: string[]) => void; onRestore: () => void }) {
-  const [open, setOpen] = React.useState(false); const [draft, setDraft] = React.useState<string[]>(value);
+export function CardFieldsPopover({ columns, value, onChange, onRestore, open, onOpenChange }: {
+  columns: Base1Column[]; value: string[]; onChange: (keys: string[]) => void; onRestore: () => void;
+  open: boolean; onOpenChange: (o: boolean) => void;
+}) {
+  const [draft, setDraft] = React.useState<string[]>(value);
   React.useEffect(() => { if (open) setDraft(value); }, [open, value]);
-  return <B1Popover open={open} onOpenChange={setOpen} className="w-72" trigger={<IconBtn aria-label="Configurar campos dos cards" title="Configurar campos dos cards" active={open}><ListChecks className="h-4 w-4" /></IconBtn>}
-    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); setOpen(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); setOpen(false); }}>OK</PillBtn></>}>
+  return <B1Popover open={open} onOpenChange={onOpenChange} className="w-72" title="Campos dos cards" trigger={<AncoraInvisivel aria-label="Configurar campos dos cards" />}
+    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); onOpenChange(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); onOpenChange(false); }}>OK</PillBtn></>}>
     <div className="max-h-72 overflow-auto">{[...columns].sort((a, b) => a.label.localeCompare(b.label)).map((c) => <CheckRow key={c.key} checked={draft.includes(c.key)} onChange={(on) => setDraft((d) => (on ? [...d, c.key] : d.filter((k) => k !== c.key)))} label={c.label} />)}</div>
   </B1Popover>;
 }
