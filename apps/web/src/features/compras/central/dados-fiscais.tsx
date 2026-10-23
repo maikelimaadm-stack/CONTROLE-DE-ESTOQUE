@@ -123,8 +123,8 @@ function vistaDoRateio(e: EstadoDaCriacao) {
 
 type DimensaoDoRateio = "natureza" | "centro";
 
-/** Grade da tabelinha: referência · valor · % · remover (igual ao exemplo do dono). */
-const GRADE_RATEIO = "grid grid-cols-[minmax(0,1fr)_104px_72px_28px] items-center gap-1.5";
+/** Grade da tabelinha: referência · valor · % · remover — nome com piso largo (Natureza / Centro). */
+const GRADE_RATEIO = "grid grid-cols-[minmax(14rem,1.6fr)_96px_64px_28px] items-center gap-1.5";
 
 /**
  * Tabelinha independente (Natureza ou Centro): título + “+”, cabeçalhos na grade, linha com inputs, rodapé Total/Restante.
@@ -282,7 +282,7 @@ export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
         </div>
       ) : (
         <div data-testid={porValor ? "compras-rateio-por-valor" : "compras-classificacao-unica"} className="space-y-3">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
             <TabelaDoRateioIndependente e={e} dimensao="natureza" partes={vista.naturezas} unica={unica}
               onMudar={mudarNatureza} onAdicionar={adicionarNatureza} onRemover={removerNatureza} />
             <TabelaDoRateioIndependente e={e} dimensao="centro" partes={vista.centros} unica={unica}
@@ -405,7 +405,7 @@ function projetarLeitura(linhas: readonly Row[]): {
   };
 }
 
-const GRADE_RATEIO_LEITURA = "grid grid-cols-[minmax(0,1fr)_104px_72px] items-center gap-1.5";
+const GRADE_RATEIO_LEITURA = "grid grid-cols-[minmax(14rem,1.6fr)_96px_64px] items-center gap-1.5";
 
 function TabelaLeituraDoRateio({
   titulo, testId, partes, colRef, testIdRef, totalDocumento,
@@ -484,7 +484,7 @@ export function RateioDaConsulta({ d }: { d: Row }) {
   }];
   const vista = projetarLeitura(linhasDaTela);
   return <div data-testid="compras-consulta-rateio" data-tipo={tipo ?? "documento"} className="space-y-3">
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className="grid min-w-0 gap-4 lg:grid-cols-2">
       <TabelaLeituraDoRateio titulo="Rateio Natureza Financeira" testId="compras-consulta-rateio-natureza-tabela"
         partes={vista.naturezas.length ? vista.naturezas : [{ id: "", rotulo: "", percentual: "100" }]}
         colRef="Natureza" testIdRef="compras-consulta-rateio-natureza" totalDocumento={totalDocumento} />
