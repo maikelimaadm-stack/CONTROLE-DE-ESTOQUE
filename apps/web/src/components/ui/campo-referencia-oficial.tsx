@@ -18,7 +18,6 @@ import { useQuery } from "@tanstack/react-query";
 import { getReferencia, partesDaReferencia, ROTULOS_DAS_PARTES, type ChaveReferencia } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { ListingScrim } from "./overlays";
 import { BotaoTentarDeNovo, CmdDisplay, CmdPanel, desenharPartes, EntradaDeCodigo, MSG_LISTA_FALHOU, rotaDeBuscaAusente, TXT_CARREGANDO, useBuscaReferencia, useComEspera, type EnvolverParte, type ItemReferencia } from "./ref-select";
 
 export type { ParteDoCampo, ParteRenderizada, EnvolverParte } from "./ref-select";
@@ -60,7 +59,6 @@ export function CampoReferenciaOficial({ referencia, value, onChange, disabled, 
   const falhou = Boolean(lista.error) && !lista.isFetching;
   const opcoes = falhou ? [] : (lista.data?.items ?? []).map((i) => ({ value: String(i.codigo), label: i.rotulo }));
   const busca = <span className="flex w-full min-w-0 flex-col">
-    <ListingScrim aberto={open} onFechar={() => setOpen(false)} />
     <Popover.Root open={open} onOpenChange={(o) => { if (disabled) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); }}>
       <Popover.Trigger asChild>
         <CmdDisplay id={base} disabled={disabled} empty={!temValor} placeholder={`Buscar ${def?.label.toLowerCase() ?? ""}`} aria-label={rotulos.busca} aria-expanded={open} className={cn("w-full", classeEntrada)} data-testid={`ref-${referencia}-busca`} onClear={() => { setPicked(null); onChange(null); }}>{texto}</CmdDisplay>

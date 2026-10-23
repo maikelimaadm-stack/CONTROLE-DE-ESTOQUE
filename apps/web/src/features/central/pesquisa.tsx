@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { cn, num } from "@/lib/utils";
 import { api, qs } from "@/lib/api";
-import { ListingScrim } from "@/components/ui/overlays";
 import { MSG_LISTA_FALHOU } from "@/components/ui/ref-select";
 import { opcaoDoProduto, usePesquisaDeProdutos, type PaginaDaPesquisa } from "./pesquisa-de-produtos";
 import grade from "./grade.module.css";
@@ -197,8 +196,7 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
       {daPesquisa.isFetchingNextPage ? "Carregando…" : "Mostrar mais"}
     </button>}
   </div>;
-  const fundo = <ListingScrim aberto onFechar={onFechar} testId={testId ? `${testId}-fundo` : "listagem-fundo"} />;
   // Flutuante no body (como RefSelect): não recorta na coluna de itens nem fica sob Dados principais.
-  if (modo === "flutuante" && typeof document !== "undefined") return <>{fundo}{createPortal(corpo, document.body)}</>;
-  return <>{fundo}{corpo}</>;
+  if (modo === "flutuante" && typeof document !== "undefined") return createPortal(corpo, document.body);
+  return corpo;
 }

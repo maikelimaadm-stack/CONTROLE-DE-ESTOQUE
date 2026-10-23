@@ -8,7 +8,7 @@ import { api, ApiError, qs } from "@/lib/api";
 import { getResource, getReferencia, formatarCep, normalizarMascara, partesDaReferencia, ROTULOS_DAS_PARTES, textoEhCep, type ChaveReferencia, type FieldDef } from "@agro/domain";
 import { Plus, RotateCw } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { Dialog, ListingScrim } from "./overlays";
+import { Dialog } from "./overlays";
 /** controles da busca, reusados pelo campo de referência oficial (campo-referencia-oficial.tsx) */
 export { CmdDisplay, CmdPanel };
 // carregado sob demanda: evita ciclo de módulos (o formulário declarativo usa RefSelect)
@@ -71,7 +71,6 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
   const codigoNaCaixa = naArvore?.code?.trim();
   const seen = new Set<string>(); const opts = (data ?? []).filter((o) => { const k = `${o.code ?? ""}|${o.label}`; if (seen.has(k) && o.id !== value) return false; seen.add(k); return true; }).map((o) => ({ value: o.id, label: o.label, code: o.caminho ? o.code?.trim() || null : o.code, title: o.caminho || undefined }));
   return (<>
-    <ListingScrim aberto={open} onFechar={() => setOpen(false)} />
     <Popover.Root open={open} onOpenChange={(o) => { if (disabled) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); }}>
       <Popover.Trigger asChild>
         <CmdDisplay id={idDaCaixa} disabled={disabled} empty={!value} placeholder={placeholder} aria-expanded={open} className={cn("mg-input", className)} onClear={allowEmpty ? () => onChange(null) : undefined} title={naArvore?.caminho || undefined}>{!value ? null : naArvore ? <>{codigoNaCaixa ? <span className="cmd-option__code mr-1.5 shrink-0">{codigoNaCaixa}</span> : null}<span className="truncate">{naArvore.label || "…"}</span></> : label || "…"}</CmdDisplay>
@@ -143,8 +142,7 @@ export function ReferenciaSelect({ referencia, value, onChange, disabled, classN
   const rotulo = atual?.rotulo ?? um.data?.rotulo ?? (temValor ? String(value) : "");
   const falhou = Boolean(lista.error) && !lista.isFetching;
   const opcoes = falhou ? [] : (lista.data?.items ?? []).map((i) => ({ value: String(i.codigo), label: i.rotulo }));
-  return (<>
-    <ListingScrim aberto={open} onFechar={() => setOpen(false)} />
+  return (
     <Popover.Root open={open} onOpenChange={(o) => { if (disabled) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); }}>
       <Popover.Trigger asChild>
         <CmdDisplay id={id} disabled={disabled} empty={!temValor} placeholder={`Buscar ${def?.label.toLowerCase() ?? ""}`} aria-expanded={open} className={cn("w-full", className)} onClear={() => onChange(null)}>{temValor ? rotulo : null}</CmdDisplay>
@@ -155,7 +153,7 @@ export function ReferenciaSelect({ referencia, value, onChange, disabled, classN
           onPick={(o) => { const it = lista.data?.items.find((x) => String(x.codigo) === o.value) ?? null; if (!it) return; setPicked(it); onChange(it.codigo); setOpen(false); setSearch(""); }} />
       </Popover.Content></Popover.Portal>
     </Popover.Root>
-  </>);
+  );
 }
 
 export function BotaoTentarDeNovo({ onClick }: { onClick: () => void }) {
@@ -311,7 +309,6 @@ export function CampoCidade({ value, onChange, disabled, className, classeEntrad
   const texto = codigoAtual === null ? null : atual?.nome || (avisoDoValor ? null : TXT_CARREGANDO);
 
   const busca = <span className="flex w-full min-w-0 items-center gap-1">
-      <ListingScrim aberto={open} onFechar={() => abrir(false)} />
       <Popover.Root open={open} onOpenChange={abrir}>
         <Popover.Trigger asChild>
           <CmdDisplay id={base} disabled={disabled || travada} empty={codigoAtual === null} placeholder="Nome, código IBGE ou CEP" aria-label={rotulos.busca} aria-expanded={open} className={cn("w-full", classeEntrada)} data-testid="cidade-busca" onClear={travada ? undefined : () => escolher(null)}>{texto}</CmdDisplay>
