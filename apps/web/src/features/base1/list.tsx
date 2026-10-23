@@ -4,6 +4,7 @@ import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-qu
 import { toast } from "@/lib/toast";
 import { Plus, Pencil, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw, Paperclip, LayoutGrid, ListChecks } from "lucide-react";
 import { IconeRaio } from "@/features/central/barra";
+import { MgSelect } from "@/components/ui/mg-controls";
 import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { getSession } from "@/lib/api";
@@ -379,7 +380,15 @@ export function Base1List(props: Base1ListProps) {
         <div className="mg-summary no-print">
           <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {selected.size}</span><span className="mg-summary__item">Listados: {allRows.length}</span><span className="mg-summary__item">Filtrados: {headerActive ? `${rows.length} carregados` : total}</span><span className="mg-summary__item">Totais: {filtersActive ? grand.data ?? "…" : total}</span>{summaryExtra?.(totals)}</div>
           <span className="flex items-center gap-2">
-            <select aria-label="Quantidade de registros por carregamento" className="mg-pill-select" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>{BASE1_PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}</select>
+            <MgSelect
+              aria-label="Quantidade de registros por carregamento"
+              className="mg-pill-select"
+              wrapClassName="w-auto shrink-0"
+              align="end"
+              value={String(pageSize)}
+              onChange={(v) => setPageSize(Number(v))}
+              options={BASE1_PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+            />
             <IconBtn aria-label="Carregar mais registros" title="Carregar mais registros" disabled={!q.hasNextPage || q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}><ChevronsDown /></IconBtn>
           </span>
         </div>
