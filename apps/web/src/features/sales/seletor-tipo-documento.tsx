@@ -44,6 +44,7 @@ export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMonta
   prefixo?: string;
 }) {
   const gatilho = React.useRef<HTMLButtonElement>(null);
+  const [larguraDoGatilho, setLarguraDoGatilho] = React.useState<number | undefined>();
   React.useEffect(() => {
     if (!focarAoMontar?.current) return;
     focarAoMontar.current = false;
@@ -54,8 +55,8 @@ export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMonta
   const atual = todas.find((o) => o.value === (valor || TODOS))?.label ?? TODOS_OS_TIPOS;
 
   // Portal de Compras (decisão 337): só o valor ("Compra"), sem o prefixo "Tipo".
-  // Vendas mantém "Tipo · …". O nome acessível segue o texto visível.
-  return <MenuP.Root modal={false}>
+  // Vendas mantém "Tipo · …". Menu na largura do botão (marcação do hover = tamanho do gatilho).
+  return <MenuP.Root modal={false} onOpenChange={(o) => { if (o && gatilho.current) setLarguraDoGatilho(gatilho.current.offsetWidth); }}>
     <DicaDeAcao texto={dicasPadronizadas ? "Tipo de documento" : undefined}><MenuP.Trigger asChild>
       <button ref={gatilho} type="button" className={cn(estilos.tipo, dicasPadronizadas && "app-altura-28")} title={dicasPadronizadas ? undefined : "Tipo de documento"}
         data-testid={`${prefixo}-tipo`} data-valor={valor || TODOS}>
@@ -65,7 +66,9 @@ export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMonta
       </button>
     </MenuP.Trigger></DicaDeAcao>
     <MenuP.Portal>
-      <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuTipo, dicasPadronizadas && estilos.menuTipoDoGatilho)} aria-label="Tipo de documento" data-testid={`${prefixo}-tipo-opcoes`}>
+      <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuTipo, dicasPadronizadas && estilos.menuTipoDoGatilho)}
+        style={dicasPadronizadas && larguraDoGatilho ? { width: larguraDoGatilho, minWidth: larguraDoGatilho, maxWidth: larguraDoGatilho } : undefined}
+        aria-label="Tipo de documento" data-testid={`${prefixo}-tipo-opcoes`}>
         <MenuP.RadioGroup value={valor || TODOS} onValueChange={(v) => { if (v !== (valor || TODOS)) onChange(v === TODOS ? "" : v); }}>
           {todas.map((o, i) => <React.Fragment key={o.value}>
             {i === 1 && <MenuP.Separator className={estilos.separador} />}
