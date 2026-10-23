@@ -63,6 +63,11 @@ export interface Base1ListProps {
    * `view.mode === "record"` cai em tabela.
    */
   semModoRegistro?: boolean;
+  /**
+   * Portal de Compras (decisão 331): esconde a faixa de chips de filtro (Período, Fornecedor…).
+   * Filtro de cabeçalho (`referenceHeaders`) e busca da toolbar seguem disponíveis quando ligados.
+   */
+  semFaixaDeFiltros?: boolean;
   extraMenu?: { key: string; label: string; icon?: React.ReactNode; onClick: () => void }[];
   /** botões adicionais ao lado de "Novo" (ex.: Importar XML) */
   extraToolbar?: React.ReactNode;
@@ -101,7 +106,7 @@ function comColunaDeIdentidade(rodape: React.ReactNode, deslocamento: number): R
  * rodapé com contadores e "Carregar mais". Preferências por usuário (padrão da organização opcional).
  */
 export function Base1List(props: Base1ListProps) {
-  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, semModoRegistro, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra, csvName } = props;
+  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, semModoRegistro, semFaixaDeFiltros, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra, csvName } = props;
   const colInfo = React.useMemo(() => columns.map((c) => ({ key: c.key, label: c.label })), [columns]);
   const filterInfo = React.useMemo<ListFilterInfo[]>(() => filters.map((f) => ({ key: f.key, label: f.label, kind: f.kind })), [filters]);
   const p = useListPrefs(moduleId, colInfo, filterInfo);
@@ -331,9 +336,8 @@ export function Base1List(props: Base1ListProps) {
       {canDelete && onDelete && selectedRows.length > 0 && <PillBtn tone="red" onClick={() => setDelRow(one ?? selectedRows[0]!)}><Trash2 className="h-4 w-4" /> Excluir{selectedRows.length > 1 ? ` (${selectedRows.length})` : ""}</PillBtn>}
       {rightSlot}
     </div>
-    {/* faixa de chips de filtro */}
-    {/* faixa de filtros (modelo-base do MG): o botão recolhe/expande o CONTEÚDO da faixa com animação; a linha nunca some */}
-    <div className={cn("mg-rail mg-card no-print mg-pills-rail", showChips ? "is-expanded" : "is-collapsed")}>
+    {/* faixa de filtros (modelo-base): recolhe/expande o conteúdo; decisão 331 — Compras omite a linha inteira */}
+    {!semFaixaDeFiltros && <div className={cn("mg-rail mg-card no-print mg-pills-rail", showChips ? "is-expanded" : "is-collapsed")}>
       <IconBtn size="sm" aria-label={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} title={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} active={showChips} aria-expanded={showChips} onClick={() => setShowChips((v) => !v)}>{showChips ? <ListX className="h-4 w-4" /> : <ListPlus className="h-4 w-4" />}</IconBtn>
       <div className="mg-pills-rail__content" aria-hidden={!showChips}>
       <IconBtn size="sm" aria-label="Rolar filtros para a esquerda" onClick={() => scrollStrip(-240)}><ChevronLeft className="h-4 w-4" /></IconBtn>
@@ -345,7 +349,7 @@ export function Base1List(props: Base1ListProps) {
       <IconBtn size="sm" aria-label="Rolar filtros para a direita" onClick={() => scrollStrip(240)}><ChevronRight className="h-4 w-4" /></IconBtn>
       <IconBtn size="sm" aria-label="Limpar todos os filtros" title="Limpar todos os filtros" onClick={clearAll} disabled={!filtersActive} className={cn(filtersActive && "text-red-600")}><FilterX className="h-4 w-4" /></IconBtn>
       </div>
-    </div>
+    </div>}
     {headerActive && <div className="flex items-center gap-2 text-[11.5px] text-slate-500"><span>Filtro de cabeçalho: {rows.length} de {loadedRows.length} documentos carregados</span><button type="button" className="fchip-lim" onClick={() => setHeaderFilters({})}>Limpar filtros de cabeçalho</button></div>}
     {/* corpo */}
     <div className="flex min-h-0 flex-1 gap-2">

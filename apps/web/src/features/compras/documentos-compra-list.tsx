@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { brl } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { enumLabel, enumOptions } from "@/lib/copy";
+import { enumLabel } from "@/lib/copy";
 import { COPY } from "@/lib/copy";
 import { LoadingState, StatusBadge } from "@/components/ui";
 import { type Column } from "@/components/ui/data-table";
@@ -16,7 +16,7 @@ import { situacaoCancelavel } from "./cancelar-na-lista";
 import { corpoDoCancelamento, MOTIVO_VAZIO_DA_COMPRA, PREFIXO_CENTRAL_COMPRAS } from "./central/adaptador";
 import { TEXTO_DO_CANCELAMENTO_DO_ORCAMENTO } from "./orcamento/estado-orcamento";
 import { useChaveDeIdempotencia } from "./pedido-e-orcamento";
-import { useOpcoesDeTopDeCompras, varianteDeCompra, type VarianteDeCompra } from "./variantes";
+import { varianteDeCompra, type VarianteDeCompra } from "./variantes";
 
 export { situacaoCancelavel } from "./cancelar-na-lista";
 
@@ -27,8 +27,9 @@ export { situacaoCancelavel } from "./cancelar-na-lista";
  * WHERE, escopo de empresa do módulo compras); o `?especie=` daqui é pedido de recorte, nunca autorização.
  *
  * Toda coluna é `filterable: false` pelo mesmo motivo da lista de vendas: a porta unificada não lê o filtro
- * avançado por coluna, e chip que aparenta recortar e não recorta é pior que chip ausente. Os filtros de verdade
- * são os declarados abaixo.
+ * avançado por coluna, e chip que aparenta recortar e não recorta é pior que chip ausente. A faixa de chips
+ * personalizados sai da lista (decisão 331 / `semFaixaDeFiltros`); o recorte da espécie vem de `defaultFilters`,
+ * e o filtro de cabeçalho (`referenceHeaders`) continua no cliente sobre as linhas carregadas.
  *
  * Cancelar na linha: a MESMA rota da consulta (`POST /api/compras/<segmento>/:id/cancel`), com `<recurso>.delete`.
  * O `canCancel` genérico do `DocList` não serve — ele assume `status` e `/documentos/:id/cancel` com `reason`.
@@ -38,7 +39,6 @@ export { situacaoCancelavel } from "./cancelar-na-lista";
  */
 export function DocumentosDeCompraList({ especie, barra, onSelecionar }: { especie: string; barra?: React.ReactNode; /** a seleção da grade, para o painel dos itens da nota (mestre-detalhe) */ onSelecionar?: (rows: Row[]) => void }) {
   const disponivel = usePortaDisponivel(especie);
-  const opcoesTop = useOpcoesDeTopDeCompras();
   const { can } = useAuth();
   const qc = useQueryClient();
   const chave = useChaveDeIdempotencia();
@@ -93,20 +93,12 @@ export function DocumentosDeCompraList({ especie, barra, onSelecionar }: { espec
   return <>
     <DocList referenceHeaders key={especie} title="Documentos de compra" endpoint="/api/compras/documentos" base="/compras" entity="documentos_compra"
       semModoRegistro
+      semFaixaDeFiltros
       // A rota do detalhe sai da ESPÉCIE DA LINHA (o que o servidor classificou), nunca do filtro ativo.
       rowHref={(r) => rotaDoDocumento(r)}
       onSelectionChange={onSelecionar}
       canCreate={false} canCancel={false} extraActions={barra}
       defaultFilters={especie ? { especie } : undefined}
-      filters={[
-        { name: "start_date", label: "Data inicial", type: "date" },
-        { name: "end_date", label: "Data final", type: "date" },
-        { name: "fornecedor_id", label: "Fornecedor", type: "ref", resource: "people", extra: { is_provider: "true" } },
-        { name: "empresa_id", label: "Empresa", type: "ref", resource: "empresas" },
-        { name: "situacao", label: COPY.situacao, type: "select", options: enumOptions("situacao_documento_compra") },
-        { name: "search", label: "Código / fornecedor / nota", type: "text" },
-        ...(opcoesTop.length ? [{ name: "tipo_operacao_id", label: "Tipo de Operação", type: "select" as const, options: opcoesTop }] : [])
-      ]}
       columns={colunas}
       rowActions={(r) => {
         const alvo = linhaCancelavel(r, can);
