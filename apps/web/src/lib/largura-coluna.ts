@@ -1,7 +1,9 @@
 /**
  * Largura de coluna pelo texto — cabeçalho e células medidos à parte.
- * Antes um único “chrome” (menu + ícones do th) era somado também ao texto da
- * célula e a coluna ficava longe demais dos dados.
+ * O autofit SEMPRE considera o rótulo do cabeçalho (e o chrome dos ícones
+ * ativos no th). Antes um único “chrome” era somado também ao texto da célula
+ * e a coluna ficava longe demais dos dados; e com vários ícones ativos
+ * (filtro/auto/congelar) a reserva de um só fazia o ícone cobrir o rótulo.
  */
 
 const TETO = 480;
@@ -11,12 +13,17 @@ const PISO = 48;
 const PAD = 18 + 2;
 /** Menu ⋮ + folga mínima no cabeçalho. */
 const CHROME_MENU = 20 + 4;
-/** Um mini-ícone de estado (auto/filtro/congelar) + gap — reserva no th. */
-const CHROME_ICONE_ESTADO = 12 + 4;
+/** Um mini-ícone de estado (auto/filtro/congelar/ordenação) + gap — reserva no th. */
+export const CHROME_ICONE_ESTADO = 12 + 4;
 /** Lupa/cadeado na célula de produto/armazém. */
 export const CHROME_ICONE_NA_CELULA = 13 + 8;
 
 let canvas: HTMLCanvasElement | null = null;
+
+/** Só testes (vitest node sem jsdom) — limpa o canvas em cache entre stubs. */
+export function resetCanvasMedicaoParaTeste(): void {
+  canvas = null;
+}
 
 function medir(texto: string, font: string): number {
   if (typeof document === "undefined") return 0;
@@ -42,7 +49,8 @@ export function fonteDoCorpo(fontCabecalho: string): string {
 
 /**
  * Largura justa: max(rótulo+chrome do th, células+chrome da td).
- * `comIconeEstado` reserva espaço do mini-ícone no cabeçalho (modo auto ligado).
+ * `iconesEstado` = quantos mini-ícones cabem no th (filtro + auto + congelar + seta de ordem).
+ * `comIconeEstado` (legado) = 1 ícone quando true.
  * `chromeExtraCelula` = lupa etc. só na célula.
  */
 export function medirLarguraColuna(opts: {
@@ -50,14 +58,20 @@ export function medirLarguraColuna(opts: {
   textosCelulas: readonly string[];
   fontCabecalho: string;
   fontCelula?: string;
+  /** Quantidade de mini-ícones de estado no cabeçalho (cada um reserva CHROME_ICONE_ESTADO). */
+  iconesEstado?: number;
+  /** @deprecated use `iconesEstado` — true reserva 1 ícone. */
   comIconeEstado?: boolean;
   chromeExtraCelula?: number;
 }): number {
   const fontH = opts.fontCabecalho;
   const fontC = opts.fontCelula ?? fonteDoCorpo(fontH);
-  const chromeTh = PAD + CHROME_MENU + (opts.comIconeEstado ? CHROME_ICONE_ESTADO : 0);
+  const nIcones = Math.max(0, opts.iconesEstado ?? (opts.comIconeEstado ? 1 : 0));
+  const chromeTh = PAD + CHROME_MENU + nIcones * CHROME_ICONE_ESTADO;
   const chromeTd = PAD + (opts.chromeExtraCelula ?? 0);
 
+  // Cabeçalho SEMPRE entra na conta (mesmo com células mais largas o max decide;
+  // com células vazias/curtas o rótulo + ícones definem a largura).
   const wTh = Math.ceil(medir(opts.rotulo, fontH) + chromeTh);
   let wTd = 0;
   for (const bruto of opts.textosCelulas) {

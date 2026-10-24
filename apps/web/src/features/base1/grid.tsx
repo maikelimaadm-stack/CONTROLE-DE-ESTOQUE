@@ -69,37 +69,47 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   }, [columns, frozenCount, measure]);
   React.useEffect(() => { if (scrollToId) trs.current[scrollToId]?.scrollIntoView({ block: "center" }); }, [scrollToId, rows.length]);
   const cellText = (c: Base1Column, r: Row) => c.text ? c.text(r) : String(r[c.key] ?? "");
-  /** Cabeçalho e células com chrome separado — evita coluna “longe” dos dados. */
-  const larguraPorConteudo = (c: Base1Column, reservarIcone = false) => {
+  /** Mini-ícones visíveis no th: filtro + auto + âncora de congelar + seta de ordenação. */
+  const iconesNoCabecalho = (c: Base1Column, i: number, opts?: { forcarAuto?: boolean }) => {
+    const isAnchor = i === frozenCount - 1 && frozenCount > 0;
+    const fitOn = Boolean(opts?.forcarAuto || autoFitKeys?.has(c.key));
+    const filterOn = Boolean(filteredKeys?.has(c.key));
+    const ordenado = sort?.key === c.key;
+    return (filterOn ? 1 : 0) + (fitOn ? 1 : 0) + (isAnchor ? 1 : 0) + (ordenado ? 1 : 0);
+  };
+  /** Cabeçalho (rótulo + ícones ativos) e células — o max dos dois; cabeçalho nunca fica de fora. */
+  const larguraPorConteudo = (c: Base1Column, i: number, opts?: { forcarAuto?: boolean }) => {
     const th = ths.current[c.key];
     const celulas = rows.map((r) => cellText(c, r)).filter((t) => t && t !== "–" && t !== "—");
     return medirLarguraColuna({
       rotulo: c.label,
       textosCelulas: celulas,
       fontCabecalho: fonteDaCelula(th),
-      comIconeEstado: reservarIcone || Boolean(autoFitKeys?.has(c.key) || filteredKeys?.has(c.key))
+      iconesEstado: iconesNoCabecalho(c, i, opts)
     });
   };
   /** Menu: liga = mede + marca estado; desliga = só tira o estado (largura fica). */
-  const aplicarAutoAjuste = (c: Base1Column, jaLigado: boolean) => {
+  const aplicarAutoAjuste = (c: Base1Column, i: number, jaLigado: boolean) => {
     if (jaLigado) { onAutoFit?.(c.key); return; }
-    onResize?.(c.key, larguraPorConteudo(c, true));
+    onResize?.(c.key, larguraPorConteudo(c, i, { forcarAuto: true }));
     onAutoFit?.(c.key);
   };
   /** Duplo clique na alça: só ajusta a largura uma vez — NÃO liga o modo auto ajustar. */
-  const ajustarLarguraUmaVez = (c: Base1Column) => {
-    onResize?.(c.key, larguraPorConteudo(c));
+  const ajustarLarguraUmaVez = (c: Base1Column, i: number) => {
+    onResize?.(c.key, larguraPorConteudo(c, i));
   };
-  /** Enquanto o modo está ligado, reaplica quando mudam linhas/colunas. */
+  /** Assinatura estável dos filtros (o Set do pai é novo a cada render). */
+  const filtrosSig = React.useMemo(() => (filteredKeys && filteredKeys.size ? [...filteredKeys].sort().join("\0") : ""), [filteredKeys]);
+  /** Enquanto o modo está ligado, reaplica quando mudam linhas/colunas (reconta cabeçalho + ícones). */
   React.useEffect(() => {
     if (!autoFitKeys?.size || !onResize) return;
-    for (const c of columns) {
-      if (!autoFitKeys.has(c.key)) continue;
-      const w = larguraPorConteudo(c);
+    columns.forEach((c, i) => {
+      if (!autoFitKeys.has(c.key)) return;
+      const w = larguraPorConteudo(c, i);
       if (c.width !== w) onResize(c.key, w);
-    }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mede com rows/columns atuais; evita loop por identidade de onResize
-  }, [autoFitKeys, rows, columns]);
+  }, [autoFitKeys, rows, columns, frozenCount, sort?.key, sort?.dir, filtrosSig]);
   const startResize = (e: React.MouseEvent, c: Base1Column) => {
     if (e.detail > 1) return;
     e.preventDefault(); e.stopPropagation();
@@ -130,7 +140,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
             <div className="flex h-[30px] items-center gap-1">
               <button type="button" className={cn("inline-flex min-w-0 flex-1 items-center gap-1 truncate text-left", !onSort && "cursor-default")} onClick={() => c.sortable !== false && onSort?.(c.key)} title={c.label}>
                 <span className="truncate">{c.label}</span>
-                {sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 shrink-0 text-[#475569]" /> : <ArrowDown className="h-3 w-3 shrink-0 text-[#475569]" />)}
+                {sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 shrink-0 text-[#94a3b8]" /> : <ArrowDown className="h-3 w-3 shrink-0 text-[#94a3b8]" />)}
               </button>
               {temIcones && <span className="th-estado" aria-hidden>
                 {filterOn && <Filter className="th-estado-icone" strokeWidth={2.25} />}
@@ -150,7 +160,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
                   <MenuList onPick={(k) => {
                     setMenuFor(null);
                     if (k === "filter") onFilter?.(c.key);
-                    if (k === "fit") aplicarAutoAjuste(c, fitOn);
+                    if (k === "fit") aplicarAutoAjuste(c, i, fitOn);
                     if (k === "freeze") onFreeze?.(isAnchor ? 0 : i + 1);
                     if (k === "hide") onHide?.(c.key);
                   }} items={itens} />
@@ -162,7 +172,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
               aria-label={`Redimensionar ${c.label}`}
               title="Arraste para redimensionar · duplo clique para ajustar à largura"
               onMouseDown={(e) => startResize(e, c)}
-              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); ajustarLarguraUmaVez(c); }}
+              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); ajustarLarguraUmaVez(c, i); }}
               className="absolute right-0 top-0 z-[5] h-full w-1.5 cursor-col-resize touch-none select-none bg-transparent"
             />}
           </th>); })}

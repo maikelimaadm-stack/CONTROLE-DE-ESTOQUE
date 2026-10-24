@@ -535,14 +535,22 @@ export function ItensDaCentral({
     return out;
   };
 
-  const larguraPorConteudo = (k: ChaveColunaDoItem, reservarIcone = false) => {
+  /** Mini-ícones no th: auto + âncora de congelar (cada um reserva chrome no autofit). */
+  const iconesNoCabecalho = (k: ChaveColunaDoItem, opts?: { forcarAuto?: boolean }) => {
+    const i = colunasVisiveis.indexOf(k);
+    const ehAncora = i >= 0 && i === congeladas - 1 && congeladas > 0;
+    const fitOn = Boolean(opts?.forcarAuto || autoFitKeys.has(k));
+    return (fitOn ? 1 : 0) + (ehAncora ? 1 : 0);
+  };
+  /** Cabeçalho (rótulo + ícones) e células — o max dos dois; cabeçalho nunca fica de fora. */
+  const larguraPorConteudo = (k: ChaveColunaDoItem, opts?: { forcarAuto?: boolean }) => {
     const th = tabelaRef.current?.tHead?.rows[0]?.cells[colunasVisiveis.indexOf(k)] ?? null;
     const [rotulo, ...celulas] = textosDaColuna(k);
     return medirLarguraColuna({
       rotulo: rotulo ?? rotuloColuna(k),
       textosCelulas: celulas,
       fontCabecalho: fonteDaCelula(th),
-      comIconeEstado: reservarIcone || autoFitKeys.has(k),
+      iconesEstado: iconesNoCabecalho(k, opts),
       chromeExtraCelula: k === "produto" || k === "armazem" ? CHROME_ICONE_NA_CELULA : 0
     });
   };
@@ -571,7 +579,7 @@ export function ItensDaCentral({
       updCols((c) => ({ ...c, autoFit: (c.autoFit ?? []).filter((x) => x !== k) }));
       return;
     }
-    const w = larguraPorConteudo(k, true);
+    const w = larguraPorConteudo(k, { forcarAuto: true });
     const px = `${w}px`;
     const col = colsRef.current[k];
     if (col) col.style.width = col.style.minWidth = col.style.maxWidth = px;
@@ -588,7 +596,7 @@ export function ItensDaCentral({
     gravarLargura(k, larguraPorConteudo(k));
   };
 
-  /** Enquanto o modo está ligado, reaplica quando mudam itens/rótulos. */
+  /** Enquanto o modo está ligado, reaplica quando mudam itens/rótulos (reconta cabeçalho + ícones). */
   React.useEffect(() => {
     if (!autoFitKeys.size) return;
     for (const k of autoFitKeys) {
@@ -596,8 +604,8 @@ export function ItensDaCentral({
       const w = larguraPorConteudo(k);
       if (larguras[k] !== w) gravarLargura(k, w);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando dados/autofit mudam
-  }, [autoFitKeys, items, conhecidos, colunasVisiveis]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando dados/autofit/congelar mudam
+  }, [autoFitKeys, items, conhecidos, colunasVisiveis, congeladas]);
 
   const ocultarColuna = (k: ChaveColunaDoItem) => {
     if (colunasVisiveis.length <= 1) return;
