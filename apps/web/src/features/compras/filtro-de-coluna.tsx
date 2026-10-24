@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { Check, FilterX, Search } from "lucide-react";
+import { Check, FilterX, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CalendarioDeData, CalendarioDePeriodo, SeletorDeOperador } from "@/components/ui";
 import { ehCamadaAninhadaDoFiltro } from "@/features/base1/camada-aninhada-do-filtro";
@@ -91,10 +91,12 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
     const valoresFiltrados = sel.size === contagem.length ? null : sel;
     onAplicar(!op && !valoresFiltrados ? null : { op, v1, v2, valores: valoresFiltrados });
   };
+  /** Enter no campo de valor/busca = Aplicar (submit). Enter no seletor de condição (portal) escolhe opção — fora do form. */
+  const aoEnviar = (e: React.FormEvent) => { e.preventDefault(); aplicar(); };
   const ph = tipo === "data" ? "dd/mm/aaaa" : tipo === "num" ? "Número" : "Valor";
   // portal no body: um ancestral com transform desloca o position:fixed para longe do cabeçalho
   return createPortal(<div className={cn("b1ref", className)} ref={painel}>
-    <div className={cn("pop fpop", className)} role="menu" aria-label={`Filtrar coluna ${rotulo}`} style={pos}>
+    <form className={cn("pop fpop", className)} role="menu" aria-label={`Filtrar coluna ${rotulo}`} style={pos} onSubmit={aoEnviar}>
       <button type="button" className="fmi" disabled={!atual} onClick={() => onAplicar(null)}><FilterX size={14} /><span className="fval-l">Limpar filtro de “{rotulo}”</span></button>
       <span className="opt-sep" aria-hidden="true" />
       <div className="fcond">
@@ -121,9 +123,9 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
       </div>
       <div className="fpop-f">
         <span style={{ flexGrow: 1 }} />
-        <button type="button" className="tb-btn tb-btn-out xs" onClick={onFechar}>Cancelar</button>
-        <button type="button" className="tb-btn novo xs" onClick={aplicar}>Aplicar</button>
+        <button type="button" className="tb-btn tb-btn-icon tb-btn-sm shrink-0" title="Cancelar" aria-label="Cancelar" onClick={onFechar}><X className="h-4 w-4" /></button>
+        <button type="submit" className="tb-btn tb-btn-icon shrink-0" title="Aplicar" aria-label="Aplicar"><Check className="h-4 w-4" /></button>
       </div>
-    </div>
+    </form>
   </div>, document.body);
 }

@@ -596,7 +596,7 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .itbar .ib { width: 25px; height: 25px; border-radius: 999px; border: 1px solid transparent; background: #f1f3f4; color: #475569; display: inline-flex; align-items: center; justify-content: center; }
 .itbar .ib:hover { background: #e5e7eb; color: #0f172a; }
 .itbar .ib svg { width: 14px; height: 14px; }
-.fpop { position: fixed; z-index: 60; width: 252px; max-height: 316px; display: flex; flex-direction: column; background: #fff; border: 1px solid #e7eaee; border-radius: 12px; box-shadow: 0 8px 24px rgba(16,24,40,.08); }
+.fpop { position: fixed; z-index: 60; width: 252px; max-height: 316px; margin: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #e7eaee; border-radius: 12px; box-shadow: 0 8px 24px rgba(16,24,40,.08); }
 .fpop-h { display: flex; align-items: baseline; gap: 6px; padding: 9px 10px 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #9aa4b1; }
 .fpop-h b { font-size: 12px; letter-spacing: 0; text-transform: none; color: #0f172a; }
 .fpop-l { flex-grow: 1; min-height: 0; overflow: auto; padding: 2px 5px 5px; }
