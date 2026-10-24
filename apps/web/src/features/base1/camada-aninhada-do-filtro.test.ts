@@ -62,6 +62,7 @@ describe("ponteiroSobreElemento / deveFecharFiltroPorFora (359)", () => {
       alvo: { closest: () => null } as unknown as EventTarget,
       ponto: { clientX: 10, clientY: 10 },
       shell,
+      doc: { querySelector: () => null } as unknown as ParentNode,
     })).toBe(true);
   });
 
@@ -70,6 +71,7 @@ describe("ponteiroSobreElemento / deveFecharFiltroPorFora (359)", () => {
       alvo: alvoComClosest({} as Element),
       ponto: { clientX: 10, clientY: 10 },
       shell,
+      doc: { querySelector: () => null } as unknown as ParentNode,
     })).toBe(false);
   });
 
@@ -79,5 +81,33 @@ describe("ponteiroSobreElemento / deveFecharFiltroPorFora (359)", () => {
     } as unknown as ParentNode;
     expect(haCamadaAninhadaDoFiltroAberta(doc)).toBe(true);
     expect(haCamadaAninhadaDoFiltroAberta({ querySelector: () => null } as unknown as ParentNode)).toBe(false);
+  });
+});
+
+describe("deveFecharFiltroPorFora — dois passos com camada aberta (360)", () => {
+  const shell = rect({ left: 100, top: 100, right: 300, bottom: 400 });
+  const alvoFora = { closest: () => null } as unknown as EventTarget;
+  const pontoFora = { clientX: 10, clientY: 10 };
+  const docComCamada = {
+    querySelector: (sel: string) => (sel === SELETOR_CAMADA_ANINHADA_DO_FILTRO ? ({} as Element) : null),
+  } as unknown as ParentNode;
+  const docSemCamada = { querySelector: () => null } as unknown as ParentNode;
+
+  it("1º fora com listagem/calendário/cmd abertos NÃO fecha o shell", () => {
+    expect(deveFecharFiltroPorFora({
+      alvo: alvoFora,
+      ponto: pontoFora,
+      shell,
+      doc: docComCamada,
+    })).toBe(false);
+  });
+
+  it("2º fora sem camada aberta fecha o shell", () => {
+    expect(deveFecharFiltroPorFora({
+      alvo: alvoFora,
+      ponto: pontoFora,
+      shell,
+      doc: docSemCamada,
+    })).toBe(true);
   });
 });

@@ -71,6 +71,7 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
     // Condição/calendário/cmd-panel saem em portal: clique neles NÃO é "fora" (decisão 357).
     // Com Select aberto (`pointer-events: none` no body), o alvo pode ser html/body mesmo
     // sobre o gatilho — aí a geometria do ponteiro decide (decisão 359).
+    // Com camada aberta, até fora real só fecha a listagem; shell no 2º fora (decisão 360).
     const fora = (e: MouseEvent) => {
       const th = document.querySelector(ancora)?.closest("th") ?? null;
       if (!deveFecharFiltroPorFora({ alvo: e.target, ponto: e, shell: painel.current, ancora: th })) return;

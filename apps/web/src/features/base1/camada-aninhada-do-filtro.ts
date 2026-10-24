@@ -7,6 +7,9 @@
  * `pointer-events: none` e o alvo do mousedown pode ser `html`/`body` mesmo com o
  * cursor sobre o shell ou o gatilho — aí o dismiss por “fora” precisa da geometria
  * do ponteiro (decisão 359), não só de `contains(target)`.
+ *
+ * Com camada aberta, até um fora REAL fecha só a listagem/calendário/cmd (Radix);
+ * o shell só fecha no segundo fora, sem camada (decisão 360) — paridade com Escape.
  */
 export const SELETOR_CAMADA_ANINHADA_DO_FILTRO =
   "[data-filtro-camada], [data-radix-select-content], .fsell, .foperadores, .cmd-panel, .mg-dp-panel";
@@ -37,7 +40,8 @@ export function ponteiroSobreElemento(
 
 /**
  * Clique “fora” do shell do filtro? `false` = manter aberto (dentro, âncora, camada
- * portalada, ou ponteiro sobre o shell/âncora apesar de `pointer-events: none`).
+ * portalada aberta ou clicada, ou ponteiro sobre o shell/âncora apesar de
+ * `pointer-events: none`). Com camada aberta, o 1º fora NÃO fecha o shell (360).
  */
 function ehNo(alvo: EventTarget | null): alvo is Node {
   return Boolean(alvo && typeof (alvo as Node).nodeType === "number");
@@ -48,11 +52,15 @@ export function deveFecharFiltroPorFora(opts: {
   ponto?: Pick<MouseEvent, "clientX" | "clientY"> | null;
   shell: Element | null | undefined;
   ancora?: Element | null | undefined;
+  /** Documento (ou stub) para detectar camada aninhada ainda montada (360). */
+  doc?: ParentNode | null;
 }): boolean {
-  const { alvo, ponto, shell, ancora } = opts;
+  const { alvo, ponto, shell, ancora, doc } = opts;
   if (shell && ehNo(alvo) && typeof shell.contains === "function" && shell.contains(alvo)) return false;
   if (ancora && ehNo(alvo) && typeof ancora.contains === "function" && ancora.contains(alvo)) return false;
   if (ehCamadaAninhadaDoFiltro(alvo)) return false;
+  // 360: listagem/calendário/cmd ainda no DOM → este fora só dispensa a camada; shell fica.
+  if (haCamadaAninhadaDoFiltroAberta(doc === undefined ? undefined : (doc as ParentNode))) return false;
   if (ponto && (ponteiroSobreElemento(ponto, shell) || ponteiroSobreElemento(ponto, ancora))) return false;
   return true;
 }

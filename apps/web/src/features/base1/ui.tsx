@@ -5,7 +5,7 @@ import { FileText, Table2, LayoutGrid, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import { DicaDeAcao } from "@/components/ui";
-import { ehCamadaAninhadaDoFiltro, ponteiroSobreElemento } from "./camada-aninhada-do-filtro";
+import { ehCamadaAninhadaDoFiltro, haCamadaAninhadaDoFiltroAberta, ponteiroSobreElemento } from "./camada-aninhada-do-filtro";
 
 /** Botão de ícone com a mesma dica visual das ações da Central. */
 export const IconBtn = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; size?: "sm" | "md"; danger?: boolean }>(({ className, active, size = "md", danger, children, title, ...p }, ref) => (
@@ -40,9 +40,11 @@ export function ViewSwitch({ value, onChange, recordDisabled, semRegistro }: {
 /** Popover padrão do modelo base (cartão branco arredondado com rodapé Restaurar / Ok). */
 export function B1Popover({ trigger, open, onOpenChange, children, footer, className, align = "end", title }: { trigger: React.ReactNode; open?: boolean; onOpenChange?: (o: boolean) => void; children: React.ReactNode; footer?: React.ReactNode; className?: string; align?: "start" | "center" | "end"; title?: string }) {
   const conteudo = React.useRef<HTMLDivElement>(null);
-  /** Condição (Select), cmd-panel e calendário portalados: não dispensar o shell ao escolher (357) nem ao togglear o gatilho com Select `pointer-events: none` (359). */
+  /** Condição/cmd/calendário: não dispensar o shell ao escolher (357), ao togglear com Select `pointer-events: none` (359), nem no 1º fora com camada aberta (360). */
   const guardarCamada = (e: { target: EventTarget | null; preventDefault: () => void; detail?: { originalEvent?: Event } }) => {
     if (ehCamadaAninhadaDoFiltro(e.target)) { e.preventDefault(); return; }
+    // 360: com listagem aberta, o fora fecha só a camada (Radix); o shell fica até o 2º fora.
+    if (haCamadaAninhadaDoFiltroAberta()) { e.preventDefault(); return; }
     const oe = e.detail?.originalEvent;
     if (oe && "clientX" in oe && "clientY" in oe && ponteiroSobreElemento(oe as Pick<MouseEvent, "clientX" | "clientY">, conteudo.current)) {
       e.preventDefault();
