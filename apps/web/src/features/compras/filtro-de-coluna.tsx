@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { Check, FilterX, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CalendarioDeData, CalendarioDePeriodo, SeletorDeOperador } from "@/components/ui";
-import { ehCamadaAninhadaDoFiltro } from "@/features/base1/camada-aninhada-do-filtro";
+import { deveFecharFiltroPorFora, haCamadaAninhadaDoFiltroAberta } from "@/features/base1/camada-aninhada-do-filtro";
 
 /**
  * Filtro de cabeçalho do painel de itens — o `fpop` do HTML de referência (padrão Excel): limpar, condição
@@ -60,14 +60,20 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
   const painel = React.useRef<HTMLDivElement>(null);
   const fechar = React.useRef(onFechar); fechar.current = onFechar;
   React.useEffect(() => {
-    const teclado = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); fechar.current(); } };
+    // Escape: com a lista de condição aberta, o Radix fecha só ela; o shell fica (decisão 359).
+    const teclado = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (haCamadaAninhadaDoFiltroAberta()) return;
+      e.preventDefault();
+      fechar.current();
+    };
     // Fora do painel (e da âncora do cabeçalho) fecha — sem overlay `fixed inset-0` (ui-audit / decisão de primitives).
     // Condição/calendário/cmd-panel saem em portal: clique neles NÃO é "fora" (decisão 357).
+    // Com Select aberto (`pointer-events: none` no body), o alvo pode ser html/body mesmo
+    // sobre o gatilho — aí a geometria do ponteiro decide (decisão 359).
     const fora = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (painel.current?.contains(t)) return;
-      if (document.querySelector(ancora)?.closest("th")?.contains(t)) return;
-      if (ehCamadaAninhadaDoFiltro(e.target)) return;
+      const th = document.querySelector(ancora)?.closest("th") ?? null;
+      if (!deveFecharFiltroPorFora({ alvo: e.target, ponto: e, shell: painel.current, ancora: th })) return;
       fechar.current();
     };
     document.addEventListener("keydown", teclado);

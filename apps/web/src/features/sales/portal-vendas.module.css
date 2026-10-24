@@ -181,11 +181,11 @@
   font-family: inherit;
 }
 .menuTipo { width: 220px; padding: 4px 0; }
-/* Portal de Compras: menu do Tipo na largura do gatilho (marcação do hover = tamanho do botão). */
+/* Portal de Compras: piso = gatilho; cresce com o rótulo (check + "Pedido de compra") — decisão 359. */
 .menuTipoDoGatilho {
-  width: var(--radix-dropdown-menu-trigger-width);
+  width: max-content;
   min-width: var(--radix-dropdown-menu-trigger-width);
-  max-width: var(--radix-dropdown-menu-trigger-width);
+  max-width: min(100vw - 16px, 22rem);
   box-sizing: border-box;
 }
 .menuOperacoes { width: 400px; max-width: calc(100vw - 32px); }
@@ -204,7 +204,7 @@
   outline: none;
   user-select: none;
 }
-.opcaoTipoRotulo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opcaoTipoRotulo { white-space: nowrap; }
 .opcaoTipo[data-highlighted] { background: #ecfdf3; border-left-color: #22a85c; }
 .opcaoTipo[data-state="checked"] { background: rgba(64, 222, 99, 0.12); font-weight: 600; }
 .marca { width: 14px; display: flex; flex-shrink: 0; color: #15803d; }

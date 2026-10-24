@@ -81,7 +81,9 @@
 .b1ref .fchip-painel{display:flex;flex-direction:column;max-height:min(498px,calc(100dvh - 100px));overflow:auto;padding-top:4px}
 .b1ref .fchip-painel .fpop-l{max-height:208px}
 /* Lista flutuante: não aumenta nem faz rolar o painel de filtro. */
-.b1ref .foperadores{z-index:10001;margin:0;width:var(--radix-select-trigger-width);max-height:min(240px,var(--radix-select-content-available-height));box-shadow:0 8px 24px rgba(16,24,40,.12)}
+/* Largura ≥ gatilho e cresce com o rótulo mais longo (ex.: "É maior ou igual a") — decisão 359. */
+.b1ref .foperadores{z-index:10001;margin:0;width:max-content;min-width:var(--radix-select-trigger-width);max-width:min(100vw - 16px,22rem);max-height:min(240px,var(--radix-select-content-available-height));box-shadow:0 8px 24px rgba(16,24,40,.12)}
+.b1ref .foperadores .fopt{white-space:nowrap}
 .b1ref .foperadores .fopt[data-highlighted]{background:#f4f6f7;color:#0f172a;outline:none}
 .b1ref .fopt{display:flex;align-items:center;gap:7px;width:100%;box-sizing:border-box;min-height:28px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:#334155;font-size:12px;cursor:pointer;text-align:left}
 .b1ref .fopt:hover{background:#f4f6f7;color:#0f172a}
