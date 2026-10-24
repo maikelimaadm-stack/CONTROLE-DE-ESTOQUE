@@ -19,7 +19,7 @@ const formatar = (iso: string, formato: Formato) => formato === "br" ? isoToBR(i
 function CalendarioDoFiltro({ periodo, aberto, onOpenChange, children }: { periodo?: boolean; aberto: boolean; onOpenChange: (aberto: boolean) => void; children: React.ReactNode }) {
   return <Popover.Root open={aberto} onOpenChange={onOpenChange}>
     <Popover.Trigger asChild><button type="button" className={estilos.gatilho} aria-label={periodo ? "Escolher período no calendário" : "Escolher data no calendário"}><Calendar size={14} /></button></Popover.Trigger>
-    <Popover.Portal><Popover.Content className={cn(painelDoCalendarioPadrao.className, periodo && estilos.painel)} align="center" sideOffset={6} collisionPadding={8} aria-label={periodo ? "Calendário do período" : "Calendário da data"} onEscapeKeyDown={(e) => e.stopPropagation()}>
+    <Popover.Portal><Popover.Content data-filtro-camada="" className={cn(painelDoCalendarioPadrao.className, periodo && estilos.painel)} align="center" sideOffset={6} collisionPadding={8} aria-label={periodo ? "Calendário do período" : "Calendário da data"} onEscapeKeyDown={(e) => e.stopPropagation()}>
       {children}
     </Popover.Content></Popover.Portal>
   </Popover.Root>;

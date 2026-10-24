@@ -5,6 +5,7 @@ import { FileText, Table2, LayoutGrid, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import { DicaDeAcao } from "@/components/ui";
+import { ehCamadaAninhadaDoFiltro } from "./camada-aninhada-do-filtro";
 
 /** Botão de ícone com a mesma dica visual das ações da Central. */
 export const IconBtn = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; size?: "sm" | "md"; danger?: boolean }>(({ className, active, size = "md", danger, children, title, ...p }, ref) => (
@@ -38,9 +39,14 @@ export function ViewSwitch({ value, onChange, recordDisabled, semRegistro }: {
 
 /** Popover padrão do modelo base (cartão branco arredondado com rodapé Restaurar / Ok). */
 export function B1Popover({ trigger, open, onOpenChange, children, footer, className, align = "end", title }: { trigger: React.ReactNode; open?: boolean; onOpenChange?: (o: boolean) => void; children: React.ReactNode; footer?: React.ReactNode; className?: string; align?: "start" | "center" | "end"; title?: string }) {
+  /** Condição (Select), cmd-panel e calendário portalados: não dispensar o shell ao escolher (decisão 357). */
+  const guardarCamada = (e: { target: EventTarget | null; preventDefault: () => void }) => {
+    if (ehCamadaAninhadaDoFiltro(e.target)) e.preventDefault();
+  };
   return <Popover.Root open={open} onOpenChange={onOpenChange}>
     <Popover.Trigger asChild>{trigger}</Popover.Trigger>
-    <Popover.Portal><Popover.Content align={align} sideOffset={6} className={cn("z-50 w-72 rounded-xl border bg-white p-3 text-[12.5px] shadow-[0_8px_24px_rgba(16,24,40,.08),0_2px_8px_rgba(16,24,40,.06)] outline-none", className)} style={{ borderColor: "var(--mg-divider)" }}>
+    <Popover.Portal><Popover.Content align={align} sideOffset={6} className={cn("z-50 w-72 rounded-xl border bg-white p-3 text-[12.5px] shadow-[0_8px_24px_rgba(16,24,40,.08),0_2px_8px_rgba(16,24,40,.06)] outline-none", className)} style={{ borderColor: "var(--mg-divider)" }}
+      onPointerDownOutside={guardarCamada} onFocusOutside={guardarCamada} onInteractOutside={guardarCamada}>
       {title && <div className="mb-2 text-[12px] font-semibold text-slate-700">{title}</div>}
       {children}
       {footer && <div className="mt-3 flex items-center gap-2">{footer}</div>}

@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { Check, FilterX, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CalendarioDeData, CalendarioDePeriodo, SeletorDeOperador } from "@/components/ui";
+import { ehCamadaAninhadaDoFiltro } from "@/features/base1/camada-aninhada-do-filtro";
 
 /**
  * Filtro de cabeçalho do painel de itens — o `fpop` do HTML de referência (padrão Excel): limpar, condição
@@ -61,10 +62,12 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
   React.useEffect(() => {
     const teclado = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); fechar.current(); } };
     // Fora do painel (e da âncora do cabeçalho) fecha — sem overlay `fixed inset-0` (ui-audit / decisão de primitives).
+    // Condição/calendário/cmd-panel saem em portal: clique neles NÃO é "fora" (decisão 357).
     const fora = (e: MouseEvent) => {
       const t = e.target as Node;
       if (painel.current?.contains(t)) return;
       if (document.querySelector(ancora)?.closest("th")?.contains(t)) return;
+      if (ehCamadaAninhadaDoFiltro(e.target)) return;
       fechar.current();
     };
     document.addEventListener("keydown", teclado);
