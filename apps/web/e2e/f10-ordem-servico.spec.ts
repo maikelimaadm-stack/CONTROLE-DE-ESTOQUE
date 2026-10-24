@@ -132,7 +132,7 @@ test("F10-O1 — cria a OS (mão de obra, um insumo e um EPI), edita pela Centra
   await expect(page.getByTestId(`${P}-insumos-linha`).getByTestId(`${P}-insumos-produto`), "o insumo veio da OS").toContainText(c.insumo.nome);
   const editada = `F10-O1 editada ${c.tag}`;
   await page.getByTestId(`${P}-descricao`).locator("textarea").fill(editada);
-  await page.getByTestId(`${P}-insumos-linha`).getByTestId(`${P}-insumos-selecionar-item`).click();
+  await page.getByTestId(`${P}-insumos-linha`).click();
   await page.getByTestId(`${P}-insumos-itens-corpo`).getByLabel("Quantidade do item 1").fill("4");
 
   const salvou = page.waitForResponse((x) => x.request().method() === "PUT" && new URL(x.url()).pathname === `${PORTA}/${id}`);

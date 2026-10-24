@@ -80,8 +80,10 @@ export function CalendarioDoSistema({ valor, escolher, inicial, intervalo }: { v
   </div>;
 }
 
-/** Mesmo painel da Central, compartilhado sem alterar os campos ou seus valores ISO. */
+/** Mesmo painel da Central, compartilhado sem alterar os campos ou seus valores ISO.
+ * `className` é getter: o Playwright (specs unitário sem CSS modules) avalia o módulo sem
+ * materializar `estilos` no topo — ler na hora do render evita `ReferenceError`. */
 export const painelDoCalendarioPadrao: Pick<PainelDoCalendario, "className" | "desenhar"> = {
-  className: estilos.calendario,
+  get className() { return estilos.calendario; },
   desenhar: ({ valor, escolher }) => <CalendarioDoSistema valor={valor} escolher={escolher} />
 };

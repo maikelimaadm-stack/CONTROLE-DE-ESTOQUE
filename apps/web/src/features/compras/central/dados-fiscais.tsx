@@ -7,8 +7,7 @@ import { D } from "@agro/shared";
 import { brl, cn, num } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
-import { Button, Input } from "@/components/ui";
-import { MgSelect } from "@/components/ui";
+import { Button, EntradaNumero, Input, MgSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import grade from "@/features/central/grade.module.css";
@@ -65,7 +64,7 @@ export function DadosFiscaisDaCriacao({ e, noPainel = false }: { e: EstadoDaCria
       {...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" } : {})}>{controle}</CampoDaCentral>;
   const valor = (c: "valor_ipi" | "valor_icms_st" | "seguro", rotulo: string, testId: string) =>
     cc(c, rotulo, { preenchido: f[c] !== "" },
-      <Input data-testid={testId} type="number" step="0.01" min="0" inputMode="decimal" value={f[c]} onChange={(ev) => e.mudarFiscal({ [c]: ev.target.value })} />);
+      <EntradaNumero data-testid={testId} casas={2} value={f[c]} onChange={(v) => e.mudarFiscal({ [c]: v })} />);
   return <div data-testid="compras-dados-fiscais" className="space-y-1">
     <ColunaDeCampos>
       {cc("chave_acesso", "Chave de acesso", { preenchido: f.chave_acesso !== "", dica: "Os 44 dígitos da chave da NF-e (espaços são ignorados)." },
@@ -123,8 +122,8 @@ function vistaDoRateio(e: EstadoDaCriacao) {
 
 type DimensaoDoRateio = "natureza" | "centro";
 
-/** Grade da tabelinha: referência · valor · % · remover (igual ao exemplo do dono). */
-const GRADE_RATEIO = "grid grid-cols-[minmax(0,1fr)_104px_72px_28px] items-center gap-1.5";
+/** Grade da tabelinha: referência · valor · % · remover — nome com piso largo (Natureza / Centro). */
+const GRADE_RATEIO = "grid grid-cols-[minmax(14rem,1.6fr)_96px_64px_25px] items-center gap-1.5";
 
 /**
  * Tabelinha independente (Natureza ou Centro): título + “+”, cabeçalhos na grade, linha com inputs, rodapé Total/Restante.
@@ -152,7 +151,7 @@ function TabelaDoRateioIndependente({
       <p className="text-[12px] font-semibold text-slate-700">
         {titulo} <span className="text-rose-600" aria-hidden>*</span>
       </p>
-      <button type="button" className={cn(grade.botao, grade.botaoAdicionar)}
+      <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar)}
         data-testid={`${prefixo}-adicionar`} disabled={partes.length >= 50}
         aria-label={`Adicionar ${dimensao === "natureza" ? "natureza" : "centro de custo"}`}
         title="Adicionar" onClick={onAdicionar}>
@@ -201,13 +200,13 @@ function TabelaDoRateioIndependente({
           : celulaRef;
         return <div key={k} data-testid={`${prefixo}-linha-${k}`} className={GRADE_RATEIO + " px-2 py-1.5"}>
           {envolvido}
-          <Input className="min-w-0 text-right tabular-nums" data-testid={`${prefixo}-linha-${k}-valor`}
-            inputMode="decimal" placeholder="0,00" value={valorExibido}
-            onChange={(ev) => onMudar(k, { percentual: percentualDoValorDoRateio(String(e.totalExibido ?? "0"), ev.target.value) })}
+          <EntradaNumero className="min-w-0 text-right tabular-nums" data-testid={`${prefixo}-linha-${k}-valor`}
+            casas={2} placeholder="0,00" value={valorExibido}
+            onChange={(v) => onMudar(k, { percentual: percentualDoValorDoRateio(String(e.totalExibido ?? "0"), v) })}
             aria-label={`Valor ${colRef.toLowerCase()} ${k + 1}`} />
-          <Input className="min-w-0 text-right tabular-nums" data-testid={`${prefixo}-linha-${k}-percentual`}
-            inputMode="decimal" placeholder="0" value={parte.percentual}
-            onChange={(ev) => onMudar(k, { percentual: ev.target.value })}
+          <EntradaNumero className="min-w-0 text-right tabular-nums" data-testid={`${prefixo}-linha-${k}-percentual`}
+            casas={4} placeholder="0" value={parte.percentual}
+            onChange={(v) => onMudar(k, { percentual: v })}
             aria-label={`Percentual ${colRef.toLowerCase()} ${k + 1}`} />
           {partes.length > 1
             ? <Button size="sm" variant="ghost" className="!h-6 !w-6 !min-h-6 !p-0 justify-self-end text-slate-400 hover:text-rose-600"
@@ -282,7 +281,7 @@ export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
         </div>
       ) : (
         <div data-testid={porValor ? "compras-rateio-por-valor" : "compras-classificacao-unica"} className="space-y-3">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
             <TabelaDoRateioIndependente e={e} dimensao="natureza" partes={vista.naturezas} unica={unica}
               onMudar={mudarNatureza} onAdicionar={adicionarNatureza} onRemover={removerNatureza} />
             <TabelaDoRateioIndependente e={e} dimensao="centro" partes={vista.centros} unica={unica}
@@ -405,7 +404,7 @@ function projetarLeitura(linhas: readonly Row[]): {
   };
 }
 
-const GRADE_RATEIO_LEITURA = "grid grid-cols-[minmax(0,1fr)_104px_72px] items-center gap-1.5";
+const GRADE_RATEIO_LEITURA = "grid grid-cols-[minmax(14rem,1.6fr)_96px_64px] items-center gap-1.5";
 
 function TabelaLeituraDoRateio({
   titulo, testId, partes, colRef, testIdRef, totalDocumento,
@@ -484,7 +483,7 @@ export function RateioDaConsulta({ d }: { d: Row }) {
   }];
   const vista = projetarLeitura(linhasDaTela);
   return <div data-testid="compras-consulta-rateio" data-tipo={tipo ?? "documento"} className="space-y-3">
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className="grid min-w-0 gap-4 lg:grid-cols-2">
       <TabelaLeituraDoRateio titulo="Rateio Natureza Financeira" testId="compras-consulta-rateio-natureza-tabela"
         partes={vista.naturezas.length ? vista.naturezas : [{ id: "", rotulo: "", percentual: "100" }]}
         colRef="Natureza" testIdRef="compras-consulta-rateio-natureza" totalDocumento={totalDocumento} />

@@ -26,7 +26,7 @@ import { test, expect, criarCadastro, referenciasDoSeed } from "./central-compra
  * │ operação) nos dois. Só as asserções de APRESENTAÇÃO mudaram (W2, W4, W6, W11, W18–W27, W30); as │
  * │ de contrato continuam as mesmas. O registro linha a linha está no relatório da fatia.            │
  * │ Fase B: mudou a APRESENTAÇÃO dos itens da criação (Adicionar produto, marca pelo círculo,        │
- * │ Remover item na barra, "Mostrar grade e formulário" em Configurar colunas) e, no W4, Natureza e  │
+ * │ Remover item na barra; Grade|Formulário exclusivos — decisão 341) e, no W4, Natureza e           │
  * │ Centro de resultado viraram pendência de clique. W4/W5/W10/W17/W29 provam o MESMO contrato.      │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
@@ -531,18 +531,8 @@ const adicionarProduto = (page: Page) => page.getByTestId("central-vendas-adicio
  */
 async function marcarLinha(page: Page, i: number) {
   const linha = linhaDaGrade(page, i);
-  if ((await linha.getAttribute("aria-selected")) !== "true") await linha.getByTestId("central-vendas-selecionar-item").click();
+  if ((await linha.getAttribute("aria-selected")) !== "true") await linha.click();
   await expect(linha, `a linha ${i + 1} está marcada`).toHaveAttribute("aria-selected", "true");
-}
-
-/** Fase B: "Grade e formulário" deixou de ser botão da barra e virou a opção "Mostrar grade e formulário" de Configurar colunas. */
-async function mostrarGradeEFormulario(page: Page) {
-  await page.getByTestId("central-vendas-configurar").click();
-  const opcao = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar grade e formulário" });
-  if ((await opcao.getAttribute("aria-checked")) !== "true") await opcao.click();
-  await expect(opcao).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("central-vendas-configuracao")).toHaveCount(0);
 }
 
 /** Adiciona um item e escolhe o N-ésimo produto REAL pela pesquisa ancorada na célula. */
@@ -562,7 +552,7 @@ async function adicionarItemComProduto(page: Page, n = 0) {
   return rotulo;
 }
 
-test("W13 — três visões do MESMO items: Grade, Formulário e Mostrar grade e formulário; trocar não perde nada", async ({ page }) => {
+test("W13 — Grade OU Formulário do MESMO items; trocar não perde nada (decisão 341: sem os dois juntos)", async ({ page }) => {
   await login(page);
   await abrirWorkspace(page);
   const p1 = await adicionarItemComProduto(page, 0);
@@ -585,18 +575,16 @@ test("W13 — três visões do MESMO items: Grade, Formulário e Mostrar grade e
 
   // de volta à grade: a quantidade digitada no formulário está na linha 2; nada foi perdido
   await page.getByRole("button", { name: "Grade", exact: true }).click();
+  await expect(page.getByTestId("central-vendas-item-form"), "Grade esconde o formulário").toHaveCount(0);
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
   // a coluna 6 (índice 5) é Quantidade: o NÚMERO é o que foi digitado; a unidade do produto vem ao lado, à parte
   await expect(linhaDaGrade(page, 1).locator("td").nth(5).getByTestId("central-vendas-quantidade")).toHaveText("7");
 
-  // Grade e formulário (Fase B: a opção de Configurar colunas): as duas ao mesmo tempo, sobre o mesmo item marcado
   await marcarLinha(page, 1);
-  await mostrarGradeEFormulario(page);
-  await marcarLinha(page, 1);
-  await expect(page.getByTestId("central-vendas-grade")).toBeVisible();
-  await expect(page.getByTestId("central-vendas-item-form")).toBeVisible();
   await linhaDaGrade(page, 1).getByLabel("Quantidade").fill("9");
-  await expect(page.getByTestId("central-vendas-item-form").getByLabel("Quantidade"), "a grade e o formulário são o MESMO estado").toHaveValue("9");
+  await page.getByRole("button", { name: "Formulário", exact: true }).click();
+  await expect(page.getByTestId("central-vendas-grade")).toHaveCount(0);
+  await expect(page.getByTestId("central-vendas-item-form").getByLabel("Quantidade"), "o formulário lê o MESMO estado da grade").toHaveValue("9");
 });
 
 test("W14 — seleção de linha: círculo, teclado (↑ ↓) e nenhuma seleção órfã ao remover", async ({ page }) => {
@@ -607,12 +595,12 @@ test("W14 — seleção de linha: círculo, teclado (↑ ↓) e nenhuma seleçã
   await adicionarItemComProduto(page, 2);
 
   // Fase B: marca-se pelo círculo da linha (clicar na linha não marca)
-  await linhaDaGrade(page, 0).getByTestId("central-vendas-selecionar-item").click();
+  await linhaDaGrade(page, 0).click();
   await expect(linhaDaGrade(page, 0)).toHaveAttribute("aria-selected", "true");
   await expect(linhaDaGrade(page, 0).getByLabel("Quantidade"), "os campos editáveis aparecem na linha selecionada").toBeVisible();
   await expect(linhaDaGrade(page, 1).getByLabel("Quantidade"), "e só nela").toHaveCount(0);
 
-  await linhaDaGrade(page, 0).getByTestId("central-vendas-selecionar-item").focus();
+  await linhaDaGrade(page, 0).getByTestId("central-vendas-produto").focus();
   await page.keyboard.press("ArrowDown");
   await expect(linhaDaGrade(page, 1)).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => linhaDaGrade(page, 1).evaluate((el) => el === document.activeElement || el.contains(document.activeElement)), { message: "o foco foi junto com a marca" }).toBe(true);
@@ -799,7 +787,7 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await page.getByRole("button", { name: "Configurar colunas" }).click();
     await expect(page.getByTestId("central-vendas-configuracao")).toBeVisible();
     await foto("column-config");
-    await page.keyboard.press("Escape");
+    await page.getByTestId("central-vendas-configuracao").getByTestId("dialog-close").click();
     await adicionarProduto(page).click();
     await linhaDaGrade(page, 2).getByTestId("central-vendas-produto").click();
     await expect(painelDePesquisa(page).getByRole("option").first()).toBeVisible();
@@ -811,8 +799,6 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await marcarLinha(page, 0);
     await page.getByRole("button", { name: "Formulário", exact: true }).click();
     await foto("items-form");
-    await mostrarGradeEFormulario(page);
-    await foto("items-split");
     await page.getByRole("button", { name: "Grade", exact: true }).click();
     await page.getByTestId("central-vendas-recolher").click();
     await page.mouse.move(5, h - 5);
@@ -942,49 +928,76 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   const cfg = page.getByTestId("central-vendas-configuracao");
   await expect(cfg).toBeVisible();
   await expect(cfg).toContainText("Colunas da grade");
-  // uma caixa por coluna + a opção "Mostrar grade e formulário" (Fase B: o antigo 3º botão da barra mora aqui)
-  await expect(cfg.getByRole("checkbox")).toHaveCount(ROTULOS_DA_GRADE.length + 1);
-  await expect(cfg.getByRole("checkbox", { name: "Mostrar grade e formulário" })).toHaveCount(1);
+  // decisão 340–342: duas listas + setas no meio + busca cfgb; sem subtítulo; grade só no Pronto
+  await expect(cfg.getByText("Disponíveis", { exact: true })).toBeVisible();
+  await expect(cfg.getByText("Na tabela", { exact: true })).toBeVisible();
+  await expect(cfg.getByText("Colunas visíveis e ordem")).toHaveCount(0);
+  await expect(cfg.getByRole("checkbox", { name: "Mostrar grade e formulário" })).toHaveCount(0);
+  await expect(cfg.getByRole("button", { name: "Usar todas" })).toBeVisible();
+  await expect(cfg.getByRole("button", { name: "Remover todas (mantém a primeira)" })).toBeVisible();
+  await expect(cfg.getByLabel("Procurar em disponíveis")).toBeVisible();
+  await expect(cfg.getByLabel("Procurar na tabela")).toBeVisible();
+  await expect(cfg.getByTestId("central-vendas-na-tabela").locator("[data-coluna]")).toHaveCount(ROTULOS_DA_GRADE.length);
 
-  // esconder Quantidade: a coluna some da grade (cabeçalho e células), a quantidade continua no item
-  const quantidade = cfg.getByRole("checkbox", { name: "Mostrar Quantidade" });
-  await quantidade.click();
-  await expect(quantidade).toHaveAttribute("aria-checked", "false");
+  // esconder Quantidade (seleciona + seta) e aplicar no Pronto
+  await cfg.getByTestId("central-vendas-na-tabela").getByLabel("Quantidade", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Remover coluna selecionada" }).click();
+  await expect(cfg.getByTestId("central-vendas-disponiveis").getByLabel("Quantidade", { exact: true })).toBeVisible();
+  await expect.poll(() => cabecalhos(page), "rascunho não muda a grade").toEqual(ROTULOS_DA_GRADE);
+  await cfg.getByRole("button", { name: "Pronto" }).click();
   await expect.poll(() => cabecalhos(page)).toEqual(ROTULOS_DA_GRADE.filter((r) => r !== "Quantidade"));
   await expect(linhaDaGrade(page, 0).locator("td"), "círculo de seleção + 8 colunas").toHaveCount(ROTULOS_DA_GRADE.length);
   await expect(linhaDaGrade(page, 0).getByLabel("Quantidade")).toHaveCount(0);
-  // reordenar: Total sobe uma posição
-  await cfg.getByRole("button", { name: "Subir Total" }).click();
+
+  // reordenar: Total sobe uma posição (Alt+↑) e aplica no Pronto
+  await configurar.click();
+  const total = cfg.getByTestId("central-vendas-na-tabela").getByLabel("Total", { exact: true });
+  await total.focus();
+  await page.keyboard.press("Alt+ArrowUp");
+  await cfg.getByRole("button", { name: "Pronto" }).click();
   await expect.poll(async () => (await cabecalhos(page)).slice(-2)).toEqual(["Total", "Desconto %"]);
-  // a primeira coluna (o Local de estoque, decisão 280) não sobe; a segunda sobe
-  await expect(cfg.getByRole("button", { name: `Subir ${ROTULOS_DA_GRADE[0]}`, exact: true }), "a primeira não sobe").toBeDisabled();
-  await expect(cfg.getByRole("button", { name: `Subir ${ROTULOS_DA_GRADE[1]}`, exact: true }), "premissa: a segunda sobe").toBeEnabled();
-  // restaurar padrão devolve as nove, na ordem do design — e a quantidade é a MESMA de antes
+
+  // restaurar padrão (rascunho + Pronto) devolve as nove — quantidade digitada permanece
+  await configurar.click();
   await cfg.getByRole("button", { name: "Restaurar padrão" }).click();
+  await cfg.getByRole("button", { name: "Pronto" }).click();
   await expect.poll(() => cabecalhos(page)).toEqual(ROTULOS_DA_GRADE);
   await expect(linhaDaGrade(page, 0).getByLabel("Quantidade"), "esconder não apagou o valor").toHaveValue("4");
-  await page.keyboard.press("Escape");
   await expect(cfg).toHaveCount(0);
-  await expect(configurar, "Esc devolve o foco ao botão").toBeFocused();
+
+  // Fechar descarta: abre, muda, fecha sem Pronto — grade intacta
+  await configurar.click();
+  await cfg.getByTestId("central-vendas-na-tabela").getByLabel("Quantidade", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Remover coluna selecionada" }).click();
+  await cfg.getByTestId("dialog-close").click();
+  await expect(cfg).toHaveCount(0);
+  await expect(configurar, "Fechar devolve o foco ao botão").toBeFocused();
+  expect(await cabecalhos(page)).toEqual(ROTULOS_DA_GRADE);
 
   // no formulário, a configuração é a dos CAMPOS do item
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
   await configurar.click();
   await expect(cfg).toContainText("Visualização do formulário");
+  await expect(cfg.getByText("Campos visíveis e ordem")).toHaveCount(0);
   const form = page.getByTestId("central-vendas-item-form");
   const desconto = form.getByLabel("Desconto", { exact: true });
   await expect(desconto).toBeVisible();
-  await cfg.getByRole("checkbox", { name: "Mostrar Desconto", exact: true }).click();
+  await cfg.getByTestId("central-vendas-na-tabela").getByLabel("Desconto", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Remover coluna selecionada" }).click();
+  await cfg.getByRole("button", { name: "Pronto" }).click();
   await expect(desconto).toHaveCount(0);
-  await cfg.getByRole("checkbox", { name: "Mostrar Desconto", exact: true }).click();
+  await configurar.click();
+  await cfg.getByTestId("central-vendas-disponiveis").getByLabel("Desconto", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Usar coluna selecionada" }).click();
+  await cfg.getByRole("button", { name: "Pronto" }).click();
   await expect(desconto).toBeVisible();
-  await page.keyboard.press("Escape");
 
   // grade de novo, com Quantidade escondida: o POST leva a quantidade digitada e as MESMAS chaves de item
   await page.getByRole("button", { name: "Grade", exact: true }).click();
   await configurar.click();
-  await cfg.getByRole("checkbox", { name: "Mostrar Quantidade" }).click();
-  await page.keyboard.press("Escape");
+  await cfg.getByTestId("central-vendas-na-tabela").getByLabel("Quantidade", { exact: true }).click();
+  await cfg.getByRole("button", { name: "Remover coluna selecionada" }).click();
+  await cfg.getByRole("button", { name: "Pronto" }).click();
   expect(await chavesDoNavegador(page), "nenhuma chave nova no navegador: a configuração é estado da tela").toEqual(chavesAntes);
   const post = await capturarPost(page);
   await page.getByRole("button", { name: "Salvar" }).click();
@@ -1023,18 +1036,33 @@ test("W21 — painel inferior recolhível: só a faixa fica, nada focável atrá
   await expect(recolher, "o foco fica no botão").toBeFocused();
   await expect.poll(() => alturaDoPainel(page), "só a faixa das abas: 39px").toBe(39);
   await expect(painel.getByRole("tab")).toHaveText(["Totais", "Financeiro", "Frete e transporte", "Fiscal", "Observações"]);
-  await expect(page.getByTestId(DIVISOR_H), "recolhido não se redimensiona").toHaveCount(0);
+  // Decisão 356: divisor permanece (paridade Portal); bloqueado — não redimensiona
+  const divisorRecolhido = page.getByTestId(DIVISOR_H);
+  await expect(divisorRecolhido, "divisor fica visível recolhido").toBeVisible();
+  await expect(divisorRecolhido).toHaveAttribute("data-bloqueado", "true");
+  const alturaBloqueada = await valorDo(page, DIVISOR_H);
+  await divisorRecolhido.focus(); await page.keyboard.press("ArrowUp");
+  expect(await valorDo(page, DIVISOR_H), "recolhido não se redimensiona pelo teclado").toBe(alturaBloqueada);
   // o conteúdo da aba não fica atrás da faixa: invisível E fora do foco
   await expect(painel.locator('[role="tabpanel"][data-state="active"]'), "nem a aba ativa aparece").toBeHidden();
   const desconto = page.getByLabel("Desconto", { exact: true });
   await expect(desconto).toBeHidden();
   expect(await desconto.evaluate((el) => { (el as HTMLElement).focus(); return document.activeElement === el; }), "campo de aba recolhida não recebe foco").toBe(false);
 
-  // expandir pelo botão: a ÚLTIMA altura, o divisor e o conteúdo voltam
+  // expandir pelo botão: a ÚLTIMA altura e o conteúdo voltam; divisor deixa de estar bloqueado
   await recolher.click();
   await expect.poll(() => alturaDoPainel(page)).toBe(escolhida);
   await expect(page.getByTestId(DIVISOR_H)).toBeVisible();
+  await expect(page.getByTestId(DIVISOR_H)).not.toHaveAttribute("data-bloqueado", "true");
   await expect(painel.getByRole("tabpanel")).toBeVisible();
+
+  // duplo clique no divisor recolhe (paridade Portal itens ↔ listagem)
+  await page.getByTestId(DIVISOR_H).dblclick();
+  await expect(recolher).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(() => alturaDoPainel(page)).toBe(39);
+  await page.getByTestId(DIVISOR_H).dblclick();
+  await expect(recolher).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(() => alturaDoPainel(page)).toBe(escolhida);
 
   // recolhido, escolher uma aba expande já nela
   await recolher.click();
@@ -1318,10 +1346,14 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
   await unitario.fill("0");
   // ações só de apresentação: esconder e mostrar Estoque, trocar de visão
   const configurar = page.getByRole("button", { name: "Configurar colunas" });
-  const estoque = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar Estoque" });
-  await configurar.click(); await estoque.click(); await estoque.click(); await page.keyboard.press("Escape");
+  await configurar.click();
+  const cfgEstoque = page.getByTestId("central-vendas-configuracao");
+  await cfgEstoque.getByTestId("central-vendas-na-tabela").getByLabel("Estoque", { exact: true }).click();
+  await cfgEstoque.getByRole("button", { name: "Remover coluna selecionada" }).click();
+  await cfgEstoque.getByTestId("central-vendas-disponiveis").getByLabel("Estoque", { exact: true }).click();
+  await cfgEstoque.getByRole("button", { name: "Usar coluna selecionada" }).click();
+  await cfgEstoque.getByRole("button", { name: "Pronto" }).click();
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
-  await mostrarGradeEFormulario(page);                              // Fase B: a opção de Configurar colunas
   await page.getByRole("button", { name: "Grade", exact: true }).click();
   await page.waitForTimeout(500);
   await marcarLinha(page, 0);                                       // os campos moram na linha MARCADA (Fase B)

@@ -114,7 +114,7 @@ test("CP-W1 — pedido → Próximos passos → Central em modo receber (em part
   await expect(page.getByTestId("compras-itens").getByRole("button", { name: "Adicionar produto" }), "item fora do pedido é outra compra").toHaveCount(0);
 
   // (3) EM PARTES: a linha B sai; a A recebe 4 de 10, a 21,00 (vale o preço da NOTA), no armazém informado.
-  await linhaB.getByTestId("central-compras-selecionar-item").click();
+  await linhaB.click();
   await page.getByTestId("compras-itens").getByTestId("central-compras-remover-item").click();
   await expect(linhaB).toHaveCount(0);
   await escolherNaLinha(page, linhaA.getByTestId("central-compras-armazem"), c.nomeArmazem);

@@ -113,7 +113,7 @@ test("F10-A1 — com a TOP padrão da família: o campo já vem com ela, UMA lin
   // A GRADE: uma linha, o Local de estoque antes do Produto, e nenhum botão que acrescente, duplique ou remova
   expect(await cabecalhos(page), "Local de estoque → Código → Produto → Estoque → Quantidade → Valor unitário → Total (Produto e Quantidade com o '*')")
     .toEqual(["Local de estoque", "Código", "Produto *", "Estoque", "Quantidade *", "Valor unitário", "Total"]);
-  await page.getByTestId(`${P}-selecionar-item`).click();
+  await page.click();
   await expect(page.getByLabel("Quantidade do item 1"), "premissa: a linha está marcada (os campos dela abriram)").toBeVisible();
   for (const b of ["adicionar-item", "adicionar-vazio", "duplicar-item", "remover-item"]) {
     await expect(page.getByTestId(`${P}-${b}`), `linha única: sem ${b}`).toHaveCount(0);

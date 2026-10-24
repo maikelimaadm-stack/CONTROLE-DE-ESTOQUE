@@ -4,8 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CondicaoPagamento } from "@agro/domain";
 import { api } from "@/lib/api";
-import { cn, dateBR, num } from "@/lib/utils";
-import { Button, Input, MgSelect } from "@/components/ui";
+import { cn, dateBR, numeroBR } from "@/lib/utils";
+import { Button, EntradaNumero, Input, MgSelect } from "@/components/ui";
 import { CampoDaCentral, ChaveSimNao, DataDaCentral } from "@/features/central/campo";
 import grade from "@/features/central/grade.module.css";
 import type { ParcelaDoPlano, Plan } from "@/features/docs/shared";
@@ -146,8 +146,8 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
         {e.ajustarParcelas
           ? <>
             <DataDaCentral className={cn(CLASSE_DO_INPUT, estilos.data)} rotulo={l.entrada ? "Vencimento da entrada" : `Vencimento da parcela ${k + 1}`} value={l.vencimento} onChange={(v) => mudarLinha(k, "vencimento", v)} />
-            <Input className="min-w-0" data-testid={`compras-parcela-valor-${k}`} type="number" step="0.01" min="0" inputMode="decimal"
-              placeholder="0,00" value={l.valor} onChange={(ev) => mudarLinha(k, "valor", ev.target.value)}
+            <EntradaNumero className="min-w-0" data-testid={`compras-parcela-valor-${k}`} casas={2}
+              placeholder="0,00" value={l.valor} onChange={(v) => mudarLinha(k, "valor", v)}
               aria-label={l.entrada ? "Valor da entrada" : `Valor da parcela ${k + 1}`} />
             <Input className="min-w-0" data-testid={`compras-parcela-observacao-${k}`} value={l.observacao ?? ""} maxLength={500}
               placeholder={l.entrada ? "Entrada" : "Observação"} onChange={(ev) => mudarLinha(k, "observacao", ev.target.value)}
@@ -158,19 +158,19 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
           </>
           : <>
             <span className="text-[12px] text-slate-700">{dateBR(l.vencimento)}</span>
-            <span className="text-[12px] tabular-nums text-slate-900">{num(l.valor, 2)}</span>
+            <span className="text-[12px] tabular-nums text-slate-900">{numeroBR(l.valor)}</span>
             <span className="text-[12px] text-slate-500">{l.entrada ? "entrada" : (l.observacao || "—")}</span>
             <span />
           </>}
       </div>)}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1 text-[12px]">
-        <button type="button" className={cn(grade.botao, grade.botaoAdicionar)} aria-label="Adicionar parcela" title="Adicionar parcela"
+        <button type="button" className={cn("app-circulo-28", grade.botao, grade.botaoAdicionar)} aria-label="Adicionar parcela" title="Adicionar parcela"
           data-testid="compras-parcela-adicionar" disabled={!e.ajustarParcelas || linhas.length >= 120}
           onClick={() => definir([...linhas, { vencimento: "", valor: "", observacao: "", entrada: false }])}><Plus aria-hidden /></button>
         <span data-testid="compras-parcelas-quantidade" className="text-slate-600">{quantidade} {quantidade === 1 ? "parcela" : "parcelas"}</span>
         <span data-testid="compras-parcelas-soma" className={cn("ml-auto", foraDoTotal ? "text-amber-700" : "text-slate-600")}>
-          Soma: {num(soma, 2)}{foraDoTotal ? ` (deve fechar o total: ${num(e.totalExibido, 2)})` : ""}
+          Soma: {numeroBR(soma)}{foraDoTotal ? ` (deve fechar o total: ${numeroBR(e.totalExibido)})` : ""}
         </span>
       </div>
     </div>

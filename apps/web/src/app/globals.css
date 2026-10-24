@@ -18,6 +18,12 @@ input, select, textarea { @apply text-[13px]; }
 /* MODELO BASE1: barra de rolagem fina e sem setas nos inputs numéricos das caixas de campo */
 .b1 ::-webkit-scrollbar { height: 8px; width: 8px; } .b1 ::-webkit-scrollbar-thumb { @apply rounded-full bg-slate-300; }
 .b1 input[type="date"]::-webkit-calendar-picker-indicator { opacity: .5; }
+.b1 input[type="number"]::-webkit-inner-spin-button,
+.b1 input[type="number"]::-webkit-outer-spin-button,
+.workspace input[type="number"]::-webkit-inner-spin-button,
+.workspace input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.b1 input[type="number"],
+.workspace input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 @media print {
   .no-print { display: none !important; } body { background: white; font-size: 11px; }
   /* impressão: sem altura fixa nem rolagem interna — o documento cresce por todas as páginas */
@@ -102,7 +108,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 
 /* --- grade (emp-table-pro) --- */
 .mg-grid-wrap { overflow: auto; }
-/* painel que preenche a altura (mg-view-stack do MG): cabeçalho da grade e rodapé fixos, só os dados rolam */
+/* painel que preenche a altura (modelo-base do MG): cabeçalho da grade e rodapé fixos, só os dados rolam */
 .mg-shell--fill { display: flex; flex-direction: column; min-height: 0; }
 .mg-shell--fill > .mg-grid-wrap, .mg-shell--fill > .mg-shell__scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .mg-shell--fill > .mg-summary { flex-shrink: 0; }
@@ -111,20 +117,26 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-grid tfoot th, .mg-grid tfoot td { position: sticky; bottom: 0; background: #f8fafc; z-index: 3; }
 .mg-grid { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; font-size: 12px; }
 .mg-grid thead th { position: sticky; top: 0; z-index: 3; height: 30px; padding: 0 9px; background: #fff; color: #334155; font-size: 12px; font-weight: 600; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--mg-table-line); border-right: 1px solid var(--mg-table-line); }
-.mg-grid thead th:last-child, .mg-grid tbody td:last-child { border-right: 0; }
+/* borda direita da última coluna permanece (decisão 349) */
 .mg-grid tbody td { height: 26px; padding: 0 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--mg-text-1); border-bottom: 1px solid var(--mg-table-line); border-right: 1px solid var(--mg-table-line); transition: none; }
 .mg-grid tbody tr.even td { background: #fff; } .mg-grid tbody tr.odd td { background: var(--mg-row-alt); }
 .mg-grid tbody tr:hover td { background: var(--mg-row-hover); }
 .mg-grid tbody tr.selected td { background: var(--mg-selection-bg); } .mg-grid tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--mg-accent); }
-.mg-grid .th-menu { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: var(--mg-icon); border-radius: 4px; } .mg-grid .th-menu:hover { background: var(--mg-gray-fill); color: var(--mg-accent); }
+.mg-grid .th-menu { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: #475569; border-radius: 4px; } .mg-grid .th-menu:hover { background: var(--mg-gray-fill); color: #0f172a; }
 .mg-grid .th-menu svg { width: 12px; height: 12px; }
+/* Mini-ícones de estado (filtro/auto/congelar): cor mais clara que o ⋮ (#475569) — paridade com ícones secundários. */
+.mg-grid .th-estado { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; margin-left: 2px; color: #94a3b8; }
+.mg-grid .th-estado-icone { width: 12px; height: 12px; flex-shrink: 0; display: block; color: inherit; }
 .mg-check { width: 14px; height: 14px; border-radius: 999px; accent-color: var(--mg-accent); }
 .mg-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 8px 12px; font-size: 12px; font-weight: 600; color: #475569; border-top: 1px solid var(--mg-table-line); background: #fff; }
 .mg-summary__counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 12px; flex: 1 1 auto; min-width: 0; }
 .mg-summary__item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mg-pill-select { height: var(--mg-btn-h); border-radius: 999px; background: var(--mg-gray-fill); border: 1px solid transparent; padding: 0 28px 0 12px; font-size: 12px; font-weight: 600; color: var(--mg-text-1); appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235b6b80' stroke-width='2'><path d='m6 9 6 6 6-6'/></svg>"); background-repeat: no-repeat; background-position: right 10px center; }
+/* Pílula do rodapé da listagem: <select> legado OU gatilho do MgSelect (cmd-display) — o painel é o cmd-panel. */
+.mg-pill-select { height: var(--mg-btn-h); border-radius: 999px; background: var(--mg-gray-fill); border: 1px solid transparent; padding: 0 28px 0 12px; font-size: 12px; font-weight: 600; color: var(--mg-text-1); box-sizing: border-box; }
+select.mg-pill-select { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235b6b80' stroke-width='2'><path d='m6 9 6 6 6-6'/></svg>"); background-repeat: no-repeat; background-position: right 10px center; }
+button.mg-pill-select.cmd-display { width: auto; min-width: 4.5rem; padding-right: 28px !important; }
 
-/* --- formulário: campo do modelo base (fg / mg-prototype-field do MG) ---
+/* --- formulário: campo do modelo base (fg / modelo-base do MG) ---
    vazio (edição): cinza sem borda, rótulo 12px centralizado · preenchido/foco: rótulo 9px no topo, valor na base,
    fundo branco com borda #E7EAEE · foco: só o anel interno · travado: #e9edf2 texto cinza · visualização: #f6f8fa */
 .mg-field { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--mg-field-h); min-height: var(--mg-field-h); border-radius: var(--mg-radius-control); border: 1px solid transparent; background: var(--mg-gray-fill); box-shadow: var(--mg-field-edge-shadow); transition: background .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s cubic-bezier(.2,.8,.2,1), border-color .22s cubic-bezier(.2,.8,.2,1); }
@@ -174,7 +186,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .cmd-option__code { color: var(--mg-text-3); font-weight: 500; }
 .cmd-panel__empty { padding: 12px; font-size: 12px; color: var(--mg-text-3); text-align: center; }
 
-/* --- calendário (mg-dp do MG): 320×320, dias circulares, meses/anos por níveis --- */
+/* --- calendário (modelo-base do MG): 320×320, dias circulares, meses/anos por níveis --- */
 .mg-dp-icon { position: absolute; right: 10px; top: 50%; width: 14px; height: 14px; margin-top: -7px; color: var(--mg-text-3); pointer-events: none; z-index: 1; } .mg-dp-icon svg { width: 14px; height: 14px; }
 .mg-dp-panel { width: 280px; height: 280px; display: flex; flex-direction: column; box-sizing: border-box; background: #fff; border: 1px solid var(--mg-gray-fill); border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.12); overflow: hidden; animation: mg-dp-slide .18s ease; z-index: 10001; }
 @keyframes mg-dp-slide { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
@@ -216,7 +228,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 @keyframes validationDotPulse { 0% { opacity: 1; } 50% { opacity: .45; } 100% { opacity: 1; } }
 @keyframes validationDotPing { 0% { transform: scale(1); opacity: .55; } 70% { transform: scale(2.2); opacity: 0; } 100% { transform: scale(2.2); opacity: 0; } }
 
-/* --- transições (mg-motion do MG): troca de painel/visão com fade suave; navegação entre registros instantânea --- */
+/* --- transições (modelo-base do MG): troca de painel/visão com fade suave; navegação entre registros instantânea --- */
 @keyframes mg-motion-panel-fade { from { opacity: .88; } to { opacity: 1; } }
 @keyframes mg-motion-text-in { from { opacity: 0; } to { opacity: 1; } }
 .mg-motion-panel--animate { animation: mg-motion-panel-fade .22s cubic-bezier(.2,.8,.2,1) both; }
@@ -227,7 +239,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-card.is-selected { background: var(--mg-selection-bg); box-shadow: inset 0 0 0 1px var(--mg-focus-border); }
 .mg-record-fav-btn { color: var(--mg-icon); } .mg-record-fav-btn.is-active { color: var(--mg-accent); }
 
-/* --- painéis do registro: abas horizontais (seg-control) ou lista lateral (mg-panel-list) --- */
+/* --- painéis do registro: abas horizontais (seg-control) ou lista lateral (modelo-base) --- */
 .mg-panel-tabs-rail { display: flex; align-items: stretch; gap: 6px; min-height: 36px; }
 .mg-panel-tabs-rail__leading { display: inline-flex; align-items: center; padding-right: 4px; }
 .mg-nav-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; border: 1px solid transparent; background: var(--mg-gray-fill); color: var(--mg-icon); cursor: pointer; transition: background .12s, box-shadow .22s; } .mg-nav-btn:hover { background: var(--mg-gray-fill2); }
@@ -246,7 +258,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .seg-tab.active::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; background: #000; border-radius: 2px; display: block !important; }
 .mg-tabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #d0d5dc; box-shadow: inset 0 1px 0 rgba(15,23,42,.05); }
 
-/* --- checkbox do modelo base (mg-cards-config-menu__check / emp-table-select-check do MG): círculo, verde quando marcado --- */
+/* --- checkbox do modelo base (modelo-base__check / emp-table-select-check do MG): círculo, verde quando marcado --- */
 .mg-check { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; border: 1.5px solid var(--mg-divider); background: var(--mg-bg-card); box-shadow: 0 1px 2px rgba(15,23,42,.06); cursor: pointer; transition: background .22s cubic-bezier(.2,.8,.2,1), border-color .22s cubic-bezier(.2,.8,.2,1); vertical-align: middle; }
 .mg-check.is-checked, .mg-check.is-indeterminate { background: var(--mg-accent); border-color: var(--mg-accent); box-shadow: 0 1px 3px rgba(15,23,42,.14); }
 .mg-check__input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
@@ -257,10 +269,11 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-grid .th-select, .mg-grid .td-select { width: 36px !important; min-width: 36px !important; max-width: 36px !important; padding: 0 !important; text-align: center !important; vertical-align: middle !important; }
 .mg-grid .td-select > .mg-check, .mg-grid .th-select > .mg-check { margin: 0 auto; }
 .mg-grid th.is-frozen, .mg-grid td.is-frozen { position: sticky; }
-.mg-grid th.is-frozen-anchor, .mg-grid td.is-frozen-anchor { box-shadow: inset -2px 0 0 0 var(--mg-accent), 4px 0 8px -4px rgba(0,0,0,.18); }
+/* Âncora congelada: só sombreamento (sem filete verde). */
+.mg-grid th.is-frozen-anchor, .mg-grid td.is-frozen-anchor { box-shadow: 4px 0 8px -4px rgba(15, 23, 42, .22); }
 .mg-grid { min-width: 100%; }
 
-/* --- pesquisa (mg-desktop-search / mg-search-pill / mg-search-dropdown do MG) --- */
+/* --- pesquisa (modelo-base / modelo-base / modelo-base do MG) --- */
 .mg-desktop-search { position: relative; display: flex; align-items: center; justify-content: center; width: var(--mg-btn-h); height: var(--mg-btn-h); flex-shrink: 0; }
 .mg-desktop-search__trigger { position: relative; z-index: 1; transition: opacity .22s; }
 .mg-desktop-search.is-open .mg-desktop-search__trigger { opacity: 0; pointer-events: none; }
@@ -374,10 +387,10 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .ws-overview-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .ws-scroll { min-height: 0; flex: 1 1 auto; overflow: auto; }
 
-/* ===== faixa de filtros (mg-filter-pills-rail do MG): recolher = conteúdo encolhe com animação; a linha permanece ===== */
+/* ===== faixa de filtros (modelo-base do MG): recolher = conteúdo encolhe com animação; a linha permanece ===== */
 .mg-pills-rail__content { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; max-width: 100%; opacity: 1; transform-origin: left center; transition: max-width .26s cubic-bezier(.2,.8,.2,1), opacity .22s, transform .26s cubic-bezier(.2,.8,.2,1); overflow: hidden; }
 .mg-pills-rail.is-collapsed .mg-pills-rail__content { max-width: 0; opacity: 0; transform: scaleX(.96); pointer-events: none; }
-/* ===== tabelas simples (detalhes, painéis, editores de itens) com o cabeçalho do modelo (mg-grid) ===== */
+/* ===== tabelas simples (detalhes, painéis, editores de itens) com o cabeçalho do modelo (modelo-base) ===== */
 .table-dense thead th { height: 30px; padding: 0 9px; background: #fff; color: #334155; font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: 0; border-bottom: 1px solid var(--mg-divider); border-right: 1px solid var(--mg-divider); }
 .table-dense thead th:last-child { border-right: 0; }
 .table-dense tbody td { height: 30px; padding: 0 9px; font-size: 12.5px; color: var(--mg-text-1); border-bottom: 1px solid var(--mg-divider); border-right: 1px solid var(--mg-divider); }
@@ -385,7 +398,7 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .table-dense tbody tr:nth-child(even) td { background: #fafbfc; }
 .table-dense tbody tr:hover td { background: var(--mg-selection-bg, #f1f8f4); }
 .table-dense tbody td .mg-input, .table-dense tbody td .cmd-display { height: 26px; }
-/* ===== campo padrão (mg-field) nos formulários de lançamento: valor detectado por CSS (:has) ===== */
+/* ===== campo padrão (modelo-base) nos formulários de lançamento: valor detectado por CSS (:has) ===== */
 .mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)), .mg-field--auto:has(textarea:not(:placeholder-shown)), .mg-field--auto:has(select), .mg-field--auto:has(.cmd-display:not(.is-empty)), .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)) { --mg-auto-has-value: 1; }
 .mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)) .mg-field__label, .mg-field--auto:has(textarea:not(:placeholder-shown)) .mg-field__label, .mg-field--auto:has(select) .mg-field__label, .mg-field--auto:has(.cmd-display:not(.is-empty)) .mg-field__label, .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)) .mg-field__label { align-self: start; padding: 4px 10px 0; font-size: 9px; line-height: 1; }
 .mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(textarea:not(:placeholder-shown)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(select) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(.cmd-display:not(.is-empty)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field) { padding-top: 17px !important; padding-bottom: 5px !important; }
@@ -402,7 +415,7 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .mg-field--auto:has(textarea) .mg-field__control { height: auto; }
 .mg-field--auto:has(textarea) .mg-field__control textarea { height: auto !important; min-height: 64px; padding: 20px 10px 8px !important; }
 
-/* selo de seleção do card (mg-emp-card__select-badge do MG) */
+/* selo de seleção do card (modelo-base__select-badge do MG) */
 .b1-card__badge { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; background: var(--mg-accent); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 .b1-card:focus-visible { outline: 2px solid var(--mg-focus-border); outline-offset: 1px; }
 /* anexos: lista + prévia lado a lado */
@@ -549,18 +562,41 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 @media (max-width: 1100px) { .mg-topnav__search { width: 160px; min-width: 120px; } .mg-topnav__kbd { display: none; } }
 @media (max-width: 1023px) { .mg-topnav__brand-name { display: none; } .mg-topbar-select { max-width: 140px; } .mg-tabbar__count { display: none; } }
 .mg-grid .th-menu { width: 20px; height: 20px; border-radius: 999px; }
-.mg-grid .th-menu.is-on { background: rgba(64,222,99,.18); color: #15803d; }
+/* ⋮ não fica “marcado” por filtro/auto/congelar — só hover. */
 .itpan.recolhido { height: 34px !important; }
-/* Divisor mestre-detalhe do HTML: faixa inteira arrastável, não só o traço central. */
-.compras-divisor-itens { position: relative; z-index: 1; flex-shrink: 0; height: 9px; display: flex; align-items: center; justify-content: center; cursor: row-resize; background: transparent; touch-action: none; user-select: none; }
-.compras-divisor-itens > span { width: 46px; height: 3px; border-radius: 999px; background: #d7dde4; transition: background .13s, width .13s; }
-.compras-divisor-itens:hover, .compras-divisor-itens[data-arrastando="true"] { background: #bbf7d0; }
-.compras-divisor-itens:hover > span, .compras-divisor-itens:focus-visible > span, .compras-divisor-itens[data-arrastando="true"] > span { background: #40de63; width: 70px; }
+/*
+ * Divisor mestre-detalhe = divisor horizontal da Central (decisão 339):
+ * faixa cinza 7px; traço verde + grip de três pontos só no hover/foco/arraste.
+ */
+.compras-divisor-itens {
+  position: relative; z-index: 1; flex-shrink: 0; height: 7px; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 100px; padding: 0; background: #e9edf2;
+  cursor: row-resize; touch-action: none; user-select: none;
+}
+.compras-divisor-itens::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 3px; height: 1px;
+  background: transparent;
+  transition: background-color .15s cubic-bezier(.4,0,.2,1), height .15s cubic-bezier(.4,0,.2,1), top .15s cubic-bezier(.4,0,.2,1);
+}
+.compras-divisor-itens:hover::before,
+.compras-divisor-itens:focus-visible::before,
+.compras-divisor-itens[data-arrastando="true"]::before {
+  background: rgba(64, 222, 99, .6); height: 2px; top: 2.5px;
+}
+.compras-divisor-itens:focus-visible { outline: 2px solid #22a85c; outline-offset: -1px; }
+.compras-divisor-itens__grip {
+  position: relative; z-index: 1; display: flex; color: #475569; opacity: 0;
+  transition: opacity .15s cubic-bezier(.4,0,.2,1);
+}
+.compras-divisor-itens:hover .compras-divisor-itens__grip,
+.compras-divisor-itens:focus-visible .compras-divisor-itens__grip,
+.compras-divisor-itens[data-arrastando="true"] .compras-divisor-itens__grip { opacity: 1; }
 .itbar .grp { display: inline-flex; align-items: center; gap: 3px; }
 .itbar .ib { width: 25px; height: 25px; border-radius: 999px; border: 1px solid transparent; background: #f1f3f4; color: #475569; display: inline-flex; align-items: center; justify-content: center; }
 .itbar .ib:hover { background: #e5e7eb; color: #0f172a; }
 .itbar .ib svg { width: 14px; height: 14px; }
-.fpop { position: fixed; z-index: 60; width: 252px; max-height: 316px; display: flex; flex-direction: column; background: #fff; border: 1px solid #e7eaee; border-radius: 12px; box-shadow: 0 8px 24px rgba(16,24,40,.08); }
+.fpop { position: fixed; z-index: 60; width: 252px; max-height: 316px; margin: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #e7eaee; border-radius: 12px; box-shadow: 0 8px 24px rgba(16,24,40,.08); }
 .fpop-h { display: flex; align-items: baseline; gap: 6px; padding: 9px 10px 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #9aa4b1; }
 .fpop-h b { font-size: 12px; letter-spacing: 0; text-transform: none; color: #0f172a; }
 .fpop-l { flex-grow: 1; min-height: 0; overflow: auto; padding: 2px 5px 5px; }

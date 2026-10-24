@@ -1,14 +1,15 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, Columns3, ChevronDown, ChevronUp, Maximize, Minimize, X } from "lucide-react";
-import { D } from "@agro/shared";
+import { Boxes, Columns3, ChevronDown, ChevronUp, X } from "lucide-react";
+import { D, preferenciasDeLista, type ItensPreferences } from "@agro/shared";
 import { api } from "@/lib/api";
 import { brl, dateBR, num } from "@/lib/utils";
 import { Base1Grid } from "@/features/base1/grid";
 import { DicaDeAcao } from "@/components/ui";
 import { FiltroDeColuna, casa, type FiltroAtivo, type Tipo } from "./filtro-de-coluna";
 import { ColunasDosItens } from "./colunas-dos-itens";
+import { useItensPrefs } from "@/features/central/itens-prefs";
 import type { Base1Column, Row } from "@/features/base1/types";
 import { varianteDeCompra } from "./variantes";
 
@@ -16,8 +17,10 @@ import { varianteDeCompra } from "./variantes";
  * OS PRODUTOS DO DOCUMENTO SELECIONADO — o painel mestre-detalhe do Portal de Compras: a grade de cima lista os
  * documentos; este painel mostra os itens da nota SELECIONADA, sem abrir a consulta.
  *
- * Padrão de referência (itpan): barra de título simples (itbar), tabela rolável (itrolo) com cabeçalhos que têm
- * ordenação e redimensionamento, e rodapé de totais (itfoot). Sem toolbar de listagem, sem faixa de filtros.
+ * Decisão 339: barra só com ações (sem título "Itens" / código / aviso); ampliar = ícone da Central;
+ * divisor = linha + grip da Central. Sem toolbar de listagem, sem faixa de filtros.
+ * Decisão 350: Ampliar no canto esquerdo; altura do painel persistida na sessão (página do Portal).
+ * Decisão 351: colunas / larguras / freeze / auto ajustar — preferência por usuário (`compras` / `portal-itens`).
  *
  * A leitura é a da consulta do documento (`/api/compras/<segmento>/<id>`), a MESMA porta da tela de detalhe: a
  * tela não inventa recorte e não decide acesso — a linha só aparece para quem já pode lê-la, e a porta reaplica
@@ -42,6 +45,13 @@ const loteEValidade = (it: Row) => {
   const validade = texto(it["validade"]) ? dateBR(texto(it["validade"])) : "";
   return [lote, validade].filter(Boolean).join(" · ") || "—";
 };
+
+/** O mesmo traço do `BotaoAmpliar` da Central (cantos; invertido quando maximizado). */
+function IconeAmpliar({ restaurar }: { restaurar: boolean }) {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    {restaurar ? <><path d="M13.5 4.5v6h6" /><path d="M10.5 19.5v-6h-6" /></> : <><path d="M13.5 4.5h6v6" /><path d="M10.5 19.5h-6v-6" /></>}
+  </svg>;
+}
 
 export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximizado, onMaximizar }: { documento: Row | null; altura: number; recolhido: boolean; onRecolher: () => void; maximizado: boolean; onMaximizar: () => void }) {
   const especie = documento ? texto(documento["especie"]) : "";
@@ -78,17 +88,26 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
     return cs;
   }, [ehPedido]);
 
+  const chavesColunas = React.useMemo(() => colunas.map((c) => c.key), [colunas]);
+  const p = useItensPrefs("compras", "portal-itens", chavesColunas);
+  const prefs = p.prefs;
+  const updCols = (fn: (c: ItensPreferences["columns"]) => ItensPreferences["columns"]) => p.update((x) => ({ ...x, columns: fn(x.columns) }));
+
   const linhas = React.useMemo<Row[]>(() => itens.map((it, i) => ({ ...it, __seq: i + 1 })), [itens]);
 
   const [sort, setSort] = React.useState<{ key: string; dir: "asc" | "desc" } | null>(null);
-  const [colWidths, setColWidths] = React.useState<Record<string, number>>({});
-  const [ordem, setOrdem] = React.useState<string[]>([]);
-  const [congeladas, setCongeladas] = React.useState(0);
-  const [ocultas, setOcultas] = React.useState<Set<string>>(new Set());
   const [filtros, setFiltros] = React.useState<Record<string, FiltroAtivo>>({});
   const [filtrando, setFiltrando] = React.useState<string | null>(null);
   const [menuColunas, setMenuColunas] = React.useState(false);
-  React.useEffect(() => { setFiltros({}); setFiltrando(null); }, [id]);
+  // filtro é do documento; preferências de coluna/largura/freeze/autoFit ficam no usuário
+  React.useEffect(() => { setFiltros({}); setFiltrando(null); setSort(null); }, [id]);
+
+  const listaPrefs = React.useMemo(() => preferenciasDeLista(chavesColunas, prefs.columns), [chavesColunas, prefs.columns]);
+  const ocultas = React.useMemo(() => new Set(listaPrefs.filter((c) => !c.visivel).map((c) => c.chave)), [listaPrefs]);
+  const ordem = React.useMemo(() => listaPrefs.map((c) => c.chave), [listaPrefs]);
+  const colWidths = prefs.columns.widths ?? {};
+  const congeladas = Math.min(prefs.columns.frozen ?? 0, chavesColunas.length);
+  const autoFitKeys = React.useMemo(() => new Set(prefs.columns.autoFit ?? []), [prefs.columns.autoFit]);
 
   const textoDaCelula = React.useCallback((k: string, r: Row) => { const c = colunas.find((x) => x.key === k); return c?.text ? c.text(r) : texto(r[k]); }, [colunas]);
   // filtro de cabeçalho: apresentação sobre as linhas já lidas (valores marcados por coluna), nunca consulta nova
@@ -120,15 +139,15 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
   const onSort = (k: string) => setSort((s) => s?.key === k && s.dir === "asc" ? { key: k, dir: "desc" } : { key: k, dir: "asc" });
 
   return <section data-testid="compras-itens-da-nota" aria-label="Itens do documento selecionado" className={recolhido ? "itpan recolhido" : maximizado ? "itpan cheio" : "itpan"} style={maximizado ? undefined : { height: recolhido ? 34 : altura }}>
+    {/* Barra: Ampliar no canto esquerdo; demais ações à direita (decisão 350). */}
     <div className="itbar">
-      <span className="itt">Itens</span>
-      {documento && <>
-        <span className="code">{codigo}</span>
-        <span className="itbar-qtd">{itens.length} {itens.length === 1 ? "item" : "itens"}</span>
-        <span className="vdiv" aria-hidden="true" />
-        <span className="itbar-info">somente consulta · para lançar item, abra o documento</span>
-      </>}
-      {!documento && <span className="itbar-info">nenhum documento selecionado</span>}
+      <span className="grp">
+        <DicaDeAcao texto={maximizado ? "Restaurar layout" : "Ampliar Itens"}>
+          <button type="button" className="ib" data-testid="itens-maximizar" aria-label={maximizado ? "Restaurar layout" : "Ampliar Itens"} aria-pressed={maximizado} onClick={onMaximizar}>
+            <IconeAmpliar restaurar={maximizado} />
+          </button>
+        </DicaDeAcao>
+      </span>
       <span style={{ flexGrow: 1 }} />
       {documento && itens.length > 0 && !recolhido && <>
         {Object.keys(filtros).length > 0 && <button type="button" className="fchip-lim" onClick={() => setFiltros({})}><X className="h-3 w-3" /> Limpar filtros</button>}
@@ -137,10 +156,20 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
         </span>
         <span className="vdiv" aria-hidden="true" />
       </>}
-      {menuColunas && <ColunasDosItens colunas={colunasOrdenadas} ocultas={ocultas} onOrdenar={setOrdem}
-        onMudar={(k, ocultar) => setOcultas((p) => { const n = new Set(p); if (ocultar) n.add(k); else n.delete(k); return n; })}
-        onRestaurar={() => { setOcultas(new Set()); setColWidths({}); setOrdem([]); setCongeladas(0); }} onFechar={() => setMenuColunas(false)} />}
-      <span className="grp"><DicaDeAcao texto={maximizado ? "Restaurar tamanho" : "Maximizar o painel"}><button type="button" className="ib" data-testid="itens-maximizar" aria-label={maximizado ? "Restaurar tamanho" : "Maximizar o painel"} onClick={onMaximizar}>{maximizado ? <Minimize /> : <Maximize />}</button></DicaDeAcao><DicaDeAcao texto={recolhido ? "Abrir o painel" : "Recolher o painel"}><button type="button" className="ib" data-testid="itens-recolher" aria-expanded={!recolhido} aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={onRecolher}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button></DicaDeAcao></span>
+      {menuColunas && <ColunasDosItens colunas={colunasOrdenadas} ocultas={ocultas}
+        onAplicar={(keysVisiveis, ordemCompleta) => updCols((c) => ({
+          ...c,
+          order: ordemCompleta,
+          visible: keysVisiveis,
+          frozen: Math.min(c.frozen ?? 0, keysVisiveis.length),
+          autoFit: (c.autoFit ?? []).filter((k) => keysVisiveis.includes(k))
+        }))}
+        onRestaurar={() => updCols(() => ({}))} onFechar={() => setMenuColunas(false)} />}
+      <span className="grp">
+        <DicaDeAcao texto={recolhido ? "Abrir o painel" : "Recolher o painel"}>
+          <button type="button" className="ib" data-testid="itens-recolher" aria-expanded={!recolhido} aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={onRecolher}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button>
+        </DicaDeAcao>
+      </span>
     </div>
     {recolhido ? null : !documento
       ? <div className="itvazio">
@@ -162,7 +191,9 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
               <Base1Grid
                 columns={visibleColumns}
                 referenceHeaders
-                frozen={congeladas} onFreeze={setCongeladas}
+                selecaoSticky={false}
+                colunaSelecao={false}
+                frozen={congeladas} onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n, visibleColumns.length)) }))}
                 rows={sortedRows}
                 sort={sort ?? undefined}
                 onSort={onSort}
@@ -170,14 +201,29 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
                 onSelectClick={() => {}}
                 onToggle={() => {}}
                 onToggleAll={() => {}}
-                onResize={(k, w) => setColWidths((p) => ({ ...p, [k]: w }))}
-                onAutoFit={(k) => setColWidths((p) => { const n = { ...p }; delete n[k]; return n; })}
-                onHide={(k) => setOcultas((p) => new Set(p).add(k))}
+                onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))}
+                onAutoFit={(k) => updCols((c) => {
+                  const n = new Set(c.autoFit ?? []);
+                  if (n.has(k)) n.delete(k); else n.add(k);
+                  const autoFit = [...n];
+                  return { ...c, autoFit: autoFit.length ? autoFit : undefined };
+                })}
+                onHide={(k) => updCols((c) => {
+                  const keys = visibleColumns.map((x) => x.key);
+                  const idx = keys.indexOf(k);
+                  const fz = c.frozen ?? 0;
+                  const visible = keys.filter((x) => x !== k);
+                  const autoFit = (c.autoFit ?? []).filter((x) => x !== k);
+                  return { ...c, order: c.order ?? ordem, visible, frozen: idx >= 0 && idx < fz ? fz - 1 : fz, autoFit: autoFit.length ? autoFit : undefined };
+                })}
                 onFilter={(k) => setFiltrando(k)}
                 filteredKeys={new Set(Object.keys(filtros))}
+                autoFitKeys={autoFitKeys}
+                popoverClassName="b1-portal-compras"
               />
               {filtrando && <FiltroDeColuna
                 rotulo={colunas.find((c) => c.key === filtrando)?.label ?? ""}
+                className="b1-portal-compras"
                 ancora={`[data-testid="compras-itens-da-nota"] [aria-label="Abrir menu da coluna ${colunas.find((c) => c.key === filtrando)?.label ?? ""}"]`}
                 valores={linhas.map((r) => textoDaCelula(filtrando, r))}
                 tipo={tipoDe(filtrando)}

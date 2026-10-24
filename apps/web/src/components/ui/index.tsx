@@ -49,7 +49,7 @@ export function Field({ label, required, error, help, children, className, span 
   const id = React.useId();
   // Associa o rótulo ao controle (acessibilidade e testes): injeta id no filho único sem id
   const child = React.isValidElement(children) && !(children.props as { id?: string }).id ? React.cloneElement(children as React.ReactElement<{ id?: string }>, { id }) : children;
-  // campo padrão do modelo (mg-field): rótulo flutuante detectado por CSS (:has) — mesmo visual dos cadastros declarativos
+  // campo padrão do modelo (modelo-base): rótulo flutuante detectado por CSS (:has) — mesmo visual dos cadastros declarativos
   return <div className={cn("col-span-12", spans[span] ?? "md:col-span-3", className)}>
     <div className={cn("mg-field mg-field--auto", error && "is-invalid")} title={help}>{label && <label htmlFor={id} className="mg-field__label">{label}{required && <span className="req text-red-500"> *</span>}</label>}<div className="mg-field__control">{child}</div></div>
     {error && <p className="mt-0.5 text-[11px] text-red-600">{error}</p>}
@@ -103,3 +103,4 @@ export { LoadingState, EmptyState, ErrorState, Empty, ErrorBox, safeErrorMessage
 export { StatusBadge, statusTone, TONE_BADGE, type StatusTone, type BadgeTone, type StatusBadgeProps } from "./status-badge";
 export { PageHeader, CardHeader, type PageHeaderProps, type Crumb } from "./page-header";
 export { DetailShell, type DetailShellProps } from "./detail-shell";
+export { EntradaNumero, type EntradaNumeroProps } from "./entrada-numero";

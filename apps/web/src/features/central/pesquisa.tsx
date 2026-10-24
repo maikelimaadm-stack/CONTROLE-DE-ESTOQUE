@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { cn, num } from "@/lib/utils";
@@ -135,7 +136,7 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
   const dataFonte = nova ? "pesquisa" : fonte === "carregando" ? "carregando" : "opcoes";
 
   if (modo === "flutuante" && !pos) return null;
-  return <div
+  const corpo = <div
     ref={painel}
     aria-label={rotulo}
     data-testid={testId}
@@ -195,4 +196,7 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
       {daPesquisa.isFetchingNextPage ? "Carregando…" : "Mostrar mais"}
     </button>}
   </div>;
+  // Flutuante no body (como RefSelect): não recorta na coluna de itens nem fica sob Dados principais.
+  if (modo === "flutuante" && typeof document !== "undefined") return createPortal(corpo, document.body);
+  return corpo;
 }

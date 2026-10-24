@@ -15,8 +15,8 @@ export function SeletorDeOperador({ valor, opcoes, onChange }: {
       <span className="fselb-l"><Select.Value /></span>
       <Select.Icon className="fselb-c"><ChevronDown size={14} /></Select.Icon>
     </Select.Trigger>
-    <Select.Portal><div className="b1ref">
-      <Select.Content position="popper" sideOffset={4} className="fsell foperadores" aria-label="Condição" onEscapeKeyDown={(e) => e.stopPropagation()}>
+    <Select.Portal><div className="b1ref" data-filtro-camada="">
+      <Select.Content position="popper" sideOffset={4} className="fsell foperadores" aria-label="Condição" data-filtro-camada="" onCloseAutoFocus={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.stopPropagation()}>
         <Select.Viewport>
           {opcoes.map((o) => <Select.Item key={o.value} value={o.value} className={cn("fopt", o.value === valor && "on")}>
             <span className="fopt-c"><Select.ItemIndicator><Check size={12} /></Select.ItemIndicator></span>

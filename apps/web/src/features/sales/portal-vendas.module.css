@@ -69,6 +69,9 @@
   white-space: nowrap;
 }
 .novo svg { width: 14px; height: 14px; }
+/* Portal de Compras (decisão 327): só o `+`, mesma altura do círculo da seta. */
+.novoSoIcone { width: 28px; padding: 0; justify-content: center; gap: 0; }
+.novoSoIcone svg { width: 16px; height: 16px; }
 .abrirMenu {
   composes: app-button from global;
   width: 28px;
@@ -88,6 +91,83 @@
 .novo:active, .abrirMenu:active { background: #2ec46e; }
 .novo:focus-visible, .abrirMenu:focus-visible { position: relative; z-index: 1; outline: 2px solid #22a85c; outline-offset: 2px; }
 
+/*
+ * Portal de Compras (decisões 335/336/337): Novo+lançamento = trilho do Tabela|Cards.
+ * Sem divisor vertical — o `border-left` do `.abrirMenu` + `border-color:#9ca3af` do
+ * `app-button:active` virava a linha preta no clique.
+ */
+.divididoSoIcone {
+  width: max-content;
+  height: 25px !important;
+  min-height: 25px !important;
+  max-height: 25px !important;
+  margin-left: 0;
+  padding: 2px;
+  gap: 2px;
+  align-items: center;
+  flex: 0 0 auto;
+  background: #f1f3f4;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+}
+.divididoSoIcone .novo,
+.divididoSoIcone .abrirMenu {
+  /* !important: vence `app-button` height 28px e o width 28 do `.abrirMenu` base. */
+  width: 21px !important;
+  min-width: 21px !important;
+  max-width: 21px !important;
+  height: 21px !important;
+  min-height: 21px !important;
+  max-height: 21px !important;
+  flex: 0 0 21px !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  border-width: 0 !important;
+  border-left: none !important;
+  border-left-width: 0 !important;
+  border-left-style: none !important;
+  border-left-color: transparent !important;
+  border-color: transparent !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: #475569 !important;
+  box-shadow: none !important;
+  outline: none;
+  justify-content: center;
+}
+.divididoSoIcone .novoSoIcone { width: 21px !important; min-width: 21px !important; max-width: 21px !important; }
+.divididoSoIcone .novo svg,
+.divididoSoIcone .abrirMenu svg { width: 14px; height: 14px; color: inherit; }
+.divididoSoIcone .novo:hover,
+.divididoSoIcone .abrirMenu:hover,
+.divididoSoIcone .novo[aria-expanded="true"],
+.divididoSoIcone .abrirMenu[data-state="open"],
+.divididoSoIcone .novo:active,
+.divididoSoIcone .abrirMenu:active,
+.divididoSoIcone .novo:is(:active, .is-active, [data-state="open"], [aria-pressed="true"]),
+.divididoSoIcone .abrirMenu:is(:active, .is-active, [data-state="open"], [aria-pressed="true"]) {
+  background: rgba(15, 23, 42, .07) !important;
+  color: #0f172a !important;
+  border: none !important;
+  border-width: 0 !important;
+  border-left: none !important;
+  border-left-width: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+.divididoSoIcone .novo:active,
+.divididoSoIcone .abrirMenu:active {
+  background: rgba(15, 23, 42, .1) !important;
+}
+.divididoSoIcone .novo:focus,
+.divididoSoIcone .abrirMenu:focus { outline: none !important; }
+.divididoSoIcone .novo:focus-visible,
+.divididoSoIcone .abrirMenu:focus-visible {
+  outline: 2px solid #22a85c !important;
+  outline-offset: 1px;
+}
+
 /* ═════════════ Menus (Tipo e Nova operação) ═════════════ */
 .menu {
   z-index: 60;
@@ -101,6 +181,13 @@
   font-family: inherit;
 }
 .menuTipo { width: 220px; padding: 4px 0; }
+/* Portal de Compras: piso = gatilho; cresce com o rótulo (check + "Pedido de compra") — decisão 359. */
+.menuTipoDoGatilho {
+  width: max-content;
+  min-width: var(--radix-dropdown-menu-trigger-width);
+  max-width: min(100vw - 16px, 22rem);
+  box-sizing: border-box;
+}
 .menuOperacoes { width: 400px; max-width: calc(100vw - 32px); }
 
 .opcaoTipo {
@@ -117,9 +204,10 @@
   outline: none;
   user-select: none;
 }
+.opcaoTipoRotulo { white-space: nowrap; }
 .opcaoTipo[data-highlighted] { background: #ecfdf3; border-left-color: #22a85c; }
 .opcaoTipo[data-state="checked"] { background: rgba(64, 222, 99, 0.12); font-weight: 600; }
-.marca { width: 14px; display: flex; color: #15803d; }
+.marca { width: 14px; display: flex; flex-shrink: 0; color: #15803d; }
 .marca svg { width: 14px; height: 14px; }
 .separador { height: 1px; margin: 4px 0; background: #eef1f4; }
 

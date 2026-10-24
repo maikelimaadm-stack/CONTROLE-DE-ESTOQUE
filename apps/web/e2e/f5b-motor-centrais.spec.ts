@@ -40,8 +40,8 @@ const COLUNAS_DA_CONSULTA_DE_COMPRA = ["Local de estoque", "Código", "Produto",
 /** O formulário de leitura do motor (a lista dele, a mesma nas duas espécies); a compra acrescenta Lote e Validade. */
 const CAMPOS_DA_CONSULTA_DE_VENDA = ["Local de estoque", "Produto", "Estoque", "Unidade", "Quantidade", "Valor unitário", "Desconto", "Desconto %", "Total"];
 const CAMPOS_DA_CONSULTA_DE_COMPRA = [...CAMPOS_DA_CONSULTA_DE_VENDA, "Lote", "Validade"];
-/** As caixas do "Configurar colunas": "Mostrar <rótulo>", na ordem da lista. */
-const caixas = (rotulos: readonly string[]) => rotulos.map((r) => `Mostrar ${r}`);
+/** Rótulos na lista "Na tabela" do Configurar colunas (decisão 340: diálogo com duas listas). */
+const caixas = (rotulos: readonly string[]) => [...rotulos];
 
 /** O valor em reais como o motor o escreve (`brl`): "R$ 31,00". */
 const reais = (v: string | number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v));
@@ -61,13 +61,13 @@ async function produtoELocal(page: Page, rotulo: string) {
   return { ref, empresa, produto: produto.id, local: local.id };
 }
 
-/** As caixas do "Configurar colunas" da visão atual (aberto e fechado por Esc), na ordem da lista. */
+/** Rótulos "Na tabela" do Configurar colunas (fecha só pelo Fechar — decisão 340). */
 async function caixasDoConfigurar(page: Page, p: string) {
   await page.getByTestId(`${p}-configurar`).click();
   const config = page.getByTestId(`${p}-configuracao`);
   await expect(config, "o Configurar colunas abriu").toBeVisible();
-  const nomes = await config.getByRole("list").getByRole("checkbox").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
-  await page.keyboard.press("Escape");
+  const nomes = await config.getByTestId(`${p}-na-tabela`).locator("[data-coluna]").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
+  await config.getByTestId("dialog-close").click();
   await expect(config).toHaveCount(0);
   return nomes;
 }
@@ -117,7 +117,7 @@ async function linhaNovaESubtotal(page: Page, p: string, fmt: (v: string | numbe
   await expect(subtotal, "o rodapé mostra o total da linha: 2,5 × 12,40").toHaveText(fmt(31));
 
   // desmarcada, a célula deixa de ser campo e mostra a quantidade formatada
-  await linha.getByTestId(`${p}-selecionar-item`).click();
+  await linha.click();
   await expect(linha, "a linha foi desmarcada").toHaveAttribute("aria-selected", "false");
   await expect(linha.getByTestId(`${p}-quantidade`), "a célula não ativa mostra a quantidade em pt-BR (2,5)").toHaveText("2,5");
   await expect(subtotal, "desmarcar não muda o subtotal").toHaveText(fmt(31));

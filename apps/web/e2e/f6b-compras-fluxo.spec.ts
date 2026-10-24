@@ -106,7 +106,7 @@ async function escolherNoCampo(page: Page, campo: Locator, nome: string) {
 /** Marca a linha do item do pedido na grade do motor e digita o preço. */
 async function preencherPreco(page: Page, itemPedidoId: string, n: number, valor: string) {
   const linha = page.getByTestId(`compras-orcamento-item-${itemPedidoId}`);
-  await linha.getByTestId(`${P}-selecionar-item`).click();
+  await linha.click();
   const campo = linha.getByLabel(`Valor unitário do item ${n}`);
   await campo.fill(valor);
   await expect(campo).toHaveValue(valor);
@@ -315,7 +315,7 @@ test("F6B-F1 — pelo pedido, na tela: Aprovar para orçamento → dois orçamen
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "finalizado");
   await expect(page.getByTestId(`${P}-situacao`).locator("[data-tone]")).toHaveText("Finalizado");
   await expect(page.getByTestId(`compras-proximo-passo-${c.topCompra.codigo}`), "finalizado: o Receber… habilitado, pelo passo da compra").toBeEnabled();
-  await expect(page.getByTestId(`compras-proximo-passo-${c.topCompra.codigo}`)).toContainText("Receber…");
+  await expect(page.getByTestId(`compras-proximo-passo-${c.topCompra.codigo}`)).toHaveAttribute("aria-label", "Receber…");
   await expect(finalizar, "finalizado: a pílula fica, desabilitada").toBeDisabled();
   await expect(page.getByTestId("compras-novo-orcamento"), "fora do aberto, nada de Novo orçamento").toHaveCount(0);
 

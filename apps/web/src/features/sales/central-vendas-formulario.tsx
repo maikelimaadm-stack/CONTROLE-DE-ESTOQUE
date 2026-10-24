@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { todayISO } from "@/lib/utils";
 import { useDirtyTab } from "@/lib/workspace-tabs";
-import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
+import { Confirm, EntradaNumero, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { defaultPlan, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
@@ -861,8 +861,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
       case "centro_custo_id": return classificacaoAtiva && cc(chave, "Centro de resultado", { obrigatorio: true, icone: "pesquisa", preenchido: Boolean(h.centro_custo_id) }, <RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} labelHint={dica("centro_custo_id")} />);
       case "shipping_date": return cc(chave, "Data de saída", { icone: "data", preenchido: Boolean(h.shipping_date) }, <DataDaCentral rotulo={rot(chave, "Data de saída")} value={h.shipping_date} onChange={(v) => setH({ ...h, shipping_date: v })} />);
       case "proprietary_id": return cc(chave, "Proprietário", { icone: "pesquisa", preenchido: Boolean(h.proprietary_id) }, <RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} labelHint={dica("proprietary_id")} />);
-      case "discount": return cc(chave, "Desconto", { preenchido: h.discount !== "" }, <Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} />);
-      case "other_values": return cc(chave, "Outros valores", { preenchido: h.other_values !== "" }, <Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} />);
+      case "discount": return cc(chave, "Desconto", { preenchido: h.discount !== "" }, <EntradaNumero casas={2} value={h.discount} onChange={(v) => setH({ ...h, discount: v })} />);
+      case "other_values": return cc(chave, "Outros valores", { preenchido: h.other_values !== "" }, <EntradaNumero casas={2} value={h.other_values} onChange={(v) => setH({ ...h, other_values: v })} />);
       case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} somenteIds={condicoesPermitidas} /></Field>, chave)}</div>;
       /* VISUAL-UX-02 Fase B: o Financeiro da criação no desenho — um campo abaixo do outro, na densidade da Central, na
          ordem da consulta. Parcelamento é o `cc` de sempre; o plano é o `PlanEditor` com o desenho da Central
@@ -874,8 +874,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
       </>;
       case "transporter_id": return cc(chave, "Transportadora", { icone: "pesquisa", preenchido: Boolean(h.transporter_id) }, <RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transporter_id")} />);
       case "driver_name": return cc(chave, "Motorista", { preenchido: Boolean(h.driver_name) }, <Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} />);
-      case "freight": return cc(chave, "Frete", { preenchido: h.freight !== "" }, <Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} />);
-      case "freight_icms": return cc(chave, "ICMS frete", { preenchido: h.freight_icms !== "" }, <Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} />);
+      case "freight": return cc(chave, "Frete", { preenchido: h.freight !== "" }, <EntradaNumero casas={2} value={h.freight} onChange={(v) => setH({ ...h, freight: v })} />);
+      case "freight_icms": return cc(chave, "ICMS frete", { preenchido: h.freight_icms !== "" }, <EntradaNumero casas={2} value={h.freight_icms} onChange={(v) => setH({ ...h, freight_icms: v })} />);
       /* chave sim/não do desenho; o valor e o payload (`is_deductible`) são os de antes */
       case "is_deductible": return <ChaveSimNao rotulo={rot(chave, "Dedutível")} valor={h.is_deductible} onChange={(v) => setH({ ...h, is_deductible: v })} {...dc(chave)} />;
       case "note": return cc(chave, "Observação", { preenchido: Boolean(h.note), multilinha: true }, <Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} />);

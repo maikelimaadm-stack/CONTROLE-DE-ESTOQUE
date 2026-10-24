@@ -46,6 +46,11 @@ export function DivisorEntreTabelas({ valor, onChange, onRecolher }: { valor: nu
       const max = limiteDosItens(e.currentTarget);
       onChange(limitar(e.key === "Home" ? max : e.key === "End" ? ALTURA_RECOLHIDA_DOS_ITENS : valor + (e.key === "ArrowUp" ? 16 : -16), max));
     }}>
-    <span />
+    {/* Grip de três pontos — o mesmo do divisor horizontal da Central (decisão 339). */}
+    <span className="compras-divisor-itens__grip" aria-hidden>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
+      </svg>
+    </span>
   </div>;
 }

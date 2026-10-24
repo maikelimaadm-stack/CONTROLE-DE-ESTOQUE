@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { ehCamadaAninhadaDoFiltro, SELETOR_CAMADA_ANINHADA_DO_FILTRO } from "@/features/base1/camada-aninhada-do-filtro";
 import { casa, type FiltroAtivo } from "./filtro-de-coluna";
 
 const filtro = (op: string, v1: string, v2 = ""): FiltroAtivo => ({ op, v1, v2, valores: null });
+
+/** Enter aplica só no shell; na camada portalada da condição o Enter escolhe a opção (decisão 358). */
+function enterAplicaNoFiltro(alvo: EventTarget | null): boolean {
+  return !ehCamadaAninhadaDoFiltro(alvo);
+}
 
 describe("filtros dos cabeçalhos de Compras", () => {
   it("compara quantidade e moeda no formato exibido", () => {
@@ -20,5 +26,13 @@ describe("filtros dos cabeçalhos de Compras", () => {
   });
   it("não aplica um intervalo ainda incompleto", () => {
     expect(casa(filtro("entre", "10"), "num", "5")).toBe(true);
+  });
+  it("Enter no valor aplica; Enter na condição portalada não (358)", () => {
+    const fora = { closest: () => null } as unknown as EventTarget;
+    const naCondicao = {
+      closest: (sel: string) => (sel === SELETOR_CAMADA_ANINHADA_DO_FILTRO ? ({} as Element) : null),
+    } as unknown as EventTarget;
+    expect(enterAplicaNoFiltro(fora)).toBe(true);
+    expect(enterAplicaNoFiltro(naCondicao)).toBe(false);
   });
 });

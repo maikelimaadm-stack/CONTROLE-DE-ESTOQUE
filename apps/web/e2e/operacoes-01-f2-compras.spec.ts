@@ -173,7 +173,7 @@ test("F2C-1 — TOP de Confirmação Automática: o Salvar se chama 'Salvar e co
   expect(await abrirCriacao(page, automatica, c), "premissa: a TOP automática declara a confirmação automática").toEqual(SO_AUTOMATICA);
   await expect(salvar, "Automática: o Salvar se chama 'Salvar e confirmar'").toHaveAttribute("aria-label", "Salvar e confirmar");
   await expect(salvar).toHaveAttribute("data-dica", "Salvar e confirmar");
-  await expect(page.getByTestId(`${P}-confirmar`), "a pílula 'Confirmar compra' da criação continua").toContainText("Confirmar compra");
+  await expect(page.getByTestId(`${P}-confirmar`), "o Confirmar compra da criação continua (só ícone)").toHaveAttribute("aria-label", "Confirmar compra");
   await umItem(page, c);
   const confirmado = await salvarPelaTela(page);
   expect(confirmado.status, "a compra automática foi salva").toBe(201);
@@ -293,7 +293,7 @@ test("F2C-3 — receber o pedido com a TOP de compra Automática + Permitido: 'S
   await expect(salvar, "receber com a TOP Automática: o Salvar se chama 'Salvar e confirmar'").toHaveAttribute("aria-label", "Salvar e confirmar");
   await expect(salvar).toHaveAttribute("data-dica", "Salvar e confirmar");
   const linha = page.getByTestId(`compras-receber-item-${item}`);
-  await linha.getByTestId(`${P}-selecionar-item`).click();
+  await linha.click();
   await page.getByTestId("compras-itens").getByTestId(`${P}-remover-item`).click();
   await expect(linha, "premissa: a única linha saiu (a aresta é 'Em partes')").toHaveCount(0);
   await salvar.click();

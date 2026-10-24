@@ -2,6 +2,7 @@
 import * as React from "react";
 import { MoreVertical, ArrowUp, ArrowDown, Filter, Scaling, PanelLeft, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fonteDaCelula, medirLarguraColuna } from "@/lib/largura-coluna";
 import { Spinner, Empty } from "@/components/ui";
 import { B1Popover, MenuList, MgCheck } from "./ui";
 import { selectClickOf, type SelectClick } from "./cards";
@@ -10,20 +11,36 @@ import type { Base1Column, Row } from "./types";
 export const SELECT_COLUMN_WIDTH = 36;
 
 /**
- * Grade do modelo base (emp-table-pro do MG): coluna de seleção, cabeçalho de 30 px com menu por coluna
+ * Grade do modelo base (emp-table-pro do MG): cabeçalho de 30 px com menu por coluna
  * (filtro avançado, auto ajustar, congelar, ocultar), ordenação por clique, redimensionamento por arraste,
  * colunas congeladas (sticky), linhas de 26 px alternadas com destaque.
- * Seleção como no MG: clique na linha seleciona só ela (Ctrl alterna, Shift intervalo); o controle da linha
- * alterna sem desmarcar as demais; duplo clique abre o registro.
- * Congelamento como no MG: "Congelar" na coluna N congela todas até N (contagem à esquerda); clicar na âncora
- * (última congelada) descongela todas.
+ * Seleção como no MG: clique na linha seleciona só ela (Ctrl/Cmd alterna, Shift intervalo); com
+ * `colunaSelecao`, o checkbox da linha alterna sem desmarcar as demais. Duplo clique abre o registro.
+ * Congelamento em prefixo: "Congelar" na coluna N congela todas até N; âncora descongela.
+ * Auto ajustar (menu) é estado contínuo até desligar; duplo clique na alça só ajusta a largura (não liga o modo).
+ * Mini-ícones: filtro/auto; congelar só na âncora; com congeladas e coluna de seleção, ela também fica sticky.
+ * Portal de Compras (356): sem coluna de checkbox — só clique / atalho na linha.
  */
-export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelectClick, onToggle, onToggleAll, onOpen, frozen = 0, onFreeze, onHide, onResize, onAutoFit, onFilter, footer, rowKey, emptyText, scrollToId, filteredKeys, referenceHeaders = false }: {
+export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelectClick, onToggle, onToggleAll, onOpen, frozen = 0, onFreeze, onHide, onResize, onAutoFit, onFilter, footer, rowKey, emptyText, scrollToId, filteredKeys, autoFitKeys, referenceHeaders: _referenceHeaders = false, popoverClassName, selecaoSticky = true, colunaSelecao = true }: {
   columns: Base1Column[]; rows: Row[]; loading?: boolean; sort?: { key: string; dir: "asc" | "desc" }; onSort?: (key: string) => void;
   selected: Set<string>; onSelectClick: (id: string, mod: SelectClick) => void; onToggle: (id: string) => void; onToggleAll: (on: boolean) => void; onOpen?: (r: Row) => void;
   frozen?: number; onFreeze?: (n: number) => void; onHide?: (key: string) => void;
   onResize?: (key: string, width: number) => void; onAutoFit?: (key: string) => void; onFilter?: (key: string) => void; density?: "compact" | "normal"; footer?: React.ReactNode;
-  rowKey?: (r: Row) => string; emptyText?: string; scrollToId?: string | null; /** colunas com filtro ativo (o botão do menu fica destacado) */ filteredKeys?: Set<string>; referenceHeaders?: boolean;
+  rowKey?: (r: Row) => string; emptyText?: string; scrollToId?: string | null;
+  /** colunas com filtro ativo */ filteredKeys?: Set<string>;
+  /** colunas com auto ajustar ligado (até desativar) */ autoFitKeys?: Set<string>;
+  referenceHeaders?: boolean;
+  popoverClassName?: string;
+  /**
+   * Se a coluna de seleção fica fixa à esquerda no scroll horizontal.
+   * `false` no Portal de Compras (decisão 338).
+   */
+  selecaoSticky?: boolean;
+  /**
+   * Coluna de checkbox à esquerda. `false` no Portal de Compras / itens da nota (decisão 356):
+   * seleção só por clique na linha (Ctrl/Cmd alterna, Shift intervalo).
+   */
+  colunaSelecao?: boolean;
 }) {
   const key = rowKey ?? ((r: Row) => String(r["id"]));
   const allOn = rows.length > 0 && rows.every((r) => selected.has(key(r)));
@@ -31,26 +48,25 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   const ths = React.useRef<Record<string, HTMLTableCellElement | null>>({});
   const trs = React.useRef<Record<string, HTMLTableRowElement | null>>({});
   const [lefts, setLefts] = React.useState<Record<string, number>>({});
-  const [menuFor, setMenuFor] = React.useState<string | null>(null); // menu de coluna aberto (fecha ao escolher uma opção)
-  /**
-   * Congelamento = PREFIXO ESTRUTURAL + escolha do usuário.
-   *
-   * O prefixo vem das colunas que se DECLARAM pinadas à esquerda e é o piso: a listagem pode congelar mais,
-   * nunca menos. É o que prende uma coluna mesmo nas telas que nunca passam `frozen` — e é declarativo, então
-   * a grade continua sem conhecer nenhuma coluna de domínio.
-   *
-   * Nenhuma coluna do produto se declara assim hoje: a identidade largou a pinagem na PRE-BASE2-05B.2 e rola
-   * com as demais. O mecanismo fica — o piso é do MOTOR, não daquela coluna, e removê-lo junto com o único
-   * uso transformaria uma decisão de UX reversível numa capacidade que a grade deixaria de ter.
-   */
+  const [menuFor, setMenuFor] = React.useState<string | null>(null);
   const pinnedCount = (() => { let n = 0; while (n < columns.length && columns[n]!.pinned === "left") n++; return n; })();
   const frozenCount = Math.max(0, Math.min(Math.max(frozen, pinnedCount), columns.length));
-  // deslocamento das colunas congeladas (sticky): larguras medidas após o layout e a cada redimensionamento
+  /** Com colunas congeladas, a seleção também fica sticky (quando a coluna existe). */
+  const selectCongelado = colunaSelecao && (selecaoSticky || frozenCount > 0);
+  const leftBase = selectCongelado ? SELECT_COLUMN_WIDTH : 0;
+  const colSpanVazio = columns.length + (colunaSelecao ? 1 : 0);
   const measure = React.useCallback(() => {
-    const out: Record<string, number> = {}; let acc = SELECT_COLUMN_WIDTH;
-    for (const c of columns.slice(0, frozenCount)) { out[c.key] = acc; acc += ths.current[c.key]?.getBoundingClientRect().width ?? c.width ?? 160; }
-    setLefts((prev) => { const keys = Object.keys(out); return keys.length === Object.keys(prev).length && keys.every((k) => prev[k] === out[k]) ? prev : out; });
-  }, [columns, frozenCount]);
+    const out: Record<string, number> = {};
+    let acc = leftBase;
+    for (const c of columns.slice(0, frozenCount)) {
+      out[c.key] = acc;
+      acc += ths.current[c.key]?.getBoundingClientRect().width ?? c.width ?? 160;
+    }
+    setLefts((prev) => {
+      const keys = Object.keys(out);
+      return keys.length === Object.keys(prev).length && keys.every((k) => prev[k] === out[k]) ? prev : out;
+    });
+  }, [columns, frozenCount, leftBase]);
   React.useLayoutEffect(() => { measure(); }, [measure, rows.length]);
   React.useEffect(() => {
     if (!frozenCount || typeof ResizeObserver === "undefined") return;
@@ -59,58 +75,134 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
     return () => ro.disconnect();
   }, [columns, frozenCount, measure]);
   React.useEffect(() => { if (scrollToId) trs.current[scrollToId]?.scrollIntoView({ block: "center" }); }, [scrollToId, rows.length]);
+  const cellText = (c: Base1Column, r: Row) => c.text ? c.text(r) : String(r[c.key] ?? "");
+  /** Mini-ícones visíveis no th: filtro + auto + âncora de congelar + seta de ordenação. */
+  const iconesNoCabecalho = (c: Base1Column, i: number, opts?: { forcarAuto?: boolean }) => {
+    const isAnchor = i === frozenCount - 1 && frozenCount > 0;
+    const fitOn = Boolean(opts?.forcarAuto || autoFitKeys?.has(c.key));
+    const filterOn = Boolean(filteredKeys?.has(c.key));
+    const ordenado = sort?.key === c.key;
+    return (filterOn ? 1 : 0) + (fitOn ? 1 : 0) + (isAnchor ? 1 : 0) + (ordenado ? 1 : 0);
+  };
+  /** Cabeçalho (rótulo + ícones ativos) e células — o max dos dois; cabeçalho nunca fica de fora. */
+  const larguraPorConteudo = (c: Base1Column, i: number, opts?: { forcarAuto?: boolean }) => {
+    const th = ths.current[c.key];
+    const celulas = rows.map((r) => cellText(c, r)).filter((t) => t && t !== "–" && t !== "—");
+    return medirLarguraColuna({
+      rotulo: c.label,
+      textosCelulas: celulas,
+      fontCabecalho: fonteDaCelula(th),
+      iconesEstado: iconesNoCabecalho(c, i, opts)
+    });
+  };
+  /** Menu: liga = mede + marca estado; desliga = só tira o estado (largura fica). */
+  const aplicarAutoAjuste = (c: Base1Column, i: number, jaLigado: boolean) => {
+    if (jaLigado) { onAutoFit?.(c.key); return; }
+    onResize?.(c.key, larguraPorConteudo(c, i, { forcarAuto: true }));
+    onAutoFit?.(c.key);
+  };
+  /** Duplo clique na alça: só ajusta a largura uma vez — NÃO liga o modo auto ajustar. */
+  const ajustarLarguraUmaVez = (c: Base1Column, i: number) => {
+    onResize?.(c.key, larguraPorConteudo(c, i));
+  };
+  /** Assinatura estável dos filtros (o Set do pai é novo a cada render). */
+  const filtrosSig = React.useMemo(() => (filteredKeys && filteredKeys.size ? [...filteredKeys].sort().join("\0") : ""), [filteredKeys]);
+  /**
+   * Enquanto o modo está ligado, reaplica quando mudam linhas/colunas/congelamento (reconta cabeçalho + ícones).
+   * Chama só `onResize` — o pai NÃO pode limpar `autoFit` aqui (decisão 356); desligar é menu ou arraste.
+   */
+  React.useEffect(() => {
+    if (!autoFitKeys?.size || !onResize) return;
+    columns.forEach((c, i) => {
+      if (!autoFitKeys.has(c.key)) return;
+      const w = larguraPorConteudo(c, i);
+      if (c.width !== w) onResize(c.key, w);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mede com rows/columns atuais; evita loop por identidade de onResize
+  }, [autoFitKeys, rows, columns, frozenCount, sort?.key, sort?.dir, filtrosSig]);
   const startResize = (e: React.MouseEvent, c: Base1Column) => {
+    if (e.detail > 1) return;
     e.preventDefault(); e.stopPropagation();
     const th = ths.current[c.key]; if (!th) return; const x0 = e.clientX; const w0 = th.getBoundingClientRect().width;
     const move = (ev: MouseEvent) => { th.style.width = th.style.minWidth = th.style.maxWidth = `${Math.max(48, w0 + ev.clientX - x0)}px`; measure(); };
-    const up = (ev: MouseEvent) => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); onResize?.(c.key, Math.round(Math.max(48, w0 + ev.clientX - x0))); };
+    const up = (ev: MouseEvent) => {
+      window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+      onResize?.(c.key, Math.round(Math.max(48, w0 + ev.clientX - x0)));
+      if (autoFitKeys?.has(c.key)) onAutoFit?.(c.key); // arrastar desliga o auto ajustar
+    };
     window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
   };
-  const cellText = (c: Base1Column, r: Row) => c.text ? c.text(r) : String(r[c.key] ?? "");
   const stickyBg = (on: boolean, ri: number) => on ? "var(--mg-selection-bg)" : ri % 2 === 1 ? "var(--mg-row-alt)" : "#fff";
+  void _referenceHeaders;
   return <div className="mg-grid-wrap">
     <table className="mg-grid">
       <thead><tr>
-        <th className="th-select sticky left-0 z-[4]"><MgCheck aria-label="Selecionar todos" checked={allOn} indeterminate={someOn} onChange={(on) => onToggleAll(on)} /></th>
-        {columns.map((c, i) => { const isFrozen = i < frozenCount; const isAnchor = i === frozenCount - 1; return (
-          <th key={c.key} ref={(el) => { ths.current[c.key] = el; }} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : { minWidth: 110 }), ...(isFrozen ? { left: lefts[c.key] ?? 0, zIndex: 4 } : {}) }} className={cn("group relative", isFrozen && "is-frozen", isAnchor && "is-frozen-anchor", c.align === "right" && "!text-right")}>
+        {colunaSelecao && <th className={cn("th-select", selectCongelado && "sticky left-0 z-[4]")}><MgCheck aria-label="Selecionar todos" checked={allOn} indeterminate={someOn} onChange={(on) => onToggleAll(on)} /></th>}
+        {columns.map((c, i) => {
+          const isFrozen = i < frozenCount;
+          const isAnchor = i === frozenCount - 1 && frozenCount > 0;
+          const fitOn = Boolean(autoFitKeys?.has(c.key));
+          const filterOn = Boolean(filteredKeys?.has(c.key));
+          /** Mini-ícones: filtro/auto; congelar só na âncora (não nas colunas à esquerda). */
+          const temIcones = filterOn || fitOn || isAnchor;
+          return (
+          <th key={c.key} ref={(el) => { ths.current[c.key] = el; }} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : { minWidth: 110 }), ...(isFrozen ? { left: lefts[c.key] ?? leftBase, zIndex: 4 } : {}) }} className={cn("group relative", isFrozen && "is-frozen", isAnchor && "is-frozen-anchor", c.align === "right" && "!text-right")}>
             <div className="flex h-[30px] items-center gap-1">
-              <button type="button" className={cn("inline-flex min-w-0 flex-1 items-center gap-1 truncate text-left", !onSort && "cursor-default")} onClick={() => c.sortable !== false && onSort?.(c.key)} title={c.label}><span className="truncate">{c.label}</span>{sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 text-[var(--mg-accent)]" /> : <ArrowDown className="h-3 w-3 text-[var(--mg-accent)]" />)}</button>
+              <button type="button" className={cn("inline-flex min-w-0 flex-1 items-center gap-1 truncate text-left", !onSort && "cursor-default")} onClick={() => c.sortable !== false && onSort?.(c.key)} title={c.label}>
+                <span className="truncate">{c.label}</span>
+                {sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 shrink-0 text-[#94a3b8]" /> : <ArrowDown className="h-3 w-3 shrink-0 text-[#94a3b8]" />)}
+              </button>
+              {temIcones && <span className="th-estado" aria-hidden>
+                {filterOn && <Filter className="th-estado-icone" strokeWidth={2.25} />}
+                {fitOn && <Scaling className="th-estado-icone" strokeWidth={2.25} />}
+                {isAnchor && <PanelLeft className="th-estado-icone" strokeWidth={2.25} />}
+              </span>}
               {(() => {
-                /**
-                 * O menu só existe quando ALGUMA ação é realmente possível nesta coluna. Uma coluna que
-                 * declara `hideable/resizable/freezable/autoFit: false` (identidade fixa) não ganha um menu
-                 * com entradas mortas: ela simplesmente não tem menu — e a alça de redimensionar também não
-                 * é renderizada. Controle que não faz nada é pior do que controle ausente.
-                 */
+                const rotuloFreeze = isAnchor ? "Descongelar colunas" : isFrozen ? "Congelar até esta coluna" : "Congelar coluna";
                 const itens = [
                   ...(c.filterable === false ? [] : [{ key: "filter", label: "Abrir filtro avançado", icon: <Filter className="h-4 w-4" />, disabled: !onFilter || !c.kind }]),
-                  ...(c.autoFit === false ? [] : [{ key: "fit", label: "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" />, disabled: !onAutoFit }]),
-                  ...(c.freezable === false ? [] : [{ key: "freeze", label: isAnchor ? "Descongelar colunas" : isFrozen ? "Congelar até esta coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" />, disabled: !onFreeze }]),
+                  ...(c.autoFit === false ? [] : [{ key: "fit", label: fitOn ? "Desativar auto ajustar" : "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" />, disabled: !onAutoFit }]),
+                  ...(c.freezable === false ? [] : [{ key: "freeze", label: rotuloFreeze, icon: <PanelLeft className="h-4 w-4" />, disabled: !onFreeze }]),
                   ...(c.hideable === false ? [] : [{ key: "hide", label: "Ocultar coluna", icon: <EyeOff className="h-4 w-4" />, disabled: !onHide || columns.length <= 1 }])
                 ];
-                // Nenhuma ação sequer APLICÁVEL a esta coluna → nenhum menu. O critério é a DECLARAÇÃO da
-                // coluna; "aplicável mas indisponível" (sem callback, sem `kind`) continua aparecendo
-                // desabilitado, exatamente como antes. Sem essa separação, corrigir o menu da identidade
-                // mudaria a interface de todas as outras colunas — regressão fora do objetivo.
                 if (!itens.length) return null;
-                if (referenceHeaders && onFilter && c.filterable !== false) return <button type="button" aria-label={`Abrir menu da coluna ${c.label}`} aria-haspopup="menu" className={cn("th-menu", filteredKeys?.has(c.key) && "is-on")} onClick={() => onFilter(c.key)}>{filteredKeys?.has(c.key) ? <Filter /> : <MoreVertical />}</button>;
-                return <B1Popover className="w-52 p-1" align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className={cn("th-menu", filteredKeys?.has(c.key) && "is-on")}>{filteredKeys?.has(c.key) ? <Filter /> : <MoreVertical />}</button>}>
-                  <MenuList onPick={(k) => { setMenuFor(null); if (k === "filter") onFilter?.(c.key); if (k === "fit") onAutoFit?.(c.key); if (k === "freeze") onFreeze?.(isAnchor ? 0 : i + 1); if (k === "hide") onHide?.(c.key); }} items={itens} />
+                return <B1Popover className={cn("w-52 p-1", popoverClassName)} align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className="th-menu"><MoreVertical className="h-3 w-3" strokeWidth={2.25} /></button>}>
+                  <MenuList onPick={(k) => {
+                    setMenuFor(null);
+                    if (k === "filter") onFilter?.(c.key);
+                    if (k === "fit") aplicarAutoAjuste(c, i, fitOn);
+                    if (k === "freeze") onFreeze?.(isAnchor ? 0 : i + 1);
+                    if (k === "hide") onHide?.(c.key);
+                  }} items={itens} />
                 </B1Popover>;
               })()}
             </div>
-            {c.resizable !== false && <span role="separator" aria-label={`Redimensionar ${c.label}`} onMouseDown={(e) => startResize(e, c)} className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 hover:bg-[var(--mg-accent)] hover:opacity-60" />}
+            {c.resizable !== false && <span
+              role="separator"
+              aria-label={`Redimensionar ${c.label}`}
+              title="Arraste para redimensionar · duplo clique para ajustar à largura"
+              onMouseDown={(e) => startResize(e, c)}
+              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); ajustarLarguraUmaVez(c, i); }}
+              className="absolute right-0 top-0 z-[5] h-full w-1.5 cursor-col-resize touch-none select-none bg-transparent"
+            />}
           </th>); })}
       </tr></thead>
       <tbody>
-        {loading && rows.length === 0 && <tr><td colSpan={columns.length + 2} className="!h-24 text-center"><Spinner className="mx-auto" /></td></tr>}
-        {!loading && rows.length === 0 && <tr><td colSpan={columns.length + 2} className="!h-24"><Empty text={emptyText} /></td></tr>}
+        {loading && rows.length === 0 && <tr><td colSpan={Math.max(1, colSpanVazio)} className="!h-24 text-center"><Spinner className="mx-auto" /></td></tr>}
+        {!loading && rows.length === 0 && <tr><td colSpan={Math.max(1, colSpanVazio)} className="!h-24"><Empty text={emptyText} /></td></tr>}
         {rows.map((r, ri) => { const id = key(r); const on = selected.has(id); return (
-          <tr key={id} ref={(el) => { trs.current[id] = el; }} data-testid="b1-row" aria-selected={on} className={cn(on && "selected", ri % 2 === 1 ? "odd" : "even")} onClick={(e) => onSelectClick(id, selectClickOf(e))} onDoubleClick={() => onOpen?.(r)}>
-            <td className="td-select sticky left-0 z-[2]" style={{ background: stickyBg(on, ri) }} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}><MgCheck aria-label="Selecionar linha" checked={on} onChange={() => onToggle(id)} /></td>
+          <tr key={id} ref={(el) => { trs.current[id] = el; }} data-testid="b1-row" aria-selected={on}
+            tabIndex={colunaSelecao ? undefined : 0}
+            className={cn(on && "selected", ri % 2 === 1 ? "odd" : "even")}
+            onClick={(e) => onSelectClick(id, selectClickOf(e))}
+            onDoubleClick={() => onOpen?.(r)}
+            onKeyDown={colunaSelecao ? undefined : (e) => {
+              if (e.key === "Enter") { e.preventDefault(); onOpen?.(r); }
+              else if (e.key === " ") { e.preventDefault(); onSelectClick(id, selectClickOf(e)); }
+            }}>
+            {colunaSelecao && <td className={cn("td-select", selectCongelado && "sticky left-0 z-[2]")} style={selectCongelado ? { background: stickyBg(on, ri) } : undefined} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}><MgCheck aria-label="Selecionar linha" checked={on} onChange={() => onToggle(id)} /></td>}
             {columns.map((c, i) => { const isFrozen = i < frozenCount; const t = cellText(c, r); return (
-              <td key={c.key} title={t} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : {}), ...(isFrozen ? { left: lefts[c.key] ?? 0, zIndex: 2, background: stickyBg(on, ri) } : {}) }} className={cn(onOpen && "cursor-pointer", isFrozen && "is-frozen", i === frozenCount - 1 && "is-frozen-anchor", c.align === "right" && "!text-right tabular-nums")}>{c.render ? c.render(r) : t || <span className="text-slate-400">–</span>}</td>); })}
+              <td key={c.key} title={t} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : {}), ...(isFrozen ? { left: lefts[c.key] ?? leftBase, zIndex: 2, background: stickyBg(on, ri) } : {}) }} className={cn(onOpen && "cursor-pointer", isFrozen && "is-frozen", i === frozenCount - 1 && frozenCount > 0 && "is-frozen-anchor", c.align === "right" && "!text-right tabular-nums")}>{c.render ? c.render(r) : t || <span className="text-slate-400">–</span>}</td>); })}
           </tr>); })}
       </tbody>
       {footer && <tfoot className="bg-slate-50 font-semibold">{footer}</tfoot>}

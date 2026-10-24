@@ -210,7 +210,7 @@ test("W-4c — 'Confirmar venda' na criação com TOP automática: o POST confir
       if (r.method() === "POST" && /^\/api\/sales\/sales\/[^/]+\/confirm$/.test(p)) confirms.push(p);
       if (r.method() === "GET" && /^\/api\/sales\/sales\/[^/]+\/previa-confirmacao$/.test(p)) previas.push(p);
     });
-    await expect(page.getByTestId("central-vendas-confirmar"), "a criação da venda oferece 'Confirmar venda'").toContainText("Confirmar venda");
+    await expect(page.getByTestId("central-vendas-confirmar"), "a criação da venda oferece 'Confirmar venda'").toHaveAttribute("aria-label", "Confirmar venda");
     const { corpo } = await salvarPela(page, "central-vendas-confirmar", vendas);
     expect(corpo.confirmacaoAutomatica, "o POST já confirmou").toEqual({ confirmado: true });
     await expect(situacaoNaConsulta(page), "a consulta abre a venda confirmada").toHaveAttribute("data-status", "confirmed");
