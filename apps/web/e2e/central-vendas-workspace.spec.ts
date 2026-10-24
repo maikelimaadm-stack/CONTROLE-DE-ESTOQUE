@@ -1036,18 +1036,33 @@ test("W21 — painel inferior recolhível: só a faixa fica, nada focável atrá
   await expect(recolher, "o foco fica no botão").toBeFocused();
   await expect.poll(() => alturaDoPainel(page), "só a faixa das abas: 39px").toBe(39);
   await expect(painel.getByRole("tab")).toHaveText(["Totais", "Financeiro", "Frete e transporte", "Fiscal", "Observações"]);
-  await expect(page.getByTestId(DIVISOR_H), "recolhido não se redimensiona").toHaveCount(0);
+  // Decisão 356: divisor permanece (paridade Portal); bloqueado — não redimensiona
+  const divisorRecolhido = page.getByTestId(DIVISOR_H);
+  await expect(divisorRecolhido, "divisor fica visível recolhido").toBeVisible();
+  await expect(divisorRecolhido).toHaveAttribute("data-bloqueado", "true");
+  const alturaBloqueada = await valorDo(page, DIVISOR_H);
+  await divisorRecolhido.focus(); await page.keyboard.press("ArrowUp");
+  expect(await valorDo(page, DIVISOR_H), "recolhido não se redimensiona pelo teclado").toBe(alturaBloqueada);
   // o conteúdo da aba não fica atrás da faixa: invisível E fora do foco
   await expect(painel.locator('[role="tabpanel"][data-state="active"]'), "nem a aba ativa aparece").toBeHidden();
   const desconto = page.getByLabel("Desconto", { exact: true });
   await expect(desconto).toBeHidden();
   expect(await desconto.evaluate((el) => { (el as HTMLElement).focus(); return document.activeElement === el; }), "campo de aba recolhida não recebe foco").toBe(false);
 
-  // expandir pelo botão: a ÚLTIMA altura, o divisor e o conteúdo voltam
+  // expandir pelo botão: a ÚLTIMA altura e o conteúdo voltam; divisor deixa de estar bloqueado
   await recolher.click();
   await expect.poll(() => alturaDoPainel(page)).toBe(escolhida);
   await expect(page.getByTestId(DIVISOR_H)).toBeVisible();
+  await expect(page.getByTestId(DIVISOR_H)).not.toHaveAttribute("data-bloqueado", "true");
   await expect(painel.getByRole("tabpanel")).toBeVisible();
+
+  // duplo clique no divisor recolhe (paridade Portal itens ↔ listagem)
+  await page.getByTestId(DIVISOR_H).dblclick();
+  await expect(recolher).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(() => alturaDoPainel(page)).toBe(39);
+  await page.getByTestId(DIVISOR_H).dblclick();
+  await expect(recolher).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(() => alturaDoPainel(page)).toBe(escolhida);
 
   // recolhido, escolher uma aba expande já nela
   await recolher.click();

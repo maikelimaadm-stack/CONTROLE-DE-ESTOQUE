@@ -347,6 +347,8 @@
 }
 .divisorVertical { align-self: stretch; width: 7px; cursor: col-resize; }
 .divisorHorizontal { height: 7px; flex-shrink: 0; cursor: row-resize; }
+/* Painel recolhido: divisor fica (duplo clique expande); sem cursor de resize (decisão 356). */
+.divisorHorizontal[data-bloqueado="true"] { cursor: pointer; }
 .divisorVertical::before,
 .divisorHorizontal::before { content: ""; position: absolute; background: transparent; transition: background-color var(--mf) var(--ez-io), width var(--mf) var(--ez-io), height var(--mf) var(--ez-io), left var(--mf) var(--ez-io), top var(--mf) var(--ez-io); }
 .divisorVertical::before { top: 0; bottom: 0; left: 3px; width: 1px; }

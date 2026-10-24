@@ -192,6 +192,7 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
                 columns={visibleColumns}
                 referenceHeaders
                 selecaoSticky={false}
+                colunaSelecao={false}
                 frozen={congeladas} onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n, visibleColumns.length)) }))}
                 rows={sortedRows}
                 sort={sort ?? undefined}
@@ -200,7 +201,7 @@ export function ItensDaNota({ documento, altura, recolhido, onRecolher, maximiza
                 onSelectClick={() => {}}
                 onToggle={() => {}}
                 onToggleAll={() => {}}
-                onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w }, autoFit: (c.autoFit ?? []).filter((x) => x !== k) }))}
+                onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))}
                 onAutoFit={(k) => updCols((c) => {
                   const n = new Set(c.autoFit ?? []);
                   if (n.has(k)) n.delete(k); else n.add(k);

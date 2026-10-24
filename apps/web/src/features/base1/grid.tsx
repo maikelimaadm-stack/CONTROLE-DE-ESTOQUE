@@ -11,16 +11,17 @@ import type { Base1Column, Row } from "./types";
 export const SELECT_COLUMN_WIDTH = 36;
 
 /**
- * Grade do modelo base (emp-table-pro do MG): coluna de seleção, cabeçalho de 30 px com menu por coluna
+ * Grade do modelo base (emp-table-pro do MG): cabeçalho de 30 px com menu por coluna
  * (filtro avançado, auto ajustar, congelar, ocultar), ordenação por clique, redimensionamento por arraste,
  * colunas congeladas (sticky), linhas de 26 px alternadas com destaque.
- * Seleção como no MG: clique na linha seleciona só ela (Ctrl alterna, Shift intervalo); o controle da linha
- * alterna sem desmarcar as demais; duplo clique abre o registro.
+ * Seleção como no MG: clique na linha seleciona só ela (Ctrl/Cmd alterna, Shift intervalo); com
+ * `colunaSelecao`, o checkbox da linha alterna sem desmarcar as demais. Duplo clique abre o registro.
  * Congelamento em prefixo: "Congelar" na coluna N congela todas até N; âncora descongela.
  * Auto ajustar (menu) é estado contínuo até desligar; duplo clique na alça só ajusta a largura (não liga o modo).
- * Mini-ícones: filtro/auto; congelar só na âncora; com congeladas, a coluna de seleção também fica sticky.
+ * Mini-ícones: filtro/auto; congelar só na âncora; com congeladas e coluna de seleção, ela também fica sticky.
+ * Portal de Compras (356): sem coluna de checkbox — só clique / atalho na linha.
  */
-export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelectClick, onToggle, onToggleAll, onOpen, frozen = 0, onFreeze, onHide, onResize, onAutoFit, onFilter, footer, rowKey, emptyText, scrollToId, filteredKeys, autoFitKeys, referenceHeaders: _referenceHeaders = false, popoverClassName, selecaoSticky = true }: {
+export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelectClick, onToggle, onToggleAll, onOpen, frozen = 0, onFreeze, onHide, onResize, onAutoFit, onFilter, footer, rowKey, emptyText, scrollToId, filteredKeys, autoFitKeys, referenceHeaders: _referenceHeaders = false, popoverClassName, selecaoSticky = true, colunaSelecao = true }: {
   columns: Base1Column[]; rows: Row[]; loading?: boolean; sort?: { key: string; dir: "asc" | "desc" }; onSort?: (key: string) => void;
   selected: Set<string>; onSelectClick: (id: string, mod: SelectClick) => void; onToggle: (id: string) => void; onToggleAll: (on: boolean) => void; onOpen?: (r: Row) => void;
   frozen?: number; onFreeze?: (n: number) => void; onHide?: (key: string) => void;
@@ -35,6 +36,11 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
    * `false` no Portal de Compras (decisão 338).
    */
   selecaoSticky?: boolean;
+  /**
+   * Coluna de checkbox à esquerda. `false` no Portal de Compras / itens da nota (decisão 356):
+   * seleção só por clique na linha (Ctrl/Cmd alterna, Shift intervalo).
+   */
+  colunaSelecao?: boolean;
 }) {
   const key = rowKey ?? ((r: Row) => String(r["id"]));
   const allOn = rows.length > 0 && rows.every((r) => selected.has(key(r)));
@@ -45,9 +51,10 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   const [menuFor, setMenuFor] = React.useState<string | null>(null);
   const pinnedCount = (() => { let n = 0; while (n < columns.length && columns[n]!.pinned === "left") n++; return n; })();
   const frozenCount = Math.max(0, Math.min(Math.max(frozen, pinnedCount), columns.length));
-  /** Com colunas congeladas, a seleção também fica sticky (Portal e demais). */
-  const selectCongelado = selecaoSticky || frozenCount > 0;
+  /** Com colunas congeladas, a seleção também fica sticky (quando a coluna existe). */
+  const selectCongelado = colunaSelecao && (selecaoSticky || frozenCount > 0);
   const leftBase = selectCongelado ? SELECT_COLUMN_WIDTH : 0;
+  const colSpanVazio = columns.length + (colunaSelecao ? 1 : 0);
   const measure = React.useCallback(() => {
     const out: Record<string, number> = {};
     let acc = leftBase;
@@ -100,7 +107,10 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   };
   /** Assinatura estável dos filtros (o Set do pai é novo a cada render). */
   const filtrosSig = React.useMemo(() => (filteredKeys && filteredKeys.size ? [...filteredKeys].sort().join("\0") : ""), [filteredKeys]);
-  /** Enquanto o modo está ligado, reaplica quando mudam linhas/colunas (reconta cabeçalho + ícones). */
+  /**
+   * Enquanto o modo está ligado, reaplica quando mudam linhas/colunas/congelamento (reconta cabeçalho + ícones).
+   * Chama só `onResize` — o pai NÃO pode limpar `autoFit` aqui (decisão 356); desligar é menu ou arraste.
+   */
   React.useEffect(() => {
     if (!autoFitKeys?.size || !onResize) return;
     columns.forEach((c, i) => {
@@ -127,7 +137,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   return <div className="mg-grid-wrap">
     <table className="mg-grid">
       <thead><tr>
-        <th className={cn("th-select", selectCongelado && "sticky left-0 z-[4]")}><MgCheck aria-label="Selecionar todos" checked={allOn} indeterminate={someOn} onChange={(on) => onToggleAll(on)} /></th>
+        {colunaSelecao && <th className={cn("th-select", selectCongelado && "sticky left-0 z-[4]")}><MgCheck aria-label="Selecionar todos" checked={allOn} indeterminate={someOn} onChange={(on) => onToggleAll(on)} /></th>}
         {columns.map((c, i) => {
           const isFrozen = i < frozenCount;
           const isAnchor = i === frozenCount - 1 && frozenCount > 0;
@@ -178,11 +188,19 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
           </th>); })}
       </tr></thead>
       <tbody>
-        {loading && rows.length === 0 && <tr><td colSpan={columns.length + 2} className="!h-24 text-center"><Spinner className="mx-auto" /></td></tr>}
-        {!loading && rows.length === 0 && <tr><td colSpan={columns.length + 2} className="!h-24"><Empty text={emptyText} /></td></tr>}
+        {loading && rows.length === 0 && <tr><td colSpan={Math.max(1, colSpanVazio)} className="!h-24 text-center"><Spinner className="mx-auto" /></td></tr>}
+        {!loading && rows.length === 0 && <tr><td colSpan={Math.max(1, colSpanVazio)} className="!h-24"><Empty text={emptyText} /></td></tr>}
         {rows.map((r, ri) => { const id = key(r); const on = selected.has(id); return (
-          <tr key={id} ref={(el) => { trs.current[id] = el; }} data-testid="b1-row" aria-selected={on} className={cn(on && "selected", ri % 2 === 1 ? "odd" : "even")} onClick={(e) => onSelectClick(id, selectClickOf(e))} onDoubleClick={() => onOpen?.(r)}>
-            <td className={cn("td-select", selectCongelado && "sticky left-0 z-[2]")} style={selectCongelado ? { background: stickyBg(on, ri) } : undefined} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}><MgCheck aria-label="Selecionar linha" checked={on} onChange={() => onToggle(id)} /></td>
+          <tr key={id} ref={(el) => { trs.current[id] = el; }} data-testid="b1-row" aria-selected={on}
+            tabIndex={colunaSelecao ? undefined : 0}
+            className={cn(on && "selected", ri % 2 === 1 ? "odd" : "even")}
+            onClick={(e) => onSelectClick(id, selectClickOf(e))}
+            onDoubleClick={() => onOpen?.(r)}
+            onKeyDown={colunaSelecao ? undefined : (e) => {
+              if (e.key === "Enter") { e.preventDefault(); onOpen?.(r); }
+              else if (e.key === " ") { e.preventDefault(); onSelectClick(id, selectClickOf(e)); }
+            }}>
+            {colunaSelecao && <td className={cn("td-select", selectCongelado && "sticky left-0 z-[2]")} style={selectCongelado ? { background: stickyBg(on, ri) } : undefined} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}><MgCheck aria-label="Selecionar linha" checked={on} onChange={() => onToggle(id)} /></td>}
             {columns.map((c, i) => { const isFrozen = i < frozenCount; const t = cellText(c, r); return (
               <td key={c.key} title={t} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : {}), ...(isFrozen ? { left: lefts[c.key] ?? leftBase, zIndex: 2, background: stickyBg(on, ri) } : {}) }} className={cn(onOpen && "cursor-pointer", isFrozen && "is-frozen", i === frozenCount - 1 && frozenCount > 0 && "is-frozen-anchor", c.align === "right" && "!text-right tabular-nums")}>{c.render ? c.render(r) : t || <span className="text-slate-400">–</span>}</td>); })}
           </tr>); })}
