@@ -186,7 +186,7 @@ test("MI-W1 — requisição (destino das opções do servidor) → Atender requ
     await expect(herdado, "o destino herdado da requisição, travado").toHaveAttribute("data-exigencia", "herdada");
     await expect(herdado).toContainText(centro.rotulo);
     // Em parte: 4 dos 6.
-    await linhas.first().getByTestId("central-estoque-selecionar-item").click();
+    await linhas.first().click();
     await linhas.first().getByLabel("Quantidade do item 1").fill("4");
     const postConsumo = page.waitForRequest(ehPostDe("consumos"));
     await page.getByTestId("estoque-salvar").click();
@@ -245,7 +245,7 @@ test("MI-W1 — requisição (destino das opções do servidor) → Atender requ
     await expect(page.getByTestId("estoque-central-origem")).toHaveAttribute("data-origem-id", consumo);
     await expect(linhas).toHaveCount(1);
     await expect(linhas.first().getByTestId("central-estoque-saldo-da-origem"), "o que o consumo baixou e ainda não voltou").toHaveText("4,0000");
-    await linhas.first().getByTestId("central-estoque-selecionar-item").click();
+    await linhas.first().click();
     await linhas.first().getByLabel("Quantidade do item 1").fill("1");
     const lidoConsumo = await api<DocLido>(page, "GET", `/api/estoque/consumos/${consumo}`);
     const postDevolucao = page.waitForRequest(ehPostDe("devolucoes-consumo"));

@@ -48,39 +48,40 @@
 .linha[data-multilinha] { height: 80px; }
 
 /*
- * rótulo à frente (padrão): 126px, à direita, ":" antes do "*". Altura de 28px, a do padding-box da linha (o da caixa):
- * o centro do rótulo é o da caixa, 15. A caixa de linha é a do valor, 15px (12,5 × 1,2): o glifo da DM Sans (16px) não
- * cabe nela e o Chrome reparte a sobra −1/0 — com a mesma linha, rótulo e valor ficam no mesmo centro e na mesma
- * linha-base (com linha de 12px a sobra é −2/−2 e o rótulo ficava 0,5px abaixo).
+ * rótulo à frente (padrão): 126px, à direita, ":" antes do "*". Centro da caixa com `top:50%` + `translateY(-50%)`
+ * (mesmo do painel) — `top:0`+`height:28`+flex deixava o nome visualmente no topo frente ao valor. Flex permanece
+ * pelo `order` (":" antes do "*"). Duas linhas: line-height 14 × 2 = 28.
  */
 .rotulo {
   position: absolute;
   left: 0;
-  top: 0;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 2;
   box-sizing: content-box;
   width: 126px;
-  height: 28px;
+  height: auto;
   max-width: none;
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   padding: 0 2px 0 0;
   font-size: 12px;
   font-weight: 500;
-  line-height: 15px;
+  line-height: 14px;
   color: #64748b;
-  /* O rótulo PODE QUEBRAR (decisão do usuário, 10/2026): nome comprido vira duas linhas dentro dos 30px da linha
-     (12px × 1,15 ≈ 13,8 por linha), em vez de perder o começo do nome — o "…de despesa" que aparecia cortado. */
+  /* O rótulo PODE QUEBRAR (decisão do usuário, 10/2026): nome comprido vira duas linhas, em vez de perder o começo. */
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
   text-align: right;
-  line-height: 1.15;
   overflow-wrap: anywhere;
   pointer-events: none;
   transition: font-size .22s cubic-bezier(.2, .8, .2, 1), padding .22s cubic-bezier(.2, .8, .2, 1), top .22s cubic-bezier(.2, .8, .2, 1);
 }
+/* multilinha: valor no topo — rótulo na faixa da 1ª linha, não no meio dos 80px */
+.linha[data-multilinha] .rotulo { top: 0; transform: none; height: 28px; }
 .rotulo::after { content: ":"; order: 0; }
 .obrigatorio { order: 1; margin-left: 3px; color: #dc2626; font-weight: 600; }
 
@@ -118,8 +119,8 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
 .linha:not([data-estado]):focus-within .caixa,
 .linha:not([data-estado]):has([aria-expanded="true"]) .caixa { border-color: #cfd6de; box-shadow: 0 1px 3px rgba(15, 23, 42, .10); }
 
-/* o valor (leitura e travado): texto que encurta, "—" apagado quando vazio */
-.valor { display: flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
+/* o valor (leitura e travado): texto que encurta, "—" apagado quando vazio — centro vertical na caixa */
+.valor { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .valor > :last-child { overflow: hidden; text-overflow: ellipsis; }
 .vazio { color: #94a3b8; }
 /*
@@ -138,14 +139,18 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
  * com ou sem ícone) — o texto termina em reticências antes do recuo direito, e antes do "limpar" quando há valor.
  */
 .caixa[data-controle] { padding: 0; }
+/* Filho da caixa: enche o inset. NÃO pôr `display:flex` em input/textarea — quebra o centro nativo do texto. */
 .caixa[data-controle] > :not([type="hidden"]) {
   position: absolute;
   inset: -1px;
-  display: flex;
-  align-items: stretch;
   min-width: 0;
   width: auto;
   height: auto;
+}
+/* Botão/envelope (pesquisa do item, RefSelect, MgSelect, data): flex + centro — o texto fica no meio da caixa */
+.caixa[data-controle] > :not([type="hidden"]):not(input):not(textarea) {
+  display: flex;
+  align-items: center;
 }
 /* Input e Textarea são o próprio filho da caixa: a altura sai do inset, não dos 100% do padding-box */
 .caixa[data-controle] > .controle:not([type="hidden"]) { height: auto !important; }
@@ -169,17 +174,42 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
 }
 .caixa .controle:disabled { color: #8b939e; -webkit-text-fill-color: #8b939e; cursor: not-allowed; }
 fieldset:disabled .caixa .controle { cursor: default; }
+.caixa input.controle {
+  display: block;
+  line-height: 28px; /* = altura do padding-box da linha: texto no meio (produto/qtd/valor) */
+}
+[data-densidade="compacto"] .caixa input.controle { line-height: normal; }
 .caixa input.controle::placeholder { color: transparent; }
 .caixa select.controle { appearance: none; background-image: none !important; }
 /* área de texto (sempre multilinha), densidade padrão: a 1ª linha no y do valor de uma linha só (centro 15). O conteúdo
    começa em 2 e a linha mede 1,5em ⇒ 15 − 2 − ,75em = 13px − ,75em (3,625px com 12,5px). A especificidade é BAIXA de
    propósito: vence o padding da `.controle` (!important lá também) e perde para as do compacto (13px), que não mudam */
-.caixa textarea.controle { resize: none; line-height: 1.5; padding-top: calc(13px - .75em) !important; }
-/* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" continua à direita */
-.caixa :global(.cmd-display) { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+.caixa textarea.controle { display: block; resize: none; line-height: 1.5; padding-top: calc(13px - .75em) !important; }
+/* seletor de referência / pesquisa do item (Produto, Local, Empresa…): valor no centro vertical da caixa */
+.caixa :global(.cmd-display) {
+  display: flex !important;
+  align-items: center !important;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 0;
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.caixa :global(.cmd-display) > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
 .caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
+/* rótulo à frente: o nome do campo já está fora — sem "Pesquisar"/placeholder na caixa (como o input com placeholder transparente) */
+[data-densidade="rotulo-a-frente"] .caixa :global(.cmd-display-placeholder) { visibility: hidden; }
 .caixa :global(.cmd-chevron) { display: none; }
-.caixa :global(.cmd-clear) { right: 11px; margin-top: -7px; }
+.caixa :global(.cmd-clear) { right: 11px; top: 50%; margin-top: -7px; }
 .linha:has(:global(.cmd-clear)) .controle { padding-right: 30px !important; }
 
 /* ícone À ESQUERDA, dentro da caixa (lupa, calendário, chevron) */
@@ -250,6 +280,8 @@ fieldset:disabled .caixa .controle { cursor: default; }
 [data-densidade="rotulo-acima"] .linha[data-multilinha] { height: auto; }
 [data-densidade="rotulo-acima"] .rotulo {
   position: static;
+  top: auto;
+  transform: none;
   width: auto;
   height: auto;
   max-width: none;

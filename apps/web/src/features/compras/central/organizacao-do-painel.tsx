@@ -1,8 +1,8 @@
 "use client";
 import * as React from "react";
-import { num } from "@/lib/utils";
+import { numeroBR } from "@/lib/utils";
 import { enumLabel } from "@/lib/copy";
-import { Input } from "@/components/ui";
+import { EntradaNumero } from "@/components/ui";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { PainelColuna, PainelLargo } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
@@ -68,8 +68,8 @@ function CampoSeguro({ e }: { e: EstadoDaCriacao }) {
     return <CampoLeitura rotulo="Seguro" testId="compras-seguro-campo" valor={texto} />;
   }
   return <CampoDaCentral rotulo="Seguro" erro={e.erro("seguro")} preenchido={e.fiscal.seguro !== ""} testId="compras-seguro-campo" data-campo-fiscal="seguro">
-    <Input data-testid="compras-seguro" type="number" step="0.01" min="0" inputMode="decimal" value={e.fiscal.seguro}
-      onChange={(ev) => e.mudarFiscal({ seguro: ev.target.value })} />
+    <EntradaNumero data-testid="compras-seguro" casas={2} value={e.fiscal.seguro}
+      onChange={(v) => e.mudarFiscal({ seguro: v })} />
   </CampoDaCentral>;
 }
 
@@ -122,13 +122,13 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
     value: valorUnico("totais"), label: "Totais",
     erro: comErro(totais) || Boolean(e.erro("seguro")),
     content: <PainelColuna>
-      <CampoLeitura rotulo="Total dos produtos" valor={num(e.totalItens, 2)} testId="compras-total-produtos" />
+      <CampoLeitura rotulo="Total dos produtos" valor={numeroBR(e.totalItens)} testId="compras-total-produtos" />
       {ORDEM_DOS_TOTAIS.map((c) => {
         if (c === "seguro") return seguro ? <CampoSeguro key="seguro" e={e} /> : null;
         return totais.includes(c) ? <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment> : null;
       })}
       <Divisor />
-      <CampoLeitura rotulo="Total da compra" valor={num(e.totalExibido, 2)} testId="compras-total" />
+      <CampoLeitura rotulo="Total da compra" valor={numeroBR(e.totalExibido)} testId="compras-total" />
     </PainelColuna>
   });
 

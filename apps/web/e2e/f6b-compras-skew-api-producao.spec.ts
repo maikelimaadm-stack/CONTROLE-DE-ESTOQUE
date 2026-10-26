@@ -168,7 +168,7 @@ test("OP01-F6b · K1-1 (sentido 1) — a consulta do pedido deste web sobre a AP
   await expect(page.getByTestId("compras-proximos-passos")).toHaveAttribute("data-situacao", "pronto");
   const receber = page.getByTestId(`compras-proximo-passo-${topCompra.codigo}`);
   await expect(receber, "o Receber… de hoje, pelo testid do passo").toBeEnabled();
-  await expect(receber).toHaveText("Receber…");
+  await expect(receber).toHaveAttribute("aria-label", "Receber…");
   await expect(page.locator("[data-testid^='compras-proximo-passo-']"), "um passo só").toHaveCount(1);
 
   // A TELA ASSENTADA: nenhuma requisição em voo (as perguntas da capacidade já voltaram e a tela já as leu).

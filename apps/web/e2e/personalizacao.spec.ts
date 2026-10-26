@@ -2,11 +2,12 @@ import { test, expect } from "@playwright/test";
 import { login, api } from "./helpers";
 
 /** MODELO BASE1: listagem (chips de filtro, colunas, cards), modo Registro, configuração de layout e relatórios. */
+/** Decisão 353: sem "Restaurar padrão da tela" no Mais opções — restaura pela API + limpa cache local. */
 async function restoreScreen(page: import("@playwright/test").Page) {
-  await page.getByLabel("Mais opções").click();
-  await page.getByRole("menuitem", { name: "Restaurar padrão da tela" }).click();
-  await expect(page.locator("[data-sonner-toast]").first()).toContainText("restaurada");
-  await page.waitForTimeout(500);
+  await api(page, "DELETE", "/api/preferences/warehouses/list?scope=user", {});
+  await page.evaluate(() => { Object.keys(localStorage).filter((k) => k.startsWith("agro:prefs:")).forEach((k) => localStorage.removeItem(k)); });
+  await page.reload();
+  await expect(page.getByTestId("b1-list")).toBeVisible();
 }
 
 test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta e modo cards persistem", async ({ page }) => {
@@ -29,12 +30,13 @@ test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta
   await page.getByLabel("Abrir menu da coluna Sigla").click();
   await page.getByRole("menuitem", { name: "Ocultar coluna" }).click();
   await expect(page.locator("th", { hasText: "Sigla" })).toHaveCount(0);
-  // configuração de colunas: coluna volta pela lista "disponíveis"
-  await page.getByLabel("Configurar colunas da tabela").click();
+  // configuração de colunas: pelo Mais opções (decisão 329 — saiu da faixa de filtros)
+  await page.getByLabel("Mais opções").click();
+  await page.getByRole("menuitem", { name: "Configurar colunas" }).click();
   const dlg = page.getByRole("dialog");
-  await expect(dlg.getByText("Configuração de colunas")).toBeVisible();
+  await expect(dlg.getByRole("heading", { name: "Colunas" })).toBeVisible();
   await dlg.getByRole("button", { name: "Sigla" }).dblclick();
-  await dlg.getByRole("button", { name: "OK" }).click();
+  await dlg.getByRole("button", { name: "Pronto" }).click();
   await expect(page.locator("th", { hasText: "Sigla" })).toBeVisible();
   await page.getByLabel("Abrir menu da coluna Sigla").click();
   await page.getByRole("menuitem", { name: "Ocultar coluna" }).click();
@@ -42,9 +44,18 @@ test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta
   const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes("/api/preferences/") && r.ok() && (r.request().postData() ?? "").includes("cards"));
   await page.getByRole("button", { name: "Cards", exact: true }).click();
   await expect(page.getByTestId("b1-card").first()).toBeVisible();
-  await page.getByLabel("Configurar layout dos cards").click();
-  await page.getByRole("radio", { name: /2 cards por linha/ }).click();
-  await page.getByRole("button", { name: "OK" }).click();
+  await page.getByLabel("Mais opções").click();
+  await page.getByRole("menuitem", { name: "Layout dos cards" }).click();
+  const layoutDlg = page.getByRole("dialog", { name: "Layout dos cards" });
+  await expect(layoutDlg).toBeVisible();
+  await layoutDlg.getByRole("radio", { name: /2 cards por linha/ }).click();
+  await layoutDlg.getByRole("button", { name: "Pronto" }).click();
+  await page.getByLabel("Mais opções").click();
+  await page.getByRole("menuitem", { name: "Campos dos cards" }).click();
+  const camposDlg = page.getByRole("dialog", { name: "Campos dos cards" });
+  await expect(camposDlg).toBeVisible();
+  await expect(camposDlg.getByText(/de 10 campos/)).toBeVisible();
+  await camposDlg.getByRole("button", { name: "Pronto" }).click();
   await saved;
   // recarrega sem cache local: preferências vêm do servidor
   await page.evaluate(() => { Object.keys(localStorage).filter((k) => k.startsWith("agro:prefs:")).forEach((k) => localStorage.removeItem(k)); });

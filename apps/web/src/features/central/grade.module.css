@@ -1,18 +1,18 @@
 /*
  * GRADE DE ITENS DA CENTRAL (motor) — APRESENTAÇÃO DO DESENHO (VISUAL-UX-02, decisão 270).
  *
- * As medidas saem do CSS do desenho aprovado (seções "itens", "pesquisa de produto" e DENSIDADE): barra de itens
- * de 36px (+1 de borda), cabeçalho da grade de 28px, linha de 23px (+1 de borda), rodapé de 32px (+1 de borda),
- * botões redondos de 25px com a sombra verde, alternador Grade | Formulário de 25px, "Configurar colunas" de 340px.
- * As duas densidades do desenho usam os MESMOS valores na grade — por isso esta folha não depende da posição do rótulo.
- * O desenho mede em `content-box` (altura + borda), a casa usa `border-box`: onde a borda soma à altura do desenho, a
- * regra declara `box-sizing: content-box` para chegar ao MESMO número (barra 37, cabeçalho 29, linha 24, rodapé 33).
+ * Medidas: barra de itens 36px (+1 de borda → 37), rodapé 32px (+1 → 33), botões 25px com sombra verde,
+ * alternador Grade | Formulário 25px. A grade de produtos (decisão 345) alinha ao `mg-grid` da tabela principal:
+ * cabeçalho 30px, linha 26px, fonte 12px, padding 0 9px (border-box). A barra/rodapé seguem content-box do desenho.
  *
  * Classes SÓ desta folha: `.grade`/`.gradeRolagem` de `moldura.module.css` também desenham a prévia
  * do configurador de layouts (`admin/layout-configurador/previa-itens.tsx`) e ficam como estão. As cores repetem o
  * hexadecimal, como o CSS da Central já faz — a catraca de nomenclatura conta cada token herdado como dívida.
  * O movimento usa as variáveis de `.workspace` (a moldura da Central), que zera tudo com prefers-reduced-motion.
  */
+
+/* raiz: envolve barra + corpo + rodapé (desmarca ao clicar fora, decisão 347) */
+.raiz { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
 
 /* ═════════════ barra de itens — 36px ═════════════ */
 .barra {
@@ -27,60 +27,62 @@
 }
 .espaco { flex-grow: 1; }
 
-/* botão redondo da barra: fundo claro, ícone ardósia, sombra verde suave */
+/* botão redondo da barra: 25px + sombra verde (decisão 335) */
 .botao {
   composes: app-button from global;
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 25px !important;
+  min-width: 25px !important;
+  height: 25px !important;
+  min-height: 25px !important;
   box-sizing: border-box;
   border-radius: 999px;
   border: 1px solid transparent;
-  background: #f1f3f4;
-  color: #475569;
-  box-shadow: none;
+  background: #f1f3f4 !important;
+  color: #475569 !important;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30) !important;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  padding: 0;
+  padding: 0 !important;
   flex-shrink: 0;
   transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
 }
-.botao:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
-.botao:active:not(:disabled) { background: #dde3e8; transform: scale(.90); }
+.botao:hover:not(:disabled) { background: #e8ecef !important; color: #0f172a !important; box-shadow: 0 3px 9px rgba(34, 197, 94, .36) !important; }
+.botao:active:not(:disabled) { background: #dde3e8 !important; transform: scale(.90); }
 .botao:disabled { opacity: .42; cursor: not-allowed; }
 .botao:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-.botao svg { width: 16px; height: 16px; flex-shrink: 0; }
-/* Adicionar produto: o círculo verde sólido; ao passar o mouse, o cinza de todos os botões da barra */
-.botaoAdicionar { background: #40de63; color: #fff; border-color: transparent; }
-.botaoAdicionar:hover:not(:disabled) { background: #e8ecef; color: #0f172a; }
-.botaoAdicionar:active:not(:disabled) { background: #dde3e8; }
-.botaoAdicionar svg { width: 17px; height: 17px; }
+.botao svg { width: 16px !important; height: 16px !important; flex-shrink: 0; }
+/* Adicionar produto / + de rateio e parcelas: o MESMO círculo cinza dos demais. */
+.botaoAdicionar { background: #f1f3f4 !important; color: #475569 !important; border-color: transparent !important; }
+.botaoAdicionar:hover:not(:disabled) { background: #e8ecef !important; color: #0f172a !important; }
+.botaoAdicionar:active:not(:disabled) { background: #dde3e8 !important; }
+.botaoAdicionar svg { width: 16px !important; height: 16px !important; }
 /* navegação do formulário do item: o mesmo círculo, com o hover e o desabilitado do desenho */
 .botaoItem:hover:not(:disabled) { background: #e5e7eb; }
 .botaoItem:disabled { opacity: .45; }
-.botaoItem svg { width: 14px; height: 14px; }
+.botaoItem svg { width: 16px; height: 16px; }
 
-/* Grade | Formulário — segmentado de 25px */
+/* Grade | Formulário — trilho 25px (decisão 335) */
 .segmento {
-  height: 28px;
+  height: 25px;
   box-sizing: border-box;
-  padding: 0;
+  padding: 2px;
   gap: 5px;
   border-radius: 999px;
   background: #f1f3f4;
-  box-shadow: none;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
   display: flex;
   align-items: center;
   flex-shrink: 0;
 }
 .segmento button {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 21px;
+  height: 21px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 999px;
   background: transparent;
   color: #475569;
   display: flex;
@@ -88,6 +90,7 @@
   justify-content: center;
   cursor: pointer;
   padding: 0;
+  flex-shrink: 0;
   transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
 }
 .segmento button:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
@@ -95,8 +98,8 @@
 .segmento button[aria-pressed="true"]:hover { background: #fff; color: #0f172a; box-shadow: 0 1px 4px rgba(15, 23, 42, .16); }
 .segmento button:active { transform: scale(.97); }
 .segmento button:focus-visible { outline: 2px solid #22a85c; outline-offset: 1px; }
-.segmento button svg { width: 16px; height: 16px; }
-.segmento button[data-visao="formulario"] svg { width: 15px; height: 15px; }
+.segmento button svg { width: 14px; height: 14px; }
+.segmento button[data-visao="formulario"] svg { width: 14px; height: 14px; }
 
 /* aviso funcional dos itens (saldo encerrado, parte gerada): faixa discreta entre a barra e a grade */
 .aviso {
@@ -110,42 +113,42 @@
   color: #64748b;
 }
 
-/* ═════════════ corpo: grade, formulário, ou os dois lado a lado ═════════════ */
+/* ═════════════ corpo: grade OU formulário (decisão 341 — nunca os dois juntos) ═════════════ */
 .corpo { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; animation: aparece var(--mi) var(--ez-io) backwards; }
-.corpo[data-visao="ambos"] { display: grid; grid-template-columns: minmax(0, 1fr) 316px; }
 .rolagem { flex: 1 1 auto; min-height: 0; min-width: 0; overflow: auto; }
 
-/* a grade do desenho: cabeçalho de 28px e linha de 23px, cada uma com a borda de 1px embaixo */
+/* grade de produtos = estilo da tabela principal (mg-grid): cabeçalho 30 / linha 26 / fonte 12 / pad 9 */
+/* Largura = soma das colunas (inline). Sem width:100% — com fixed isso redistribuía e o resize invertia. */
 .grade {
-  width: 100%;
+  width: max-content;
   line-height: normal;
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
-  font-size: 11.5px;
+  font-size: 12px;
   color: #111827;
 }
 .grade th {
   position: sticky;
   top: 0;
   z-index: 2;
-  height: 28px;
-  box-sizing: content-box;
-  padding: 0 8px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 9px;
   background: #fff;
   font-weight: 600;
   color: #334155;
   text-align: left;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* overflow visível para a alça na divisão; o rótulo é que corta com reticências */
+  overflow: visible;
   border-bottom: 1px solid #e7eaee;
   border-right: 1px solid #e7eaee;
 }
 .grade td {
-  height: 23px;
-  box-sizing: content-box;
-  padding: 0 8px;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 0 9px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -154,14 +157,86 @@
   background: #fff;
   transition: background-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io);
 }
-.grade th:last-child,
-.grade td:last-child { border-right: 0; }
+.cabecalhoColuna { position: relative; }
+.cabecalhoRotulo {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.cabecalhoLinha {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+}
+.cabecalhoLinha .cabecalhoRotulo { flex: 1 1 auto; }
+.menuCabecalho {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+}
+.menuCabecalho:hover { background: #f1f3f4; color: #0f172a; }
+/* ⋮ não fica marcado por auto/congelar — só hover. */
+.menuCabecalho :global(svg) { width: 12px; height: 12px; display: block; color: inherit; }
+.iconeEstado { width: 12px !important; height: 12px !important; flex-shrink: 0; display: block; color: inherit; }
+/* Mini-ícones de estado no th: cor mais clara que o ⋮ (#475569). */
+.iconesEstado {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+  color: #94a3b8;
+}
+.iconesEstado :global(svg) { width: 12px; height: 12px; flex-shrink: 0; display: block; color: inherit; }
+.grade th.congelada,
+.grade td.congelada {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: #fff;
+}
+/* Sombra só na âncora (última congelada) — sem filete verde. */
+.grade th.congeladaAncora,
+.grade td.congeladaAncora {
+  box-shadow: 4px 0 8px -4px rgba(15, 23, 42, .22);
+}
+.grade th.congelada { z-index: 5; top: 0; }
+.linha:nth-child(even) td.congelada { background: #fafbfc; }
+.linha:hover td.congelada { background: #eef6ff; }
+.linha.linhaMarcada td.congelada,
+.linha.linhaMarcada:hover td.congelada { background: rgba(64, 222, 99, .07); }
+.linha.linhaComErro td.congelada { background: #fff7f7; }
+/* Alça na divisão (dentro do th): hit 6px, sem marcador; overflow:hidden no th cortava a alça. */
+.alcaResize {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+}
 /* número: o valor à direita; o rótulo do cabeçalho continua à esquerda, como no desenho */
 .grade td.numero { text-align: right; font-variant-numeric: tabular-nums; }
 .grade td.forte { font-weight: 600; }
 .grade td.estoque { color: #94a3b8; }
 .linha:nth-child(even) td { background: #fafbfc; }
-.linha:hover td { background: rgba(15, 23, 42, .028); }
+.linha:hover td { background: #eef6ff; }
 .vazio { padding: 30px 16px !important; height: auto !important; text-align: center; white-space: normal !important; font-size: 12.5px; color: #64748b; }
 /* a grade vazia do desenho é um bloco sem a borda de linha embaixo (116 px, não 117) */
 .grade td.vazio { border-bottom: 0; }
@@ -192,8 +267,6 @@
 
 /* ═════════════ formulário do item ═════════════ */
 .form { flex-grow: 1; min-height: 0; overflow: auto; }
-.corpo[data-visao="ambos"] .form { order: 2; border-left: 1px solid #eef1f4; background: #fcfdfd; }
-.corpo[data-visao="ambos"] > :not(.form) { order: 1; }
 .formNav { display: flex; align-items: center; gap: 6px; height: 38px; box-sizing: content-box; flex-shrink: 0; padding: 0 12px 0 14px; line-height: normal; }
 .formNavTitulo { font-size: 12.5px; font-weight: 600; color: #1e293b; }
 .formCampos { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 520px; box-sizing: content-box; padding: 0 14px 14px; }
@@ -222,8 +295,6 @@
 .configTitulo { font-size: 12.5px; font-weight: 600; color: #1e293b; }
 .configSub { font-size: 11px; color: #94a3b8; }
 .configLista { max-height: 320px; box-sizing: content-box; overflow: auto; padding: 4px 0; }
-/* "Mostrar grade e formulário": a opção de visualização, abaixo da lista, no mesmo desenho de linha */
-.configVisao { padding: 4px 0; border-top: 1px solid rgba(15, 23, 42, .08); }
 .configLinha {
   display: flex;
   align-items: center;
@@ -291,7 +362,7 @@
 /* ═════════════ pesquisa de produto (e de armazém) — o painel do desenho ═════════════ */
 /* flutuante: preso à célula da grade, 640px, abrindo 2px abaixo do conteúdo da linha */
 .pesquisa {
-  z-index: 34;
+  z-index: 10000;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -309,7 +380,7 @@
   .pesquisa { background: rgba(255, 255, 255, .97); }
 }
 /* o desenho mede o painel da grade com 8px de recuo interno dos lados e sem a borda direita (ele herda a célula) */
-.pesquisaFlutuante { position: fixed; padding: 0 8px; border-right-width: 0; font-size: 11.5px; }
+.pesquisaFlutuante { position: fixed; padding: 0 8px; border-right-width: 0; font-size: 12px; z-index: 10000; }
 /* no formulário do item: a lista entra no fluxo, logo abaixo do campo */
 .pesquisaFluxo { position: relative; }
 .pesquisaBusca {
@@ -416,15 +487,15 @@
 /*
  * ═════════════ ITENS DA CRIAÇÃO (VISUAL-UX-02, Fase B) ═════════════
  * Classes SÓ da grade editável da criação (`itens.tsx`); as da consulta acima ficam como estão.
- * Medidas e cores do desenho: círculo de seleção de 15px numa coluna de 34px, linha marcada com o verde a 7% e o
- * filete de 2px, linha com pendência em #fff7f7, célula de pesquisa com a lupa à esquerda, entrada de 74px.
+ * Coluna de seleção 36px (par com `.th-select` do mg-grid), círculo 15px, linha marcada com verde a 7% e
+ * filete de 3px (par com a tabela principal), pendência #fff7f7, lupa à esquerda, entrada 74px.
  */
 /* Duplicar item / Remover item: o botão redondo da barra, com o hover e o ícone de 15px do desenho */
 .botaoAcaoItem:hover:not(:disabled) { background: #e5e7eb; }
-.botaoAcaoItem svg { width: 15px; height: 15px; }
+.botaoAcaoItem svg { width: 16px; height: 16px; }
 .botaoRemover { color: #1e293b; }
 
-/* a coluna do círculo: 34px, sem recuo, o círculo no centro */
+/* a coluna do círculo: 36px, sem recuo, o círculo no centro */
 .grade th.celulaSelecao,
 .grade td.celulaSelecao { padding: 0; text-align: center; text-overflow: clip; }
 .circulo {
@@ -456,13 +527,13 @@
 /* linha marcada (também no hover) e linha com pendência — depois da zebra e do hover, para vencê-los */
 .linha.linhaMarcada td,
 .linha.linhaMarcada:hover td { background: rgba(64, 222, 99, .07); }
-.linha.linhaMarcada td:first-child { box-shadow: inset 2px 0 0 #22a85c; }
+.linha.linhaMarcada td:first-child { box-shadow: inset 3px 0 0 #22a85c; }
 .linha.linhaComErro td { background: #fff7f7; }
 
 /* célula de pesquisa (produto, armazém): o texto da célula, a lupa à esquerda; vazio cinza, com pendência vermelho */
 .celulaBotao {
   width: 100%;
-  height: 23px;
+  height: 26px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -487,51 +558,45 @@
 .celulaIcone svg { width: 13px; height: 13px; }
 .celulaBotao:hover .celulaIcone { color: #22a85c; }
 
-/* entrada da linha marcada (Quantidade, Valor unitário): 74px, à direita */
-.entrada {
-  width: 74px;
-  height: 19px;
+/* Célula editável = texto da célula: sem pílula, sem fundo branco no foco, sem filete. */
+.entrada,
+.entrada:global(.mg-input) {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: 22px;
   box-sizing: border-box;
-  border: 1px solid #cfd6de;
-  border-radius: 6px;
-  background: #fff;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
   text-align: right;
   font: inherit;
-  font-size: 12px;
-  padding: 0 6px;
-  font-variant-numeric: tabular-nums;
-  transition: border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io);
-}
-.entrada:focus { outline: none; border-color: #cfd6de; box-shadow: 0 1px 3px rgba(15, 23, 42, .10); }
-.quantidade .entrada { flex: 0 1 74px; min-width: 0; }
-
-/* grade vazia: a frase e o botão "Adicionar produto" do desenho (30px, pílula clara com a sombra verde) */
-.vazioConteudo { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.botaoTexto {
-  height: 30px;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 13px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: #f1f3f4;
-  color: #475569;
-  box-shadow: none;
-  font: inherit;
   font-size: 12.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
 }
-.botaoTexto:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
-.botaoTexto:active:not(:disabled) { background: #dde3e8; }
-.botaoTexto:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-.botaoTexto svg { width: 15px; height: 15px; flex-shrink: 0; }
+/* sem setas nativas se algum type=number sobrar; EntradaNumero usa text */
+.entrada[type="number"]::-webkit-inner-spin-button,
+.entrada[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.entrada[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.entrada:focus,
+.entrada:global(.mg-input):focus {
+  outline: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.entrada[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  width: 0;
+  padding: 0;
+  margin: 0;
+}
+.quantidade .entrada { flex: 1 1 auto; min-width: 0; width: auto; }
+
+/* grade vazia: frase + o mesmo círculo só-ícone da barra (decisão 327; sem pílula com texto) */
+.vazioConteudo { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 
 /* selo "novo" do formulário do item e o ponto de pendência do rodapé */
 .selo { font-size: 10.5px; font-weight: 600; color: #475569; background: #eef1f4; border-radius: 999px; padding: 0 6px; line-height: 16px; }

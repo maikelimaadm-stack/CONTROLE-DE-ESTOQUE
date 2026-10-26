@@ -30,7 +30,7 @@ material de auditoria, **não** fonte de verdade deste produto), reimplementada 
 | `columns` | `visible[]`, `order[]`, `widths{px}`, `frozen` |
 | `sort` | `{ key, dir }` padrão da listagem |
 | `pageSize` | 10…200 |
-| `view` | `mode: table\|cards`, `cardFields[]`, `cardsPerRow: 1\|2\|3\|4`, `density` |
+| `view` | `mode: table\|cards`, `cardFields[]` (máx. 10), `cardsPerRow: 1\|2\|3\|4`, `density` |
 | `filters` | `visible[]` (campos de filtro exibidos), `operators{campo: operador}` (padrão por campo), `saved[]` (filtros nomeados com valores), `defaultSaved` |
 
 UI: "Configuração de colunas" (colunas disponíveis × em uso, numeradas, busca, setas, ↺), menus de coluna, popovers dos cards e itens "Salvar tela como padrão da organização" / "Restaurar padrão da tela" em **Mais opções**.

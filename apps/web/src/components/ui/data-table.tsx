@@ -7,6 +7,7 @@ import { BASE1_PAGE_SIZES } from "@agro/shared";
 import { Base1Grid } from "@/features/base1/grid";
 import { IconBtn } from "@/features/base1/ui";
 import type { Base1Column, Row } from "@/features/base1/types";
+import { MgSelect } from "@/components/ui/mg-controls";
 
 export interface Column<T> { key: string; label: string; render?: (row: T) => React.ReactNode; className?: string; sortable?: boolean; align?: "right" | "left" | "center"; /** largura fixa em px (preferência do usuário) */ width?: number; /** família do filtro (chip/cabeçalho): texto, número, data, enumeração… */ kind?: FilterKind; /** opções fixas (kind enum) */ options?: { value: string; label: string }[];
   /**
@@ -48,7 +49,7 @@ export interface DataTableProps<T> {
   footer?: React.ReactNode; onExport?: (format: "csv" | "xlsx") => void; selectable?: boolean; selected?: Set<string>; onSelect?: (ids: Set<string>) => void; onRowClick?: (row: T) => void; compact?: boolean; caption?: string; emptyText?: string;
 }
 /**
- * Tabela paginada no MODELO BASE1 (mesma grade `mg-grid` do Base1List: seleção circular, menus de coluna, linhas de 26 px,
+ * Tabela paginada no MODELO BASE1 (mesma grade `modelo-base` do Base1List: seleção circular, menus de coluna, linhas de 26 px,
  * rodapé Selecionados/Listados/Filtrados/Totais com pílula de quantidade). Clique seleciona; duplo clique abre.
  */
 export function DataTable<T extends Record<string, unknown>>({ columns, rows, total, page = 1, pageSize = 20, onPage, onPageSize, sort, onSort, loading, rowKey, actions, footer, onExport, selected, onSelect, onRowClick, caption, emptyText }: DataTableProps<T>) {
@@ -74,7 +75,16 @@ export function DataTable<T extends Record<string, unknown>>({ columns, rows, to
     <div className="mg-summary no-print">
       <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {sel.size}</span><span className="mg-summary__item">Listados: {rows.length}</span><span className="mg-summary__item">Filtrados: {total ?? rows.length}</span><span className="mg-summary__item">Totais: {total ?? rows.length}</span></div>
       {total !== undefined && onPage && <span className="flex items-center gap-2">
-        <select aria-label="Quantidade de registros por página" className="mg-pill-select" value={pageSize} onChange={(e) => onPageSize?.(Number(e.target.value))} disabled={!onPageSize}>{sizes.map((n) => <option key={n} value={n}>{n}</option>)}</select>
+        <MgSelect
+          aria-label="Quantidade de registros por página"
+          className="mg-pill-select"
+          wrapClassName="w-auto shrink-0"
+          align="end"
+          value={String(pageSize)}
+          onChange={(v) => onPageSize?.(Number(v))}
+          disabled={!onPageSize}
+          options={sizes.map((n) => ({ value: String(n), label: String(n) }))}
+        />
         <IconBtn aria-label="Página anterior" title="Página anterior" disabled={page <= 1} onClick={() => onPage(page - 1)}><ChevronLeft /></IconBtn>
         <span className={cn("text-[11px] font-semibold text-[var(--mg-text-2)] tabular-nums")}>{page}/{pages}</span>
         <IconBtn aria-label="Próxima página" title="Próxima página" disabled={page >= pages} onClick={() => onPage(page + 1)}><ChevronRight /></IconBtn>

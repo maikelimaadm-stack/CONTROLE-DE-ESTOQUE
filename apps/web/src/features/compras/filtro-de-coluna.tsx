@@ -1,9 +1,10 @@
 "use client";
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { Check, FilterX, Search } from "lucide-react";
+import { Check, FilterX, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CalendarioDeData, CalendarioDePeriodo, SeletorDeOperador } from "@/components/ui";
+import { deveFecharFiltroPorFora, haCamadaAninhadaDoFiltroAberta } from "@/features/base1/camada-aninhada-do-filtro";
 
 /**
  * Filtro de cabeçalho do painel de itens — o `fpop` do HTML de referência (padrão Excel): limpar, condição
@@ -45,9 +46,9 @@ export function casa(f: FiltroAtivo, tipo: Tipo, valor: string): boolean {
 
 const Chk = ({ on, parte }: { on: boolean; parte?: boolean }) => <span className={cn("chk", on && "on", !on && parte && "parte")}>{(on || parte) && <Check strokeWidth={3} />}</span>;
 
-export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar, onFechar }: {
+export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar, onFechar, className }: {
   rotulo: string; tipo: Tipo; ancora: string; valores: string[]; atual: FiltroAtivo | null;
-  onAplicar: (f: FiltroAtivo | null) => void; onFechar: () => void;
+  onAplicar: (f: FiltroAtivo | null) => void; onFechar: () => void; className?: string;
 }) {
   const contagem = React.useMemo(() => { const m = new Map<string, number>(); for (const v of valores) m.set(v, (m.get(v) ?? 0) + 1); return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], "pt-BR", { numeric: true })); }, [valores]);
   const [sel, setSel] = React.useState<Set<string>>(() => new Set(atual?.valores ?? contagem.map(([v]) => v)));
@@ -56,12 +57,30 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
   const [v2, setV2] = React.useState(atual?.v2 ?? "");
   const [busca, setBusca] = React.useState("");
   const [pos, setPos] = React.useState<React.CSSProperties>({ visibility: "hidden" });
+  const painel = React.useRef<HTMLDivElement>(null);
   const fechar = React.useRef(onFechar); fechar.current = onFechar;
   React.useEffect(() => {
-    const teclado = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); fechar.current(); } };
+    // Escape: com a lista de condição aberta, o Radix fecha só ela; o shell fica (decisão 359).
+    const teclado = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (haCamadaAninhadaDoFiltroAberta()) return;
+      e.preventDefault();
+      fechar.current();
+    };
+    // Fora do painel (e da âncora do cabeçalho) fecha — sem overlay `fixed inset-0` (ui-audit / decisão de primitives).
+    // Condição/calendário/cmd-panel saem em portal: clique neles NÃO é "fora" (decisão 357).
+    // Com Select aberto (`pointer-events: none` no body), o alvo pode ser html/body mesmo
+    // sobre o gatilho — aí a geometria do ponteiro decide (decisão 359).
+    // Com camada aberta, até fora real só fecha a listagem; shell no 2º fora (decisão 360).
+    const fora = (e: MouseEvent) => {
+      const th = document.querySelector(ancora)?.closest("th") ?? null;
+      if (!deveFecharFiltroPorFora({ alvo: e.target, ponto: e, shell: painel.current, ancora: th })) return;
+      fechar.current();
+    };
     document.addEventListener("keydown", teclado);
-    return () => document.removeEventListener("keydown", teclado);
-  }, []);
+    document.addEventListener("mousedown", fora);
+    return () => { document.removeEventListener("keydown", teclado); document.removeEventListener("mousedown", fora); };
+  }, [ancora]);
   React.useLayoutEffect(() => {
     const el = document.querySelector(ancora)?.closest("th");
     if (!el) return;
@@ -79,11 +98,12 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
     const valoresFiltrados = sel.size === contagem.length ? null : sel;
     onAplicar(!op && !valoresFiltrados ? null : { op, v1, v2, valores: valoresFiltrados });
   };
+  /** Enter no campo de valor/busca = Aplicar (submit). Enter no seletor de condição (portal) escolhe opção — fora do form. */
+  const aoEnviar = (e: React.FormEvent) => { e.preventDefault(); aplicar(); };
   const ph = tipo === "data" ? "dd/mm/aaaa" : tipo === "num" ? "Número" : "Valor";
   // portal no body: um ancestral com transform desloca o position:fixed para longe do cabeçalho
-  return createPortal(<div className="b1ref">
-    <button type="button" aria-label="Fechar o filtro" tabIndex={-1} className="fixed inset-0 z-[59] cursor-default" onClick={onFechar} />
-    <div className="pop fpop" role="menu" aria-label={`Filtrar coluna ${rotulo}`} style={pos}>
+  return createPortal(<div className={cn("b1ref", className)} ref={painel}>
+    <form className={cn("pop fpop", className)} role="menu" aria-label={`Filtrar coluna ${rotulo}`} style={pos} onSubmit={aoEnviar}>
       <button type="button" className="fmi" disabled={!atual} onClick={() => onAplicar(null)}><FilterX size={14} /><span className="fval-l">Limpar filtro de “{rotulo}”</span></button>
       <span className="opt-sep" aria-hidden="true" />
       <div className="fcond">
@@ -110,9 +130,9 @@ export function FiltroDeColuna({ rotulo, tipo, ancora, valores, atual, onAplicar
       </div>
       <div className="fpop-f">
         <span style={{ flexGrow: 1 }} />
-        <button type="button" className="tb-btn tb-btn-out xs" onClick={onFechar}>Cancelar</button>
-        <button type="button" className="tb-btn novo xs" onClick={aplicar}>Aplicar</button>
+        <button type="button" className="tb-btn tb-btn-icon tb-btn-sm shrink-0" title="Cancelar" aria-label="Cancelar" onClick={onFechar}><X className="h-4 w-4" /></button>
+        <button type="submit" className="tb-btn tb-btn-icon shrink-0" title="Aplicar" aria-label="Aplicar"><Check className="h-4 w-4" /></button>
       </div>
-    </div>
+    </form>
   </div>, document.body);
 }

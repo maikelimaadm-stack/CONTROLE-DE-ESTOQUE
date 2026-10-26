@@ -40,12 +40,13 @@ export type { AbaDoPainel, ControleDaCentral, IdentidadeDoDocumento, PropsDaMold
  * │ workspace-tabs`): estas organizam CAMPOS de um documento, aquelas organizam TELAS.               │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
- * ┌─ PAINEL RECOLHÍVEL E WORKSPACE IMERSIVO (R2) ──────────────────────────────────────────────────┐
- * │ "Recolher painel" deixa só a faixa das abas (39px, a medida do protótipo) e some com o divisor   │
- * │ horizontal — recolhido não se redimensiona. O conteúdo da aba sai do layout (`display: none`),  │
- * │ então nada fica focável atrás da faixa. Expandir (pelo botão ou escolhendo uma aba) devolve a    │
- * │ ÚLTIMA altura: ela nunca foi apagada, só deixou de ser aplicada. Como os divisores, é estado de  │
- * │ tela e morre com ela (PANEL_COLLAPSE_PERSISTENCE = NONE).                                        │
+ * ┌─ PAINEL RECOLHÍVEL E WORKSPACE IMERSIVO (R2 / decisão 356) ─────────────────────────────────────┐
+ * │ "Recolher painel" deixa só a faixa das abas (39px, a medida do protótipo). O divisor horizontal  │
+ * │ permanece (como o Portal itens ↔ listagem): duplo clique recolhe/expande; arraste e teclado     │
+ * │ só valem com o painel expandido. O conteúdo da aba sai do layout (`display: none`), então nada  │
+ * │ fica focável atrás da faixa. Expandir (botão, duplo clique no divisor ou escolher uma aba)      │
+ * │ devolve a ÚLTIMA altura: ela nunca foi apagada, só deixou de ser aplicada. Como os divisores, é  │
+ * │ estado de tela e morre com ela (PANEL_COLLAPSE_PERSISTENCE = NONE).                              │
  * │                                                                                                  │
  * │ Montada, a Central declara-se workspace imersivo (`useWorkspaceImersivo`): o shell deixa de      │
  * │ desenhar a trilha acima dela, e a moldura começa onde o design a põe. A decisão é do shell — rota │
@@ -92,7 +93,7 @@ export function BotaoAmpliar({ regiao }: PropsDoBotaoAmpliar) {
  * Events com captura, então soltar o ponteiro fora do elemento ainda termina o arrasto — e o valor é
  * calculado sobre o que havia no INÍCIO do arrasto mais o deslocamento, nunca acumulado render a render.
  */
-function Divisor({ eixo, valor, min, max, rotulo, onInicio, onMover, onFim, onTeclado, arrastando, testId }: {
+function Divisor({ eixo, valor, min, max, rotulo, onInicio, onMover, onFim, onTeclado, arrastando, testId, bloqueado = false, onDuploClique, title }: {
   eixo: "vertical" | "horizontal";
   valor: number; min: number; max: number; rotulo: string;
   onInicio: () => void;
@@ -102,6 +103,10 @@ function Divisor({ eixo, valor, min, max, rotulo, onInicio, onMover, onFim, onTe
   onTeclado: (tecla: string) => boolean;
   arrastando: boolean;
   testId: string;
+  /** Recolhido: sem arraste/teclado de resize; duplo clique ainda expande (decisão 356). */
+  bloqueado?: boolean;
+  onDuploClique?: () => void;
+  title?: string;
 }) {
   const inicio = React.useRef<{ x: number; y: number } | null>(null);
   const terminar = () => { if (!inicio.current) return; inicio.current = null; onFim(); };
@@ -113,14 +118,24 @@ function Divisor({ eixo, valor, min, max, rotulo, onInicio, onMover, onFim, onTe
     aria-valuemin={min}
     aria-valuemax={max}
     aria-valuenow={Math.round(valor)}
+    aria-disabled={bloqueado || undefined}
+    title={title}
     data-testid={testId}
     data-arrastando={arrastando ? "true" : "false"}
+    data-bloqueado={bloqueado ? "true" : undefined}
     className={eixo === "vertical" ? estilos.divisorVertical : estilos.divisorHorizontal}
-    onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); inicio.current = { x: e.clientX, y: e.clientY }; e.currentTarget.setPointerCapture(e.pointerId); onInicio(); }}
+    onDoubleClick={onDuploClique ? (e) => { e.preventDefault(); onDuploClique(); } : undefined}
+    onPointerDown={(e) => {
+      if (bloqueado || e.button !== 0) return;
+      e.preventDefault();
+      inicio.current = { x: e.clientX, y: e.clientY };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      onInicio();
+    }}
     onPointerMove={(e) => { if (!inicio.current) return; onMover({ dx: e.clientX - inicio.current.x, dy: e.clientY - inicio.current.y }); }}
     onPointerUp={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); terminar(); }}
     onPointerCancel={terminar}
-    onKeyDown={(e) => { if (onTeclado(e.key)) e.preventDefault(); }}
+    onKeyDown={(e) => { if (bloqueado) return; if (onTeclado(e.key)) e.preventDefault(); }}
   >
     <span className={estilos.grip} aria-hidden>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -219,17 +234,15 @@ export function CentralDeDocumento({ prefixoTestid, titulo, acoes, acoesDireita,
     data-densidade={densidade} data-ampliado={ampliado ?? undefined} aria-busy={carregando || undefined}
     className={cn(estilos.workspace, className)} style={estilo}>
     <AmpliarContexto.Provider value={ampliar}>
-      {/* A barra é AÇÃO, não cabeçalho: o contexto do documento mora no cabeçalho de Dados principais.
-          O cartão é a moldura (borda e sombra); a barra de 44px mora dentro dele. */}
-      <div className={estilos.barraCartao}>
-        <div className={estilos.barra} data-testid={`${prefixoTestid}-acoes`} role="toolbar" aria-label={`Ações · ${titulo}`}>
-          {acoes}
-          <span className={estilos.barraEspaco} />
-          {acoesDireita}
-        </div>
-      </div>
-
+      {/* Decisão 353: barra e documento no MESMO cartão (como barraIntegrada do Portal) — sem vão entre eles. */}
       <section className={estilos.doc} aria-label="Documento em edição">
+        <div className={estilos.barraCartao}>
+          <div className={estilos.barra} data-testid={`${prefixoTestid}-acoes`} role="toolbar" aria-label={`Ações · ${titulo}`}>
+            {acoes}
+            <span className={estilos.barraEspaco} />
+            {acoesDireita}
+          </div>
+        </div>
         <div ref={corpoRef} className={estilos.corpo}>
           <section className={estilos.coluna} data-testid={`${prefixoTestid}-dados`} data-regiao="dados" aria-label="Dados principais">
             <div className={estilos.cabecalho}>
@@ -239,7 +252,7 @@ export function CentralDeDocumento({ prefixoTestid, titulo, acoes, acoesDireita,
               <span className={estilos.identidade} data-testid={`${prefixoTestid}-identidade`}>
                 {carregando
                   ? <span className={estilos.skLinha} aria-hidden />
-                  : <span className={cn(estilos.identidadeIcone, estilos.dicaFim)} data-tom={identidade.tom} data-dica={identidade.dica} tabIndex={identidade.dica ? 0 : undefined} role={identidade.dica ? "img" : undefined} aria-label={identidade.dica} aria-hidden={identidade.dica ? undefined : true}>{identidade.icone ?? <FilePlus />}</span>}
+                  : <span className={cn(estilos.identidadeIcone, estilos.dicaFim)} data-tom={identidade.tom} data-dica={identidade.dica} role={identidade.dica ? "img" : undefined} aria-label={identidade.dica} aria-hidden={identidade.dica ? undefined : true}>{identidade.icone ?? <FilePlus />}</span>}
                 {/* o nome do documento é o TÍTULO da tela (h1): leitor de tela e atalho de título chegam nele */}
                 <h1 className={cn(estilos.identidadeNome, carregando && "sr-only")} data-codigo={identidade.codigo ? "true" : undefined} data-testid={`${prefixoTestid}-identidade-nome`}>{identidade.nome}</h1>
                 {identidade.situacao && <span className={estilos.identidadeSituacao} data-testid={`${prefixoTestid}-situacao`}>{identidade.situacao}</span>}
@@ -267,9 +280,13 @@ export function CentralDeDocumento({ prefixoTestid, titulo, acoes, acoesDireita,
           </section>
         </div>
 
-        {!recolhido && <Divisor eixo="horizontal" valor={altura} min={ALTURA_PAINEL.min} max={ALTURA_PAINEL.max}
-          rotulo="Altura de Itens e do painel inferior" onInicio={() => iniciar("horizontal")} onMover={moverHorizontal} onFim={terminar} onTeclado={tecladoHorizontal}
-          arrastando={arrastando === "horizontal"} testId={`${prefixoTestid}-divisor-horizontal`} />}
+        <Divisor eixo="horizontal" valor={recolhido ? ALTURA_PAINEL.min : altura} min={ALTURA_PAINEL.min} max={ALTURA_PAINEL.max}
+          rotulo="Altura de Itens e do painel inferior"
+          title={recolhido ? "Duplo clique expande o painel" : "Arraste para redimensionar · duplo clique recolhe"}
+          bloqueado={recolhido}
+          onDuploClique={() => setRecolhido((r) => !r)}
+          onInicio={() => iniciar("horizontal")} onMover={moverHorizontal} onFim={terminar} onTeclado={tecladoHorizontal}
+          arrastando={arrastando === "horizontal"} testId={`${prefixoTestid}-divisor-horizontal`} />
 
         <div ref={painelRef} className={estilos.painel} data-testid={`${prefixoTestid}-painel`} data-recolhido={recolhido ? "true" : "false"}
           onClickCapture={(e) => expandirPelaAba(e.target)}

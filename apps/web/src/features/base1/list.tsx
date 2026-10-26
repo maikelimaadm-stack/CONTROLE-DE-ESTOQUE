@@ -2,8 +2,10 @@
 import * as React from "react";
 import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
-import { Plus, Pencil, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw, Paperclip } from "lucide-react";
-import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, type ListPreferences } from "@agro/shared";
+import { Plus, Pencil, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, History, FileBarChart, ListPlus, ListX, Trash2, Paperclip, LayoutGrid, ListChecks } from "lucide-react";
+import { IconeRaio } from "@/features/central/barra";
+import { MgSelect } from "@/components/ui/mg-controls";
+import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, CARD_FIELDS_MAX, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { getSession } from "@/lib/api";
 import { Confirm, ErrorBox } from "@/components/ui";
@@ -58,6 +60,21 @@ export interface Base1ListProps {
   onDuplicate?: (row: Row) => void;
   /** componente do modo "Registro" (formulário embutido com navegação entre registros) */
   Record?: React.ComponentType<RecordProps>;
+  /**
+   * Portal de Compras (decisão 328): esconde o modo Registro no ViewSwitch; preferência antiga
+   * `view.mode === "record"` cai em tabela.
+   */
+  semModoRegistro?: boolean;
+  /**
+   * Portal de Compras (decisão 331): esconde a faixa de chips de filtro (Período, Fornecedor…).
+   * Filtro de cabeçalho (`referenceHeaders`) e busca da toolbar seguem disponíveis quando ligados.
+   */
+  semFaixaDeFiltros?: boolean;
+  /**
+   * Portal de Compras (decisão 332): barra de ações dentro do mesmo painel da grade/cards,
+   * sem vão nem segundo card entre botões e tabela.
+   */
+  barraIntegrada?: boolean;
   extraMenu?: { key: string; label: string; icon?: React.ReactNode; onClick: () => void }[];
   /** botões adicionais ao lado de "Novo" (ex.: Importar XML) */
   extraToolbar?: React.ReactNode;
@@ -96,7 +113,7 @@ function comColunaDeIdentidade(rodape: React.ReactNode, deslocamento: number): R
  * rodapé com contadores e "Carregar mais". Preferências por usuário (padrão da organização opcional).
  */
 export function Base1List(props: Base1ListProps) {
-  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra, csvName } = props;
+  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, reportHref, canDelete, onDelete, onDuplicate, Record, semModoRegistro, semFaixaDeFiltros, barraIntegrada, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra } = props;
   const colInfo = React.useMemo(() => columns.map((c) => ({ key: c.key, label: c.label })), [columns]);
   const filterInfo = React.useMemo<ListFilterInfo[]>(() => filters.map((f) => ({ key: f.key, label: f.label, kind: f.kind })), [filters]);
   const p = useListPrefs(moduleId, colInfo, filterInfo);
@@ -106,6 +123,8 @@ export function Base1List(props: Base1ListProps) {
   const [headerFilters, setHeaderFilters] = React.useState<Record<string, FiltroAtivo>>({});
   const [headerOpen, setHeaderOpen] = React.useState<string | null>(null);
   const [headerOrder, setHeaderOrder] = React.useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  /** Auto ajustar — preferência do usuário (API + cache local). */
+  const autoFitKeys = React.useMemo(() => new Set(prefs.columns.autoFit ?? []), [prefs.columns.autoFit]);
   const [values, setValues] = React.useState<FilterValues>(defaultValues ?? {});
   const [applied, setApplied] = React.useState<{ search: string; params: Record<string, string> }>({ search: "", params: toParams(filters, defaultValues ?? {}) });
   const [search, setSearch] = React.useState(""); const [favOnly, setFavOnly] = React.useState(false);
@@ -117,7 +136,9 @@ export function Base1List(props: Base1ListProps) {
   React.useEffect(() => { try { const raw = localStorage.getItem(favKey); setFavorites(new Set(raw ? (JSON.parse(raw) as string[]) : [])); } catch { /* sem storage */ } }, [favKey]);
   const toggleFavorite = (id: string, on: boolean) => setFavorites((f) => { const n = new Set(f); if (on) n.add(id); else n.delete(id); try { localStorage.setItem(favKey, JSON.stringify([...n])); } catch { /* sem storage */ } return n; });
   const [openChip, setOpenChip] = React.useState<string | null>(null);
-  const [colsDlg, setColsDlg] = React.useState(false); const [histDlg, setHistDlg] = React.useState(false); const [attachDlg, setAttachDlg] = React.useState(false); const [scrollToId, setScrollToId] = React.useState<string | null>(null); const lastPick = React.useRef<string | null>(null); const [delRow, setDelRow] = React.useState<Row | null>(null);
+  const [colsDlg, setColsDlg] = React.useState(false); const [maisOpcoesOpen, setMaisOpcoesOpen] = React.useState(false);
+  const [cardsLayoutOpen, setCardsLayoutOpen] = React.useState(false); const [cardFieldsOpen, setCardFieldsOpen] = React.useState(false);
+  const [histDlg, setHistDlg] = React.useState(false); const [attachDlg, setAttachDlg] = React.useState(false); const [scrollToId, setScrollToId] = React.useState<string | null>(null); const lastPick = React.useRef<string | null>(null); const [delRow, setDelRow] = React.useState<Row | null>(null);
   const [sortLocal, setSortLocal] = React.useState<{ key: string; dir: "asc" | "desc" } | null | undefined>();
   const [pageSizeLocal, setPageSizeLocal] = React.useState<number | undefined>();
   const [recIndex, setRecIndex] = React.useState(0); const [recMode, setRecMode] = React.useState<"view" | "edit" | "new">("view"); const [copyFrom, setCopyFrom] = React.useState<Row | null>(null);
@@ -224,7 +245,6 @@ export function Base1List(props: Base1ListProps) {
   const target = inRecord ? recordRow : one;
   const locked = inRecord && recMode !== "view";
   const targetHint = inRecord ? (recordRow ? undefined : "Salve o registro antes") : selectedRows.length === 0 ? "Selecione um registro" : selectedRows.length > 1 ? "Selecione apenas um registro" : undefined;
-  const exportCsv = () => { const cols = visibleColumns; const esc = (s: string) => `"${s.replace(/"/g, '""')}"`; const lines = [cols.map((c) => esc(c.label)).join(";"), ...rows.map((r) => cols.map((c) => esc(c.text ? c.text(r) : String(r[c.key] ?? ""))).join(";"))]; const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${csvName ?? moduleId}.csv`; a.click(); URL.revokeObjectURL(a.href); };
   const enterRecord = (r?: Row) => {
     if (!Record) { if (r) onOpen?.(r); return; }
     if (!r && selectedRows.length > 1) { toast.info("Selecione apenas um registro para abrir"); return; }
@@ -245,43 +265,53 @@ export function Base1List(props: Base1ListProps) {
   const newRecord = () => { if (Record) { setCopyFrom(null); setRecMode("new"); setView("record"); } else onNew?.(); };
   const duplicate = (r: Row) => { if (onDuplicate) return onDuplicate(r); if (Record) { setCopyFrom(r); setRecMode("new"); setView("record"); } };
   const rowMenu = one && rowActions ? rowActions(one) : [];
+  /** Mais opções (decisão 353): só ações do registro + layout; sem Duplicar/Imprimir/exportar/padrão da org. */
   const menuItems = [
     ...rowMenu.map((a, i) => ({ key: `row:${i}`, label: a.label, danger: a.danger })),
-    { key: "dup", label: "Duplicar", icon: <Copy className="h-4 w-4" />, disabled: !one || (!onDuplicate && !Record) },
-    { key: "print", label: "Imprimir", icon: <Printer className="h-4 w-4" /> },
-    { key: "export", label: exportXlsx ? "Exportar (Excel)" : "Exportar (CSV)", icon: <Download className="h-4 w-4" /> },
     ...(entity ? [{ key: "hist", label: targetHint ? `Histórico (${targetHint.toLowerCase()})` : "Histórico", icon: <History className="h-4 w-4" />, disabled: !target }] : []),
-    { key: "cfg", label: "Configurações", icon: <Settings className="h-4 w-4" /> },
-    { key: "pdf", label: "Exportar PDF", icon: <FileDown className="h-4 w-4" /> },
+    // Configurações de layout (decisão 329): saíram da faixa de filtros e moram só aqui.
+    { key: "cfg", label: "Configurar colunas", icon: <Columns3 className="h-4 w-4" /> },
+    { key: "cards-layout", label: "Layout dos cards", icon: <LayoutGrid className="h-4 w-4" />, disabled: view !== "cards" },
+    { key: "card-fields", label: "Campos dos cards", icon: <ListChecks className="h-4 w-4" />, disabled: view !== "cards" },
     ...(reportHref ? [{ key: "report", label: "Relatório personalizado", icon: <FileBarChart className="h-4 w-4" /> }] : []),
     ...(extraMenu ?? []).map((m) => ({ key: m.key, label: m.label, icon: m.icon })),
-    ...(p.canEditOrg ? [{ key: "org", label: "Salvar tela como padrão da organização", icon: <Building2 className="h-4 w-4" /> }] : []),
-    { key: "reset", label: "Restaurar padrão da tela", icon: <RotateCcw className="h-4 w-4" /> }
   ];
   const onMenu = (k: string) => {
     if (k.startsWith("row:")) { rowMenu[Number(k.slice(4))]?.onClick(); return; }
-    if (k === "dup" && one) duplicate(one);
-    if (k === "print" || k === "pdf") window.print();
-    if (k === "export") { if (exportXlsx) void exportXlsx({ search: applied.search || undefined, filters: applied.params }); else exportCsv(); }
     if (k === "hist" && target) setHistDlg(true);
-    if (k === "cfg") setColsDlg(true);
+    // Fecha o Mais opções antes de abrir diálogo/popover filho (evita dois layers Radix).
+    if (k === "cfg") { setMaisOpcoesOpen(false); setColsDlg(true); }
+    // Diálogo (não popover): fecha o Mais opções e abre na mesma virada — sem corrida do dismiss Radix.
+    if (k === "cards-layout") { setMaisOpcoesOpen(false); setCardsLayoutOpen(true); }
+    if (k === "card-fields") { setMaisOpcoesOpen(false); setCardFieldsOpen(true); }
     if (k === "report" && reportHref) location.href = reportHref({ search: applied.search || undefined, filters: applied.params });
-    if (k === "org") void p.saveAsOrgDefault();
-    if (k === "reset") void p.reset().then(() => { setSortLocal(undefined); setPageSizeLocal(undefined); toast.success("Tela restaurada ao padrão"); });
     extraMenu?.find((m) => m.key === k)?.onClick();
   };
   const attachBtn = entity ? <IconBtn aria-label="Anexos" title={targetHint ? `Anexos — ${targetHint.toLowerCase()}` : "Anexos"} disabled={!target} onClick={() => setAttachDlg(true)} data-testid="b1-attach"><Paperclip className="h-4 w-4" /></IconBtn> : null;
+  const cardFields = (prefs.view.cardFields ?? columns.slice(0, CARD_FIELDS_MAX).map((c) => c.key)).slice(0, CARD_FIELDS_MAX);
   // em edição/novo (secondaryToolsLocked do MG) ficam só os anexos: pesquisa, alternância de modo e menu somem
   const rightSlot = locked ? <div className="ml-auto flex items-center gap-1.5">{attachBtn}</div> : <div className="ml-auto flex items-center gap-1.5">
     {attachBtn}
     {searchable && <SearchBox value={search} onChange={setSearch} active={Boolean(applied.search) || favOnly} placeholder={props.searchPlaceholder} onApply={() => apply(values, search)} onApplyFavorites={() => { if (search !== applied.search) setApplied((a) => ({ ...a, search })); setFavOnly(true); }} favoritesDisabled={favorites.size === 0} onClear={() => { setSearch(""); setFavOnly(false); setApplied((a) => ({ ...a, search: "" })); }}
       columns={columns} scope={chipScope} fetchResults={(s) => fetchPage({ page: 1, pageSize: 20, search: s, filters: applied.params })} onPick={(r) => { setSelected(new Set([String(r["id"])])); enterRecord(r); }} isFavorite={(r) => favorites.has(String(r["id"]))}
       detailFields={prefs.search?.fields ?? columns.filter((c) => !["code", "name", "description", "title"].includes(c.key)).slice(0, 3).map((c) => c.key)} onDetailFieldsChange={(keys) => p.update((x) => ({ ...x, search: { ...(x.search ?? {}), fields: keys } }))} onDetailFieldsRestore={() => p.update((x) => ({ ...x, search: undefined }))} />}
-    <ViewSwitch value={view} recordDisabled={!Record && !onOpen} onChange={(m) => { if (m === "record") enterRecord(); else { setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } })); } }} />
-    <B1Popover className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><MoreHorizontal className="h-4 w-4" /></IconBtn>}><MenuList items={menuItems} onPick={onMenu} /></B1Popover>
+    <ViewSwitch value={view} semRegistro={semModoRegistro} recordDisabled={!Record && !onOpen} onChange={(m) => {
+      if (m === "record") { if (!semModoRegistro) enterRecord(); return; }
+      setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } }));
+    }} />
+    <span className="relative inline-flex">
+      <B1Popover open={maisOpcoesOpen} onOpenChange={setMaisOpcoesOpen} className={cn("w-64 p-1.5", barraIntegrada && "b1-portal-compras")} trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><IconeRaio /></IconBtn>}><MenuList items={menuItems} onPick={(k) => { setMaisOpcoesOpen(false); onMenu(k); }} /></B1Popover>
+      <CardsLayoutPopover open={cardsLayoutOpen} onOpenChange={setCardsLayoutOpen} value={prefs.view.cardsPerRow ?? 4}
+        className={barraIntegrada ? "b1-portal-compras" : undefined}
+        onChange={(n) => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: n } }))}
+        onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: undefined } }))} />
+      <CardFieldsPopover open={cardFieldsOpen} onOpenChange={setCardFieldsOpen} columns={columns} value={cardFields}
+        className={barraIntegrada ? "b1-portal-compras" : undefined}
+        onChange={(keys) => p.update((x) => ({ ...x, view: { ...x.view, cardFields: keys.slice(0, CARD_FIELDS_MAX) } }))}
+        onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardFields: undefined } }))} />
+    </span>
   </div>;
   const distinctFor = (f: Base1FilterDef) => distinct && f.mode === "advanced" && f.kind !== "boolean" && !f.options ? (s: string) => distinct(f.key, s) : undefined;
-  const cardFields = prefs.view.cardFields ?? columns.slice(0, 7).map((c) => c.key);
   /**
    * Nos cartões o `#N` é o PRIMEIRO campo exibido (`cardFieldsExibidos`), mas entra no fim da lista de
    * colunas conhecidas de propósito: o cartão elege o título pela primeira coluna que não seja o código, e
@@ -297,19 +327,26 @@ export function Base1List(props: Base1ListProps) {
       {entity && <AttachmentsDialog open={attachDlg} onOpenChange={setAttachDlg} entity={entity} entityId={recordRow ? rowId(recordRow) : null} title={title} />}
     </div>;
   }
-  return <div className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", props.className)} data-testid="b1-list">
-    {/* barra superior */}
-    <div className="mg-toolbar mg-card flex-wrap no-print">
+  const toolbar = (
+    <div
+      className={cn("mg-toolbar flex-wrap no-print", barraIntegrada ? "shrink-0 border-b" : "mg-card")}
+      style={barraIntegrada ? { borderColor: "var(--mg-divider)" } : undefined}
+      data-testid="b1-toolbar"
+    >
       {canCreate !== false && (onNew || Record) && <PillBtn onClick={newRecord}><Plus className="h-4 w-4" /> {props.createLabel ?? "Novo"}</PillBtn>}
       {props.extraToolbar}
-      {one && (Record || onOpen) && <PillBtn tone="gray" onClick={() => { enterRecord(one); if (Record) setRecMode("edit"); }}><Pencil className="h-3.5 w-3.5" /> Editar</PillBtn>}
+      {/* Portal de Compras (decisão 338): sem Editar na barra — abre só com duplo clique na linha. */}
+      {!barraIntegrada && one && (Record || onOpen) && <PillBtn tone="gray" onClick={() => { enterRecord(one); if (Record) setRecMode("edit"); }}><Pencil className="h-3.5 w-3.5" /> Editar</PillBtn>}
       {one && canCreate !== false && (onDuplicate || Record) && <PillBtn tone="gray" onClick={() => duplicate(one)}><Copy className="h-3.5 w-3.5" /> Duplicar</PillBtn>}
       {canDelete && onDelete && selectedRows.length > 0 && <PillBtn tone="red" onClick={() => setDelRow(one ?? selectedRows[0]!)}><Trash2 className="h-4 w-4" /> Excluir{selectedRows.length > 1 ? ` (${selectedRows.length})` : ""}</PillBtn>}
       {rightSlot}
     </div>
-    {/* faixa de chips de filtro */}
-    {/* faixa de filtros (mg-filter-pills-rail do MG): o botão recolhe/expande o CONTEÚDO da faixa com animação; a linha nunca some */}
-    <div className={cn("mg-rail mg-card no-print mg-pills-rail", showChips ? "is-expanded" : "is-collapsed")}>
+  );
+  return <div className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", props.className)} data-testid="b1-list">
+    {/* barra superior — decisão 332: em Compras mora dentro do painel da grade */}
+    {!barraIntegrada && toolbar}
+    {/* faixa de filtros (modelo-base): recolhe/expande o conteúdo; decisão 331 — Compras omite a linha inteira */}
+    {!semFaixaDeFiltros && <div className={cn("mg-rail mg-card no-print mg-pills-rail", showChips ? "is-expanded" : "is-collapsed")}>
       <IconBtn size="sm" aria-label={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} title={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} active={showChips} aria-expanded={showChips} onClick={() => setShowChips((v) => !v)}>{showChips ? <ListX className="h-4 w-4" /> : <ListPlus className="h-4 w-4" />}</IconBtn>
       <div className="mg-pills-rail__content" aria-hidden={!showChips}>
       <IconBtn size="sm" aria-label="Rolar filtros para a esquerda" onClick={() => scrollStrip(-240)}><ChevronLeft className="h-4 w-4" /></IconBtn>
@@ -320,44 +357,57 @@ export function Base1List(props: Base1ListProps) {
       </div>
       <IconBtn size="sm" aria-label="Rolar filtros para a direita" onClick={() => scrollStrip(240)}><ChevronRight className="h-4 w-4" /></IconBtn>
       <IconBtn size="sm" aria-label="Limpar todos os filtros" title="Limpar todos os filtros" onClick={clearAll} disabled={!filtersActive} className={cn(filtersActive && "text-red-600")}><FilterX className="h-4 w-4" /></IconBtn>
-      <span className="mx-1 h-5 w-px bg-[var(--mg-divider)]" />
-      {view === "cards" ? <><CardsLayoutPopover value={prefs.view.cardsPerRow ?? 4} onChange={(n) => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: n } }))} onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: undefined } }))} /><CardFieldsPopover columns={columns} value={cardFields} onChange={(keys) => p.update((x) => ({ ...x, view: { ...x.view, cardFields: keys } }))} onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardFields: undefined } }))} /></>
-        : <IconBtn size="sm" aria-label="Configurar colunas da tabela" title="Configurar colunas da tabela" onClick={() => setColsDlg(true)}><Columns3 className="h-4 w-4" /></IconBtn>}
       </div>
-    </div>
+    </div>}
     {headerActive && <div className="flex items-center gap-2 text-[11.5px] text-slate-500"><span>Filtro de cabeçalho: {rows.length} de {loadedRows.length} documentos carregados</span><button type="button" className="fchip-lim" onClick={() => setHeaderFilters({})}>Limpar filtros de cabeçalho</button></div>}
     {/* corpo */}
     <div className="flex min-h-0 flex-1 gap-2">
       <div className="mg-shell mg-shell--fill min-w-0 flex-1">
+        {barraIntegrada && toolbar}
         {q.error && <div className="p-2"><ErrorBox error={q.error} /></div>}
         {view === "cards"
-          ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={colunasDosCards} fields={cardFieldsExibidos} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelectClick={onSelectClick} actions={rowActions} favorites={favorites} onFavorite={toggleFavorite} scrollToId={scrollToId} /></div>
-          : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid referenceHeaders={props.referenceHeaders} filteredKeys={new Set(Object.keys(headerFilters))} columns={visibleColumns} rows={rows} loading={q.isLoading} sort={props.referenceHeaders ? headerOrder ?? undefined : sort} onSort={props.referenceHeaders ? (key) => setHeaderOrder((s) => ({ key, dir: s?.key === key && s.dir === "asc" ? "desc" : "asc" })) : onSort} selected={selected} onSelectClick={onSelectClick} onToggle={onToggle} onToggleAll={onToggleAll} onOpen={(r) => enterRecord(r)} frozen={frozen} scrollToId={scrollToId}
-            onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n - deslocamentoIdentidade, colunasDoUsuario.length)) }))} onHide={(k) => updCols((c) => { if (k === CHAVE_COLUNA_ID_GLOBAL) return c; const keys = colunasDoUsuario.map((x) => x.key); const idx = keys.indexOf(k); const fz = c.frozen ?? 0; return { ...c, visible: keys.filter((x) => x !== k), frozen: idx >= 0 && idx < fz ? fz - 1 : fz }; })} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
+          ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={colunasDosCards} fields={cardFieldsExibidos} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelectClick={onSelectClick} favorites={favorites} onFavorite={toggleFavorite} scrollToId={scrollToId} /></div>
+          : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid referenceHeaders={props.referenceHeaders} selecaoSticky={!barraIntegrada} colunaSelecao={!barraIntegrada} popoverClassName={barraIntegrada ? "b1-portal-compras" : undefined} filteredKeys={new Set(Object.keys(headerFilters))} autoFitKeys={autoFitKeys} columns={visibleColumns} rows={rows} loading={q.isLoading} sort={props.referenceHeaders ? headerOrder ?? undefined : sort} onSort={props.referenceHeaders ? (key) => setHeaderOrder((s) => ({ key, dir: s?.key === key && s.dir === "asc" ? "desc" : "asc" })) : onSort} selected={selected} onSelectClick={onSelectClick} onToggle={onToggle} onToggleAll={onToggleAll} onOpen={(r) => enterRecord(r)} frozen={frozen} scrollToId={scrollToId}
+            onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n - deslocamentoIdentidade, colunasDoUsuario.length)) }))} onHide={(k) => updCols((c) => { if (k === CHAVE_COLUNA_ID_GLOBAL) return c; const keys = colunasDoUsuario.map((x) => x.key); const idx = keys.indexOf(k); const fz = c.frozen ?? 0; const autoFit = (c.autoFit ?? []).filter((x) => x !== k); const order = c.order ?? columns.map((x) => x.key); return { ...c, order, visible: keys.filter((x) => x !== k), frozen: idx >= 0 && idx < fz ? fz - 1 : fz, autoFit: autoFit.length ? autoFit : undefined }; })} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const n = new Set(c.autoFit ?? []); if (n.has(k)) n.delete(k); else n.add(k); const autoFit = [...n]; return { ...c, autoFit: autoFit.length ? autoFit : undefined }; })}
             onFilter={(k) => { if (props.referenceHeaders) { setHeaderOpen(k); return; } const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}
             footer={!headerActive && footerTotals && totals ? comColunaDeIdentidade(footerTotals(totals), deslocamentoIdentidade) : undefined} /></div>}
-        {/* rodapé (mg-records-summary) */}
+        {/* rodapé (modelo-base) */}
         <div className="mg-summary no-print">
           <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {selected.size}</span><span className="mg-summary__item">Listados: {allRows.length}</span><span className="mg-summary__item">Filtrados: {headerActive ? `${rows.length} carregados` : total}</span><span className="mg-summary__item">Totais: {filtersActive ? grand.data ?? "…" : total}</span>{summaryExtra?.(totals)}</div>
           <span className="flex items-center gap-2">
-            <select aria-label="Quantidade de registros por carregamento" className="mg-pill-select" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>{BASE1_PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}</select>
+            <MgSelect
+              aria-label="Quantidade de registros por carregamento"
+              className="mg-pill-select"
+              wrapClassName="w-auto shrink-0"
+              panelClassName={barraIntegrada ? "b1-portal-compras" : undefined}
+              align="end"
+              value={String(pageSize)}
+              onChange={(v) => setPageSize(Number(v))}
+              options={BASE1_PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+            />
             <IconBtn aria-label="Carregar mais registros" title="Carregar mais registros" disabled={!q.hasNextPage || q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}><ChevronsDown /></IconBtn>
           </span>
         </div>
       </div>
     </div>
     {headerOpen && <FiltroDeColuna rotulo={columns.find((c) => c.key === headerOpen)?.label ?? ""} tipo={headerType(headerOpen)}
+      className={barraIntegrada ? "b1-portal-compras" : undefined}
       ancora={`[data-testid="b1-list"] [aria-label="Abrir menu da coluna ${columns.find((c) => c.key === headerOpen)?.label ?? ""}"]`}
       valores={loadedRows.map((r) => headerText(headerOpen, r))} atual={headerFilters[headerOpen] ?? null}
       onAplicar={(f) => { const key = headerOpen; setHeaderFilters((p) => { const n = { ...p }; if (f) n[key] = f; else delete n[key]; return n; }); setHeaderOpen(null); }} onFechar={() => setHeaderOpen(null)} />}
-    {props.referenceHeaders && colsDlg && <ColunasDosItens titulo="Colunas da tabela" colunas={[...columns].sort((a, b) => (orderRank.get(a.key) ?? 1e6) - (orderRank.get(b.key) ?? 1e6))}
+    {props.referenceHeaders && colsDlg && <ColunasDosItens titulo="Colunas da tabela" className={barraIntegrada ? "b1-portal-compras" : undefined} colunas={[...columns].sort((a, b) => (orderRank.get(a.key) ?? 1e6) - (orderRank.get(b.key) ?? 1e6))}
       ocultas={new Set(columns.filter((c) => !visibleKeys.includes(c.key)).map((c) => c.key))}
-      onMudar={(key, ocultar) => updCols((c) => ({ ...c, visible: ocultar ? visibleKeys.filter((k) => k !== key) : [...visibleKeys, key] }))}
-      onOrdenar={(order) => updCols((c) => ({ ...c, order }))}
+      onAplicar={(keysVisiveis, ordemCompleta) => updCols((c) => ({
+        ...c,
+        order: ordemCompleta,
+        visible: keysVisiveis,
+        frozen: Math.min(c.frozen ?? 0, keysVisiveis.length),
+        autoFit: (c.autoFit ?? []).filter((k) => keysVisiveis.includes(k))
+      }))}
       onRestaurar={() => updCols(() => ({}))} onFechar={() => setColsDlg(false)} />}
-    <ColumnsDialog open={!props.referenceHeaders && colsDlg} onOpenChange={setColsDlg} columns={columns} visible={colunasDoUsuario.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: [...keys, ...columns.map((x) => x.key).filter((x) => !keys.includes(x))], frozen: Math.min(c.frozen ?? 0, keys.length) }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
+    <ColumnsDialog open={!props.referenceHeaders && colsDlg} onOpenChange={setColsDlg} className={barraIntegrada ? "b1-portal-compras" : undefined} columns={columns} visible={colunasDoUsuario.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: [...keys, ...columns.map((x) => x.key).filter((x) => !keys.includes(x))], frozen: Math.min(c.frozen ?? 0, keys.length), autoFit: (c.autoFit ?? []).filter((k) => keys.includes(k)) }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined, autoFit: undefined }))} />
     {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={one ? rowId(one) : undefined} title={title} />}
     {entity && <AttachmentsDialog open={attachDlg} onOpenChange={setAttachDlg} entity={entity} entityId={one ? rowId(one) : null} title={title} />}
-    {onDelete && <Confirm open={Boolean(delRow)} onOpenChange={() => setDelRow(null)} title="Confirme a exclusão" text={props.deleteText ?? (selectedRows.length > 1 ? `Excluir os ${selectedRows.length} registros selecionados? A ação fica registrada na auditoria.` : "Excluir o registro selecionado? A ação fica registrada na auditoria.")} danger onConfirm={async () => { if (delRow) { for (const r of selectedRows.length > 1 ? selectedRows : [delRow]) await onDelete(r); setDelRow(null); setSelected(new Set()); void q.refetch(); } }} />}
+    {onDelete && <Confirm open={Boolean(delRow)} onOpenChange={() => setDelRow(null)} className={barraIntegrada ? "b1-portal-compras" : undefined} title="Confirme a exclusão" text={props.deleteText ?? (selectedRows.length > 1 ? `Excluir os ${selectedRows.length} registros selecionados? A ação fica registrada na auditoria.` : "Excluir o registro selecionado? A ação fica registrada na auditoria.")} danger onConfirm={async () => { if (delRow) { for (const r of selectedRows.length > 1 ? selectedRows : [delRow]) await onDelete(r); setDelRow(null); setSelected(new Set()); void q.refetch(); } }} />}
   </div>;
 }

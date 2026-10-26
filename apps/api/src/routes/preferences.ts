@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getResource } from "@agro/domain";
-import { normalizeListPreferences, normalizeFormLayout, preferencesByteSize, PREFERENCES_MAX_BYTES, filterKindOf, type FilterKind } from "@agro/shared";
+import { normalizeListPreferences, normalizeItensPreferences, normalizeFormLayout, preferencesByteSize, PREFERENCES_MAX_BYTES, filterKindOf, type FilterKind } from "@agro/shared";
 import { runService } from "../lib/service.js";
 import { DomainError, validation } from "../lib/errors.js";
 import { hasPermission, type ServiceCtx } from "../lib/context.js";
@@ -27,6 +27,10 @@ export function validatePreferences(module: string, screen: string, doc: unknown
   if (screen === "list") {
     const known = def ? { columns: def.fields.map((f) => f.name), filters: def.fields.filter((f) => f.filter || f.search).map((f) => f.name), filterKinds: Object.fromEntries(def.fields.map((f) => [f.name, filterKindOf(f.type) as FilterKind])) } : {};
     return normalizeListPreferences(doc, known) as unknown as Record<string, unknown>;
+  }
+  if (screen === "itens" || screen === "portal-itens") {
+    // grade/formulário de itens (Central) ou painel mestre-detalhe do Portal — chaves validadas no cliente
+    return normalizeItensPreferences(doc) as unknown as Record<string, unknown>;
   }
   if (screen === "form") {
     if (!def) throw validation("Layout de formulário só é suportado para cadastros declarativos");

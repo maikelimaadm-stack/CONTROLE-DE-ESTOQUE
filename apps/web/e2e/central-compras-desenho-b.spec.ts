@@ -316,7 +316,7 @@ test("CC-9 — receber pedido no modelo: travas, sem Adicionar produto e sem Dup
   const passos = page.getByTestId("compras-proximos-passos");
   await expect(passos).toHaveAttribute("data-situacao", "pronto");
   const passo = page.getByTestId(`compras-proximo-passo-${c.topCompra.codigo}`);
-  await expect(passo).toHaveText(/Receber…/);
+  await expect(passo).toHaveAttribute("aria-label", /Receber…/);
   await expect(passo).toHaveAttribute("data-em-partes", "true");
   await passo.click();
   await expect(page).toHaveURL(new RegExp(`/compras/compras/new\\?.*pedido=${pedido.id}`));
@@ -342,14 +342,13 @@ test("CC-9 — receber pedido no modelo: travas, sem Adicionar produto e sem Dup
   await expect(page.getByTestId(`${P}-duplicar-item`)).toHaveCount(0);
 
   // (4) REMOVER ITEM: marca a linha B e remove (em partes).
-  await linhaB.getByTestId(`${P}-selecionar-item`).click();
+  await linhaB.click();
   await page.getByTestId(`${P}-remover-item`).click();
   await expect(linhaB).toHaveCount(0);
 
   // (5) QUANTIDADE ATÉ O SALDO, armazém, total.
-  const circuloA = linhaA.getByTestId(`${P}-selecionar-item`);
-  if ((await circuloA.getAttribute("aria-checked")) !== "true") await circuloA.click();
-  await expect(circuloA).toHaveAttribute("aria-checked", "true");
+  if ((await linhaA.getAttribute("aria-selected")) !== "true") await linhaA.click();
+  await expect(linhaA).toHaveAttribute("aria-selected", "true");
   const quantidade = linhaA.getByLabel("Quantidade do item 1");
   await expect(quantidade).toHaveAttribute("max", /^10(\.0+)?$/);
   await quantidade.fill("4");
@@ -386,7 +385,7 @@ test("CC-10 — Encerrar saldo: pílula do pedido, motivo obrigatório, corpo { 
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
   const pilula = page.getByTestId("compras-encerrar-saldo");
   await expect(pilula).toBeVisible();
-  await expect(pilula).toHaveText(/Encerrar saldo/);
+  await expect(pilula).toHaveAttribute("aria-label", /Encerrar saldo/);
   await pilula.click();
   const dialogo = page.getByTestId("dialog-encerrar-saldo");
   await expect(dialogo).toBeVisible();

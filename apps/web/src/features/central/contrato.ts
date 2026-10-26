@@ -220,8 +220,13 @@ export type PropsDoBotaoDaBarra = React.ButtonHTMLAttributes<HTMLButtonElement> 
 };
 export type PropsDaPilulaDaBarra = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   icone: React.ReactNode; dica?: string; ocupado?: boolean;
-  /** Ação destrutiva (Cancelar documento): mesma cor do item `perigo` do leque. Ausente = pílula de sempre. */
+  /** Ação destrutiva (Cancelar documento): mesma cor do item `perigo` do leque. Ausente = círculo de sempre. */
   perigo?: boolean;
+  /**
+   * Rótulo acessível (e dica, se `dica` omitida). Na tela só o ícone aparece — o texto dos filhos vira
+   * `aria-label` (decisão 327: uma cor/tamanho, sem oval com label).
+   */
+  children?: React.ReactNode;
 };
 export interface PropsDoConjunto { children: React.ReactNode }
 export interface PropsDosIndicadores { prefixoTestid: string }
@@ -461,8 +466,8 @@ export interface PropsDosItensSalvos {
 }
 export interface PropsDeConfigurarColunas<K extends string> {
   prefixoTestid: string;
-  titulo: string; subtitulo: string; rotulos: Record<K, string>; lista: readonly Preferencia<K>[];
-  onLista: (l: Preferencia<K>[]) => void; onRestaurar: () => void; ambos: boolean; onAmbos: () => void;
+  titulo: string; rotulos: Record<K, string>; lista: readonly Preferencia<K>[];
+  onLista: (l: Preferencia<K>[]) => void; onRestaurar: () => void;
 }
 
 /* ─────────────── M9 — painel.tsx (+ painel.module.css) ─────────────── */

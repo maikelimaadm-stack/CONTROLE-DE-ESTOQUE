@@ -29,7 +29,7 @@ export interface SearchBoxProps {
 }
 
 /**
- * Pesquisa do modelo base (mg-desktop-search + mg-search-dropdown do MG): o ícone vira a pílula; ao digitar aparecem os registros
+ * Pesquisa do modelo base (modelo-base + modelo-base do MG): o ícone vira a pílula; ao digitar aparecem os registros
  * (CÓDIGO • nome + linhas de detalhe configuráveis com destaque); rodapé Buscar todos / contador / Buscar favoritos / configurar.
  */
 export function SearchBox({ value, onChange, onApply, onApplyFavorites, onClear, active, placeholder, favoritesDisabled, fetchResults, onPick, columns, scope, detailFields, onDetailFieldsChange, onDetailFieldsRestore, isFavorite }: SearchBoxProps) {

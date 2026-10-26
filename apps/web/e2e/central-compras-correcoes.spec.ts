@@ -118,9 +118,8 @@ async function escolherNaCelula(page: Page, prefixo: string, celula: Locator, no
 
 /** Marca a linha pelo círculo (os campos editáveis moram na linha MARCADA), sem desmarcar se já estiver. */
 async function marcar(linha: Locator) {
-  const circulo = linha.getByTestId(`${P}-selecionar-item`);
-  if ((await circulo.getAttribute("aria-checked")) !== "true") await circulo.click();
-  await expect(circulo).toHaveAttribute("aria-checked", "true");
+  if ((await linha.getAttribute("aria-selected")) !== "true") await linha.click();
+  await expect(linha).toHaveAttribute("aria-selected", "true");
 }
 
 /**
@@ -409,7 +408,7 @@ test("CX-6 — 'Confirmar compra' na criação com TOP formato 4 'Confirmação:
 
     // (2) TOP AUTOMÁTICA: o POST confirma; a consulta abre Confirmado, com o "Salvo", e o diálogo NÃO abre
     await preencherCompraPelaTela(page, c, automatica);
-    await expect(page.getByTestId(`${P}-confirmar`), "a criação da compra oferece 'Confirmar compra'").toContainText("Confirmar compra");
+    await expect(page.getByTestId(`${P}-confirmar`), "a criação da compra oferece 'Confirmar compra'").toHaveAttribute("aria-label", "Confirmar compra");
     const post = page.waitForResponse(ehPostDaCompra);
     await page.getByTestId(`${P}-confirmar`).click();
     const r = await post;

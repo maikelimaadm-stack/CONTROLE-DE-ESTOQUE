@@ -333,9 +333,9 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
       const linhas = page.getByTestId("central-estoque-linha");
       await expect(linhas, "uma linha, a do Saldo").toHaveCount(1);
       // A linha pré-preenchida só abre os campos quando marcada (o círculo da grade do motor).
-      const circulo = linhas.first().getByTestId("central-estoque-selecionar-item");
-      if ((await circulo.getAttribute("aria-checked")) !== "true") await circulo.click();
-      await expect(circulo).toHaveAttribute("aria-checked", "true");
+      const linhaSel = linhas.first();
+  if ((await linhaSel.getAttribute("aria-selected")) !== "true") await linhaSel.click();
+  await expect(linhaSel).toHaveAttribute("aria-selected", "true");
       await linhas.first().getByLabel("Quantidade do item 1").fill("3");
       const post = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/estoque/ajustes");
       await page.getByTestId("estoque-salvar").click();

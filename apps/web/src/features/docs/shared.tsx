@@ -31,7 +31,7 @@ export function FilterBar({ filters, f, set, reset, onApply, visible, saved, onS
   const shown = visible ? filters.filter((x) => visible.includes(x.name)) : filters;
   const [saveOpen, setSaveOpen] = React.useState(false); const [saveName, setSaveName] = React.useState("");
   const cls = "!h-7 !rounded-full !shadow-none w-40 text-[12px]";
-  // faixa de filtros no MODELO BASE1 (mg-rail): pílulas cinza com rótulo, botões Filtrar / Limpar
+  // faixa de filtros no MODELO BASE1 (modelo-base): pílulas cinza com rótulo, botões Filtrar / Limpar
   return <form className="mg-rail mg-card mb-2 flex-wrap no-print" onSubmit={(e) => { e.preventDefault(); onApply(); }}>
     {shown.map((x) => <label key={x.name} className="flex items-center gap-1.5"><span className="whitespace-nowrap text-[11px] text-[var(--mg-text-2)]">{x.label}</span>
       {x.type === "date" ? <Input type="date" className={cls} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} /> : x.type === "select" ? <MgSelect className={cn(cls, "!bg-[var(--mg-gray-fill)]")} value={f[x.name] ?? ""} onChange={(v) => set(x.name, v)} allowEmpty placeholder="Todos" options={x.options ?? []} /> : x.type === "ref" ? <RefSelect resource={x.resource!} value={f[x.name] ?? null} onChange={(v) => set(x.name, v ?? "")} placeholder="Todos" filter={x.extra} className={cls} /> : <Input className={cn(cls, "w-52")} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} />}
@@ -47,7 +47,7 @@ export function FilterBar({ filters, f, set, reset, onApply, visible, saved, onS
  * Lista genérica de documentos transacionais (lançamentos) no MODELO BASE1: chips de filtro, grade/cards
  * configuráveis, modo Registro (abre o detalhe), rodapé com contadores, cancelamento com estorno.
  */
-export function DocList({ title, endpoint, base, columns, filters, canCreate, canCancel, cancelPath, extraActions, totals, summaryExtra, defaultFilters, rowActions, createLabel = "Novo", hideNew, entity, rowHref, onSelectionChange, referenceHeaders }: { referenceHeaders?: boolean; title: string; endpoint: string; base: string; columns: Column<Row>[]; filters?: Filter[]; canCreate?: boolean; canCancel?: boolean; cancelPath?: (id: string) => string; extraActions?: React.ReactNode; totals?: (t: Record<string, string>) => React.ReactNode; /** conteúdo extra na barra de resumo (Selecionados/Listados/Filtrados/Totais) */ summaryExtra?: (totals?: Record<string, string>) => React.ReactNode; defaultFilters?: Record<string, string>; rowActions?: (r: Row) => { label: string; onClick?: () => void; href?: string; danger?: boolean }[]; createLabel?: string; hideNew?: boolean; /** tabela da auditoria/anexos */ entity?: string; /** rota do detalhe por linha (listas com tipos mistos) */ rowHref?: (r: Row) => string; /** a seleção da grade (painel mestre-detalhe de quem usa a lista) */ onSelectionChange?: (rows: Row[]) => void }) {
+export function DocList({ title, endpoint, base, columns, filters, canCreate, canCancel, cancelPath, extraActions, totals, summaryExtra, defaultFilters, rowActions, createLabel = "Novo", hideNew, entity, rowHref, onSelectionChange, referenceHeaders, semModoRegistro, semFaixaDeFiltros, barraIntegrada }: { referenceHeaders?: boolean; title: string; endpoint: string; base: string; columns: Column<Row>[]; filters?: Filter[]; canCreate?: boolean; canCancel?: boolean; cancelPath?: (id: string) => string; extraActions?: React.ReactNode; totals?: (t: Record<string, string>) => React.ReactNode; /** conteúdo extra na barra de resumo (Selecionados/Listados/Filtrados/Totais) */ summaryExtra?: (totals?: Record<string, string>) => React.ReactNode; defaultFilters?: Record<string, string>; rowActions?: (r: Row) => { label: string; onClick?: () => void; href?: string; danger?: boolean }[]; createLabel?: string; hideNew?: boolean; /** tabela da auditoria/anexos */ entity?: string; /** rota do detalhe por linha (listas com tipos mistos) */ rowHref?: (r: Row) => string; /** a seleção da grade (painel mestre-detalhe de quem usa a lista) */ onSelectionChange?: (rows: Row[]) => void; /** Portal de Compras: sem modo Registro (decisão 328). */ semModoRegistro?: boolean; /** Portal de Compras: sem faixa de chips de filtro (decisão 331). */ semFaixaDeFiltros?: boolean; /** Portal de Compras: barra e grade no mesmo painel (decisão 332). */ barraIntegrada?: boolean }) {
   const router = useRouter(); const qc = useQueryClient();
   const [cancel, setCancel] = React.useState<string | null>(null);
   // preferências da listagem ("modelo base"): módulo derivado do endpoint (ex.: /api/stock/entries → stock.entries)
@@ -67,6 +67,9 @@ export function DocList({ title, endpoint, base, columns, filters, canCreate, ca
   const footer = totals ? (t: Record<string, string>) => { const el = totals(t); return React.isValidElement(el) ? React.cloneElement(el as React.ReactElement<{ children?: React.ReactNode }>, {}, <td />, (el as React.ReactElement<{ children?: React.ReactNode }>).props.children) : el; } : undefined;
   return <>
     <Base1List referenceHeaders={referenceHeaders} moduleId={moduleId} title={title} columns={b1cols} filters={b1filters} defaultValues={defaultValues} queryKeyExtra={fixed} csvName={moduleId} entity={entity}
+      semModoRegistro={semModoRegistro}
+      semFaixaDeFiltros={semFaixaDeFiltros}
+      barraIntegrada={barraIntegrada}
       fetchPage={(p) => api<{ items: Row[]; total: number; totals?: Record<string, string> }>(`${endpoint}${qs({ ...p.filters, ...fixed, page: p.page, pageSize: p.pageSize })}`)}
       canCreate={Boolean(canCreate) && !hideNew} onNew={() => router.push(`${base}/new`)} createLabel={createLabel} extraToolbar={extraActions}
       onOpen={(r) => router.push(rowHref ? rowHref(r) : `${base}/${r["id"]}`)}
@@ -91,7 +94,17 @@ export const monthRange = () => ({ start_date: monthStartISO(), end_date: todayI
  * vale é o do servidor. Exportado para que outra apresentação do mesmo `ItemRow` (a Central de Vendas) mostre o MESMO
  * número que este editor sempre mostrou, em vez de uma segunda fórmula.
  */
-export const totalDaLinhaExibido = (it: ItemRow) => { const g = Number(it.quantity || 0) * Number(it.unit_value || 0); return g - Number(it.discount || 0) - g * Number(it.discount_percent || 0) / 100; };
+/**
+ * Total exibido da linha: qtd × unitário − desconto em R$.
+ * Desconto % e R$ são a mesma coisa sob dois ângulos (decisão 347) — só o valor em R$ entra na conta
+ * (evita descontar duas vezes). Se só houver %, usa-o como fallback (linhas antigas).
+ */
+export const totalDaLinhaExibido = (it: ItemRow) => {
+  const g = Number(it.quantity || 0) * Number(it.unit_value || 0);
+  const abs = Number(it.discount || 0);
+  if (abs) return g - abs;
+  return g - g * Number(it.discount_percent || 0) / 100;
+};
 
 /** Editor de itens (produto, qtd, valor) usado nos documentos de estoque/vendas. */
 export interface ItemRow { product_id: string; warehouse_id?: string; quantity: string; unit_value?: string; cost_center_id?: string; provider_lot?: string; expiration_date?: string; financial_category_id?: string; cost_center?: string; generate_stock?: boolean; discount?: string; discount_percent?: string; description?: string; [k: string]: unknown }

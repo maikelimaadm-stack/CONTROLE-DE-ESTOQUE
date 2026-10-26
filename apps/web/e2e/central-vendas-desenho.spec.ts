@@ -33,10 +33,10 @@ const WORKSPACE = "central-vendas";
  */
 const MEDIDAS = {
   barra: { altura: 44, raio: "12px", fundo: "rgb(255, 255, 255)", borda: "rgb(231, 234, 238)" },
-  botaoRedondo: { lado: 25, fundo: "rgb(241, 243, 244)", icone: "rgb(71, 85, 105)", sombra: "rgba(34, 197, 94, 0.3) 0px 2px 6px 0px" },
-  novo: { fundo: "rgb(64, 222, 99)" },
-  pilula: { altura: 25, fonte: "12.5px", peso: "600" },
-  posicaoDoRotulo: { altura: 25 },
+  botaoRedondo: { lado: 28, fundo: "rgb(241, 243, 244)", icone: "rgb(71, 85, 105)", sombra: "none" },
+  novo: { fundo: "rgb(241, 243, 244)" },
+  pilula: { lado: 28 },
+  posicaoDoRotulo: { altura: 28 },
   documento: { raio: "14px" },
   /** O desenho põe `height: 36px` INLINE no cabeçalho (o `--dz-reg: 32px` do CSS não vale para ele) + 1 px de borda:
    *  a caixa medida no desenho é 37. O pedido diz 36 — é o conteúdo; a caixa é 37. */
@@ -50,14 +50,13 @@ const MEDIDAS = {
     leitura: "rgb(246, 248, 250)", travada: "rgb(233, 237, 242)", valorFonte: "12.5px", larguraMaxima: 560, espaco: 6
   },
   compacto: { caixaAltura: 32 },
-  /** D7: 36/28/23/32 são alturas de CONTEÚDO; com a borda de 1 px, as caixas medidas são 37/29/24/33. */
-  itens: { barra: 37, cabecalho: 29, linha: 24, rodape: 33 },
+  /** D7: barra/rodapé content-box (37/33); grade de produtos = mg-grid (decisão 345): cabeçalho 30 / linha 26. */
+  itens: { barra: 37, cabecalho: 30, linha: 26, rodape: 33 },
   /** D8: faixa 38 + borda = 39 de caixa. */
   painel: { faixa: 39 },
   esqueleto: { barra: 34, quantas: 5 },
-  /** Fase B — itens da CRIAÇÃO: a 1ª coluna (o círculo) tem 34 px; a linha marcada leva o fundo verde translúcido e o
-   *  filete de 2 px à esquerda (box-shadow inset), na cor exata do desenho. */
-  itensDaCriacao: { circulo: 34, fundoMarcada: "rgba(64, 222, 99, 0.07)", fileteMarcada: "rgb(34, 168, 92) 2px 0px 0px 0px inset" }
+  /** Fase B — itens da CRIAÇÃO: coluna de seleção 36 px (par com mg-grid); linha marcada com verde e filete 3 px. */
+  itensDaCriacao: { fundoMarcada: "rgba(64, 222, 99, 0.07)", fileteMarcada: "rgb(34, 168, 92) 3px 0px 0px 0px inset" }
 } as const;
 
 /** O texto padrão do motivo de cancelamento de hoje (vazio → ele). */
@@ -189,21 +188,22 @@ test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botõ
   });
   expect.soft(cartao, "o cartão da barra tem raio 12").toEqual({ raio: MEDIDAS.barra.raio, fundo: MEDIDAS.barra.fundo, borda: MEDIDAS.barra.borda });
 
-  // BOTÃO REDONDO (Descartar, criação): 25×25, fundo, ícone e sombra verde
+  // BOTÃO REDONDO (Descartar, criação): 28×28, fundo cinza, sem sombra em repouso (decisão 327)
   const descartar = page.getByTestId("central-vendas-descartar");
   const bd = await caixa(descartar);
-  expect.soft([Math.round(bd.width), Math.round(bd.height)], "botão redondo 25×25").toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
+  expect.soft([Math.round(bd.width), Math.round(bd.height)], "botão redondo 28×28").toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
   const ed = await estilo(descartar, ["background-color", "color", "box-shadow"]);
   expect.soft(ed["background-color"]).toBe(MEDIDAS.botaoRedondo.fundo);
   expect.soft(ed["box-shadow"]).toBe(MEDIDAS.botaoRedondo.sombra);
   expect.soft(await descartar.locator("svg").first().evaluate((s) => getComputedStyle(s).color), "ícone #475569").toBe(MEDIDAS.botaoRedondo.icone);
 
-  // PÍLULA Confirmar venda: 25 px, 12,5 px peso 600
+  // Confirmar venda: o mesmo círculo 28×28 (só ícone)
   const pilula = page.getByTestId("central-vendas-confirmar");
-  expect.soft(Math.round((await caixa(pilula)).height)).toBe(MEDIDAS.pilula.altura);
-  expect.soft(await estilo(pilula, ["font-size", "font-weight"])).toEqual({ "font-size": MEDIDAS.pilula.fonte, "font-weight": MEDIDAS.pilula.peso });
+  const bp = await caixa(pilula);
+  expect.soft([Math.round(bp.width), Math.round(bp.height)], "Confirmar 28×28").toEqual([MEDIDAS.pilula.lado, MEDIDAS.pilula.lado]);
+  await expect(pilula).toHaveAttribute("aria-label", /Confirmar venda/);
 
-  // POSIÇÃO DO RÓTULO: segmentado de 25 px
+  // POSIÇÃO DO RÓTULO: segmentado de 28 px
   expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-posicao-rotulo"))).height)).toBe(MEDIDAS.posicaoDoRotulo.altura);
 
   // DOCUMENTO: cartão raio 14 em volta de Dados principais; cabeçalho de Dados principais
@@ -265,12 +265,12 @@ test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botõ
   const fonteDoValor = await clienteLido.getByText(venda.clientName).first().evaluate((el) => getComputedStyle(el).fontSize);
   expect.soft(fonteDoValor, "valor 12,5 px").toBe(MEDIDAS.campo.valorFonte);
   expect.soft((await medirCaixa(page.getByTestId("top-contexto")))?.fundo, "Tipo de Operação travado na consulta").toBe(MEDIDAS.campo.travada);
-  // botão redondo e Novo verde na consulta
+  // botão redondo e Novo cinza na consulta (decisão 327 — uma cor)
   const dup = page.getByTestId("central-vendas-duplicar");
   const bdup = await caixa(dup);
   expect.soft([Math.round(bdup.width), Math.round(bdup.height)]).toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
-  expect.soft((await estilo(page.getByTestId("central-vendas-novo"), ["background-color"]))["background-color"], "Novo verde").toBe(MEDIDAS.novo.fundo);
-  // ITENS (consulta; a grade da criação é medida no VD-14): barra 36, cabeçalho 28, linha 23, rodapé 32
+  expect.soft((await estilo(page.getByTestId("central-vendas-novo"), ["background-color"]))["background-color"], "Novo cinza").toBe(MEDIDAS.novo.fundo);
+  // ITENS (consulta; a grade da criação é medida no VD-14): barra 36, cabeçalho 30, linha 26, rodapé 32
   const itens = consulta.getByTestId("central-vendas-itens");
   expect.soft(Math.round((await caixa(itens.getByRole("toolbar").first())).height), "barra de itens").toBe(MEDIDAS.itens.barra);
   expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-grade").locator("thead tr").first())).height), "cabeçalho da grade").toBe(MEDIDAS.itens.cabecalho);
@@ -1024,10 +1024,7 @@ test("VD-13 — evidência desenho × produto em 1440×900 e 1280×800, sem rola
 /* ═════════════════════════════════════════════ VD-14 itens da criação ═════════════════════════════════════════════ */
 
 const linhaDaCriacao = (page: Page, i: number) => page.getByTestId("central-vendas-linha").nth(i);
-const circuloDa = (page: Page, i: number) => linhaDaCriacao(page, i).getByTestId("central-vendas-selecionar-item");
 const linhasMarcadas = (page: Page) => page.locator('[data-testid="central-vendas-linha"][aria-selected="true"]');
-/** O foco está na linha (no círculo dela, ou nela mesma). */
-const focoNaLinha = (l: Locator) => l.evaluate((el) => el === document.activeElement || el.contains(document.activeElement));
 /** Fundo e filete da linha marcada — procurados na linha e nas células: o desenho pode pintar o `tr` ou as `td`. */
 const pinturaDaLinha = (l: Locator) => l.evaluate((el, m) => {
   const todos = [el as HTMLElement, ...el.querySelectorAll<HTMLElement>("*")];
@@ -1057,7 +1054,7 @@ async function capturarPostDaCriacao(page: Page) {
   return capturado;
 }
 
-test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela linha), teclado, cor e filete, Duplicar/Remover do item corrente, vazio, rodapé, formulário e medidas 37/29/24/33", async ({ page }) => {
+test("VD-14 — itens da criação: marca pela linha, fora desmarca, Duplicar/Remover sempre visíveis, vazio, rodapé, formulário e medidas 37/30/26/33", async ({ page }) => {
   test.setTimeout(120_000);
   await login(page);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -1082,15 +1079,15 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   await expect(adicionarNoVazio).toHaveAccessibleName("Adicionar produto");
   await expect(itens.getByRole("button", { name: "Adicionar produto", exact: true }), "com zero itens, dois botões com esse nome").toHaveCount(2);
   await expect(itens.getByRole("button", { name: /Adicionar item/ }), "o nome antigo saiu").toHaveCount(0);
-  // o botão do vazio: pílula clara com a sombra verde do desenho (.tb-btn-green), 30 px
+  // o botão do vazio: o mesmo círculo 28 px cinza (decisão 327)
   const ev = await estilo(adicionarNoVazio, ["background-color", "box-shadow"]);
   expect.soft(ev["background-color"], "botão do vazio: fundo claro").toBe(MEDIDAS.botaoRedondo.fundo);
-  expect.soft(ev["box-shadow"], "botão do vazio: sombra verde").toBe(MEDIDAS.botaoRedondo.sombra);
-  expect.soft(Math.round((await caixa(adicionarNoVazio)).height), "botão do vazio: 30 px").toBe(30);
-  // sem item corrente, sem Duplicar e sem Remover; Grade e Formulário são DOIS botões ("Grade e formulário" saiu)
-  expect(await nomesDaBarraDeItens(barra), "barra sem item corrente").toEqual([expect.stringMatching(/^Ampliar/), "Adicionar produto", "Grade", "Formulário", "Configurar colunas"]);
-  await expect(duplicar).toHaveCount(0);
-  await expect(remover).toHaveCount(0);
+  expect.soft(ev["box-shadow"], "botão do vazio: sem sombra em repouso").toBe(MEDIDAS.botaoRedondo.sombra);
+  expect.soft(Math.round((await caixa(adicionarNoVazio)).height), "botão do vazio: 28 px").toBe(MEDIDAS.botaoRedondo.lado);
+  // Duplicar/Remover sempre visíveis (disabled sem item); Grade e Formulário são DOIS botões
+  expect(await nomesDaBarraDeItens(barra), "barra sem item corrente").toEqual([expect.stringMatching(/^Ampliar/), "Adicionar produto", "Duplicar item", "Remover item", "Grade", "Formulário", "Configurar colunas"]);
+  await expect(duplicar).toBeDisabled();
+  await expect(remover).toBeDisabled();
   await expect(barra.getByRole("button", { name: "Grade e formulário" })).toHaveCount(0);
   // o título "Itens (N)" saiu da barra e mora no rodapé, com o subtotal
   await expect(barra.getByTestId("central-vendas-itens-contagem"), "a contagem não está na barra").toHaveCount(0);
@@ -1104,17 +1101,19 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(1);
   await expect(itens.getByText("Nenhum item adicionado."), "o vazio saiu").toHaveCount(0);
   await expect(linhaDaCriacao(page, 0)).toHaveAttribute("aria-selected", "true");
-  await expect(circuloDa(page, 0)).toHaveAttribute("role", "checkbox");
-  await expect(circuloDa(page, 0)).toHaveAccessibleName("Selecionar item 1");
-  await expect(circuloDa(page, 0)).toHaveAttribute("aria-checked", "true");
+  await expect(linhaDaCriacao(page, 0).getByTestId("central-vendas-selecionar-item"), "sem checkbox de seleção").toHaveCount(0);
   await expect(linhaDaCriacao(page, 0).getByTestId("central-vendas-produto"), "produto vazio").toHaveAccessibleName("Selecionar o produto do item 1");
   await expect(linhaDaCriacao(page, 0).getByTestId("central-vendas-produto")).toContainText("Selecione o produto");
+  // sem produto: quantidade ainda não é campo com valor 1
+  await expect(linhaDaCriacao(page, 0).getByLabel("Quantidade do item 1")).toHaveValue("");
   await escolherPrimeiroProdutoDaLinha(page);
   await expect(linhaDaCriacao(page, 0).getByTestId("central-vendas-produto"), "produto escolhido").toHaveAccessibleName(/^Trocar o produto do item 1/);
   const p1 = (await linhaDaCriacao(page, 0).getByTestId("central-vendas-produto").innerText()).trim();
+  await expect(linhaDaCriacao(page, 0).getByLabel("Quantidade do item 1"), "ao escolher produto a qtd vira 1").toHaveValue("1");
   await linhaDaCriacao(page, 0).getByLabel("Quantidade do item 1").fill("2");
   await linhaDaCriacao(page, 0).getByLabel("Valor unitário do item 1").fill("10");
-  // com item corrente, a barra ganha Duplicar e Remover
+  await expect(duplicar).toBeEnabled();
+  await expect(remover).toBeEnabled();
   expect(await nomesDaBarraDeItens(barra), "barra com item corrente").toEqual([expect.stringMatching(/^Ampliar/), "Adicionar produto", "Duplicar item", "Remover item", "Grade", "Formulário", "Configurar colunas"]);
 
   // ITEM 2 pela barra: acrescenta e marca a NOVA; a 1ª perde a marca e os campos
@@ -1126,8 +1125,8 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   await expect(linhaDaCriacao(page, 0).locator("input"), "campos só na linha marcada").toHaveCount(0);
   await expect(linhaDaCriacao(page, 1).getByLabel("Quantidade do item 2")).toBeVisible();
   await expect(page.getByRole("button", { name: /^Excluir item/ }), "a lixeira por linha saiu").toHaveCount(0);
-  // ABRIR A PESQUISA DE PRODUTO MARCA A LINHA: marca a 1ª pelo círculo e abre o produto da 2ª
-  await circuloDa(page, 0).click();
+  // ABRIR A PESQUISA DE PRODUTO MARCA A LINHA; clicar na linha também marca
+  await linhaDaCriacao(page, 0).click();
   await expect(linhaDaCriacao(page, 0)).toHaveAttribute("aria-selected", "true");
   await linhaDaCriacao(page, 1).getByTestId("central-vendas-produto").click();
   await expect(linhaDaCriacao(page, 1), "abrir a pesquisa marcou a linha dela").toHaveAttribute("aria-selected", "true");
@@ -1141,31 +1140,24 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   await linhaDaCriacao(page, 1).getByLabel("Quantidade do item 2").fill("3");
   await linhaDaCriacao(page, 1).getByLabel("Valor unitário do item 2").fill("5");
 
-  // CLICAR NA LINHA NÃO MARCA: a célula Total da 1ª linha não tira a marca da 2ª
+  // CLICAR NA LINHA MARCA: a célula Total da 1ª linha marca a 1ª
   await linhaDaCriacao(page, 0).locator("td").last().click();
-  await expect(linhaDaCriacao(page, 1), "clicar na linha não muda a marca").toHaveAttribute("aria-selected", "true");
-  await expect(linhaDaCriacao(page, 0)).not.toHaveAttribute("aria-selected", "true");
-  await expect(circuloDa(page, 0)).toHaveAttribute("aria-checked", "false");
+  await expect(linhaDaCriacao(page, 0), "clicar na linha marca").toHaveAttribute("aria-selected", "true");
+  await expect(linhaDaCriacao(page, 1)).not.toHaveAttribute("aria-selected", "true");
 
   // COR E FILETE da linha marcada; a outra não os tem (o ponteiro sai de cima da grade: sem hover)
   await page.mouse.move(0, 0);
-  expect.soft(await pinturaDaLinha(linhaDaCriacao(page, 1)), "marcada: fundo verde translúcido e filete inset de 2 px #22a85c").toEqual({ fundo: true, filete: true });
-  expect.soft(await pinturaDaLinha(linhaDaCriacao(page, 0)), "não marcada: nem fundo nem filete").toEqual({ fundo: false, filete: false });
+  expect.soft(await pinturaDaLinha(linhaDaCriacao(page, 0)), "marcada: fundo verde translúcido e filete inset").toEqual({ fundo: true, filete: true });
+  expect.soft(await pinturaDaLinha(linhaDaCriacao(page, 1)), "não marcada: nem fundo nem filete").toEqual({ fundo: false, filete: false });
 
-  // MEDIDAS — as mesmas dos itens da consulta: barra 37, cabeçalho 29, linha 24, rodapé 33; o círculo em 34 px
+  // MEDIDAS — barra 37, cabeçalho 30, linha 26, rodapé 33
   expect.soft(Math.round((await caixa(barra)).height), "barra de itens").toBe(MEDIDAS.itens.barra);
   expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-grade").locator("thead tr").first())).height), "cabeçalho da grade").toBe(MEDIDAS.itens.cabecalho);
-  for (const i of [0, 1]) expect.soft(Math.round((await caixa(linhaDaCriacao(page, i))).height), `linha ${i + 1} (${i === 1 ? "marcada" : "não marcada"})`).toBe(MEDIDAS.itens.linha);
+  for (const i of [0, 1]) expect.soft(Math.round((await caixa(linhaDaCriacao(page, i))).height), `linha ${i + 1}`).toBe(MEDIDAS.itens.linha);
   expect.soft(Math.round((await caixa(rodape)).height), "rodapé dos itens").toBe(MEDIDAS.itens.rodape);
-  expect.soft(Math.round((await caixa(linhaDaCriacao(page, 0).locator("td").first())).width), "1ª coluna: o círculo, 34 px").toBe(MEDIDAS.itensDaCriacao.circulo);
 
-  // O CÍRCULO ALTERNA: desmarcar deixa a grade sem item corrente — sem campos, sem Duplicar, sem Remover
-  await circuloDa(page, 1).click();
-  await expect(linhasMarcadas(page), "o segundo clique no círculo desmarca").toHaveCount(0);
-  await expect(page.getByTestId("central-vendas-grade").locator("input"), "sem marca, nenhum campo editável").toHaveCount(0);
-  await expect(duplicar, "sem item corrente, sem Duplicar").toHaveCount(0);
-  await expect(remover, "sem item corrente, sem Remover").toHaveCount(0);
-  await circuloDa(page, 1).click();
+  // CLICAR FORA DESMARCA — botões ficam disabled
+  await linhaDaCriacao(page, 1).click();
   await expect(linhaDaCriacao(page, 1)).toHaveAttribute("aria-selected", "true");
 
   // CLICAR NA ÁREA DA GRADE FORA DAS LINHAS DESMARCA: o ponto logo abaixo da última linha, acima do rodapé
@@ -1180,23 +1172,12 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   expect(onde, "premissa: o ponto é da grade, fora das linhas").toEqual({ nosItens: true, naLinha: false, naBarra: false, noRodape: false });
   await page.mouse.click(ponto.x, ponto.y);
   await expect(linhasMarcadas(page), "clicar fora das linhas desmarca").toHaveCount(0);
+  await expect(duplicar, "sem marca, Duplicar desabilitado").toBeDisabled();
+  await expect(remover, "sem marca, Remover desabilitado").toBeDisabled();
 
-  // TECLADO no círculo: Espaço e Enter alternam; ↓ e ↑ passam a marca E o foco
-  await circuloDa(page, 0).focus();
-  await page.keyboard.press("Space");
-  await expect(linhaDaCriacao(page, 0), "Espaço marca").toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press("Enter");
-  await expect(linhasMarcadas(page), "Enter desmarca").toHaveCount(0);
-  await page.keyboard.press("Enter");
-  await expect(linhaDaCriacao(page, 0), "Enter marca de novo").toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press("ArrowDown");
-  await expect(linhaDaCriacao(page, 1), "↓ passa a marca").toHaveAttribute("aria-selected", "true");
-  await expect(linhasMarcadas(page)).toHaveCount(1);
-  await expect.poll(() => focoNaLinha(linhaDaCriacao(page, 1)), { message: "↓ leva o foco junto" }).toBe(true);
-  await page.keyboard.press("ArrowUp");
-  await expect(linhaDaCriacao(page, 0), "↑ volta a marca").toHaveAttribute("aria-selected", "true");
-  await expect(linhasMarcadas(page)).toHaveCount(1);
-  await expect.poll(() => focoNaLinha(linhaDaCriacao(page, 0)), { message: "↑ leva o foco junto" }).toBe(true);
+  // remarca a 1ª para DUPLICAR
+  await linhaDaCriacao(page, 0).click();
+  await expect(linhaDaCriacao(page, 0)).toHaveAttribute("aria-selected", "true");
 
   // DUPLICAR: a cópia entra LOGO ABAIXO, marcada, com os mesmos valores; o item 2 desce para a 3ª linha
   await duplicar.click();
@@ -1239,14 +1220,14 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   expect(escritas, "ZERO POST com item sem produto").toEqual([]);
   await expect(pontoDeErro, "o ponto vermelho do rodapé").toBeVisible();
   await expect(pontoDeErro).toHaveAttribute("title", "Há itens com pendência");
-  await circuloDa(page, 0).click();                                  // a linha pendente sem a marca: o fundo é o de erro
+  await linhaDaCriacao(page, 0).click();                                  // a linha pendente sem a marca: o fundo é o de erro
   await expect(linhaDaCriacao(page, 2)).not.toHaveAttribute("aria-selected", "true");
   await page.mouse.move(0, 0);
   expect.soft(await linhaDaCriacao(page, 2).evaluate((el) => [el as HTMLElement, ...el.querySelectorAll<HTMLElement>("*")].some((e) => getComputedStyle(e).backgroundColor === "rgb(255, 247, 247)")), "linha pendente: fundo #fff7f7").toBe(true);
   expect.soft(await selecione.evaluate((el) => getComputedStyle(el).color), "linha pendente: 'Selecione o produto' em #b91c1c").toBe("rgb(185, 28, 28)");
 
   // FORMULÁRIO: o item corrente é o do formulário — "Item X de N", ‹ ›, selo "novo" no item sem produto
-  await circuloDa(page, 2).click();
+  await linhaDaCriacao(page, 2).click();
   await expect(linhaDaCriacao(page, 2)).toHaveAttribute("aria-selected", "true");
   await barra.getByRole("button", { name: "Formulário", exact: true }).click();
   const posicao = page.getByTestId("central-vendas-item-posicao");
@@ -1264,16 +1245,11 @@ test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela li
   await expect(contagem).toHaveText("(2)");
   await expect(pontoDeErro, "sem item pendente, sem ponto").toHaveCount(0);
 
-  // "MOSTRAR GRADE E FORMULÁRIO" mora em Configurar colunas (o 3º botão saiu da barra)
-  await page.getByTestId("central-vendas-configurar").click();
-  const ambos = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar grade e formulário" });
-  await expect(ambos).toHaveAttribute("aria-checked", "false");
-  await ambos.click();
-  await expect(ambos).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("central-vendas-grade"), "grade e formulário juntos").toBeVisible();
+  // decisão 341: só Grade OU Formulário — nunca os dois juntos
   await expect(page.getByTestId("central-vendas-item-form")).toBeVisible();
+  await expect(page.getByTestId("central-vendas-grade")).toHaveCount(0);
   await barra.getByRole("button", { name: "Grade", exact: true }).click();
+  await expect(page.getByTestId("central-vendas-grade")).toBeVisible();
   await expect(page.getByTestId("central-vendas-item-form"), "Grade sozinha").toHaveCount(0);
 
   // O POST: as MESMAS 20 chaves do W4, dois itens com as chaves de sempre — e NADA do item removido (a quantidade 7)

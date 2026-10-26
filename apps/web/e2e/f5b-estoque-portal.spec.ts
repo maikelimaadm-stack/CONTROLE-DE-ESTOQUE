@@ -57,9 +57,9 @@ async function premissaDasSete(page: Page) {
 
 /** Marca a linha da grade do motor (o círculo alterna: só clica quando ela ainda não está marcada). */
 async function marcarLinha(linha: Locator) {
-  const circulo = linha.getByTestId("central-estoque-selecionar-item");
-  if ((await circulo.getAttribute("aria-checked")) !== "true") await circulo.click();
-  await expect(circulo).toHaveAttribute("aria-checked", "true");
+  const linhaSel = linha;
+  if ((await linhaSel.getAttribute("aria-selected")) !== "true") await linhaSel.click();
+  await expect(linhaSel).toHaveAttribute("aria-selected", "true");
 }
 
 /** Abre a prévia da consulta e confirma; devolve o item da prévia já conferido pelo chamador. */

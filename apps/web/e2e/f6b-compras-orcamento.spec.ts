@@ -78,7 +78,7 @@ async function preencherData(page: Page, rotulo: string, testIdDoCampo: string, 
 /** Marca a linha do item do pedido na grade do motor e digita o preço. */
 async function preencherPreco(page: Page, itemPedidoId: string, n: number, valor: string) {
   const linha = page.getByTestId(`compras-orcamento-item-${itemPedidoId}`);
-  await linha.getByTestId(`${P}-selecionar-item`).click();
+  await linha.click();
   const campo = linha.getByLabel(`Valor unitário do item ${n}`);
   await campo.fill(valor);
   await expect(campo).toHaveValue(valor);
@@ -305,10 +305,10 @@ test("F6B-O2 — Novo orçamento a partir do pedido: as linhas do pedido travada
   await expect(l2.getByTestId(`${P}-quantidade`)).toHaveText("2,00");
   await expect(page.getByTestId(`${P}-armazem`), "sem Local de estoque").toHaveCount(0);
   await expect(page.getByTestId(`${P}-adicionar-item`), "as linhas são as do pedido: sem Adicionar").toHaveCount(0);
-  await l1.getByTestId(`${P}-selecionar-item`).click();
+  await l1.click();
   await expect(l1.getByLabel("Quantidade do item 1"), "a quantidade não se digita").toHaveCount(0);
   await expect(page.getByTestId(`${P}-remover-item`), "nem se remove linha").toHaveCount(0);
-  await l1.getByTestId(`${P}-selecionar-item`).click();
+  await l1.click();
 
   // (2) FORNECEDOR A, O PREÇO DO ITEM 1 (o 2 fica vazio), PRAZO E VALIDADE.
   await escolherNoCampo(page, page.getByTestId("compras-orcamento-fornecedor"), c.a.nome);

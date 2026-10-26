@@ -33,10 +33,10 @@ const WORKSPACE = "central-compras";
 /** As MEDIDAS do VD-1 (central-vendas-desenho.spec.ts), copiadas número a número: a paridade é com a venda. */
 const MEDIDAS = {
   barra: { altura: 44, raio: "12px", fundo: "rgb(255, 255, 255)", borda: "rgb(231, 234, 238)" },
-  botaoRedondo: { lado: 25, fundo: "rgb(241, 243, 244)", icone: "rgb(71, 85, 105)", sombra: "rgba(34, 197, 94, 0.3) 0px 2px 6px 0px" },
-  novo: { fundo: "rgb(64, 222, 99)" },
-  pilula: { altura: 25, fonte: "12.5px", peso: "600" },
-  posicaoDoRotulo: { altura: 25 },
+  botaoRedondo: { lado: 28, fundo: "rgb(241, 243, 244)", icone: "rgb(71, 85, 105)", sombra: "none" },
+  novo: { fundo: "rgb(241, 243, 244)" },
+  pilula: { lado: 28 },
+  posicaoDoRotulo: { altura: 28 },
   documento: { raio: "14px" },
   cabecalhoDeDados: 37,
   campo: {
@@ -46,7 +46,7 @@ const MEDIDAS = {
     leitura: "rgb(246, 248, 250)", travada: "rgb(233, 237, 242)", valorFonte: "12.5px", larguraMaxima: 560, espaco: 6
   },
   compacto: { caixaAltura: 32 },
-  itens: { barra: 37, cabecalho: 29, linha: 24, rodape: 33 },
+  itens: { barra: 37, cabecalho: 30, linha: 26, rodape: 33 },
   painel: { faixa: 39 }
 } as const;
 
@@ -238,16 +238,17 @@ test("CC-1 — as MESMAS medidas do VD-1 na Central de Compras, na criação e n
   // BOTÃO REDONDO (Descartar)
   const descartar = page.getByTestId(`${WORKSPACE}-descartar`);
   const bd = await caixa(descartar);
-  expect.soft([Math.round(bd.width), Math.round(bd.height)], "botão redondo 25×25").toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
+  expect.soft([Math.round(bd.width), Math.round(bd.height)], "botão redondo 28×28").toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
   const ed = await estilo(descartar, ["background-color", "box-shadow"]);
   expect.soft(ed["background-color"]).toBe(MEDIDAS.botaoRedondo.fundo);
   expect.soft(ed["box-shadow"]).toBe(MEDIDAS.botaoRedondo.sombra);
   expect.soft(await descartar.locator("svg").first().evaluate((s) => getComputedStyle(s).color), "ícone #475569").toBe(MEDIDAS.botaoRedondo.icone);
 
-  // PÍLULA Confirmar compra
+  // Confirmar compra: o mesmo círculo 28×28 (só ícone)
   const pilula = page.getByTestId(`${WORKSPACE}-confirmar`);
-  expect.soft(Math.round((await caixa(pilula)).height)).toBe(MEDIDAS.pilula.altura);
-  expect.soft(await estilo(pilula, ["font-size", "font-weight"])).toEqual({ "font-size": MEDIDAS.pilula.fonte, "font-weight": MEDIDAS.pilula.peso });
+  const bp = await caixa(pilula);
+  expect.soft([Math.round(bp.width), Math.round(bp.height)], "Confirmar 28×28").toEqual([MEDIDAS.pilula.lado, MEDIDAS.pilula.lado]);
+  await expect(pilula).toHaveAttribute("aria-label", /Confirmar compra/);
 
   // POSIÇÃO DO RÓTULO
   expect.soft(Math.round((await caixa(page.getByTestId(`${WORKSPACE}-posicao-rotulo`))).height)).toBe(MEDIDAS.posicaoDoRotulo.altura);
@@ -313,9 +314,10 @@ test("CC-1 — as MESMAS medidas do VD-1 na Central de Compras, na criação e n
   expect.soft((await medirCaixa(page.getByTestId("compras-consulta-top")))?.fundo, "Tipo de Operação travado na consulta").toBe(MEDIDAS.campo.travada);
   const bdup = await caixa(page.getByTestId(`${WORKSPACE}-duplicar`));
   expect.soft([Math.round(bdup.width), Math.round(bdup.height)]).toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
-  expect.soft((await estilo(page.getByTestId(`${WORKSPACE}-novo`), ["background-color"]))["background-color"], "Novo verde").toBe(MEDIDAS.novo.fundo);
+  expect.soft((await estilo(page.getByTestId(`${WORKSPACE}-novo`), ["background-color"]))["background-color"], "Novo cinza").toBe(MEDIDAS.novo.fundo);
   const pilulaConsulta = page.getByTestId("compras-confirmar");
-  expect.soft(Math.round((await caixa(pilulaConsulta)).height), "pílula Confirmar compra na consulta").toBe(MEDIDAS.pilula.altura);
+  const bpc = await caixa(pilulaConsulta);
+  expect.soft([Math.round(bpc.width), Math.round(bpc.height)], "Confirmar compra na consulta 28×28").toEqual([MEDIDAS.pilula.lado, MEDIDAS.pilula.lado]);
   // ITENS
   const itens = consulta.getByTestId(`${WORKSPACE}-itens`);
   expect.soft(Math.round((await caixa(itens.getByRole("toolbar").first())).height), "barra de itens").toBe(MEDIDAS.itens.barra);
@@ -353,7 +355,7 @@ test("CC-2 — barra e leque por modo e por permissão; sem Anexos; Esc fecha", 
   await abrirCriacao(page, top.id);
   await expect(page.getByTestId(`${WORKSPACE}-descartar`)).toBeVisible();
   await expect(page.getByTestId("compras-salvar")).toBeVisible();
-  await expect(page.getByTestId(`${WORKSPACE}-confirmar`)).toHaveText(/Confirmar compra/);
+  await expect(page.getByTestId(`${WORKSPACE}-confirmar`)).toHaveAttribute("aria-label", /Confirmar compra/);
   await expect(page.getByTestId(`${WORKSPACE}-posicao-rotulo`)).toBeVisible();
   const criacao = await nomesDoLeque(page);
   expect(criacao.slice(0, 3)).toEqual(["Alterar operação", "Imprimir", "Histórico de alterações"]);
@@ -373,7 +375,7 @@ test("CC-2 — barra e leque por modo e por permissão; sem Anexos; Esc fecha", 
   await expect(page.getByTestId("compras-confirmar")).toBeEnabled();
   const cancelar = page.getByTestId("compras-cancelar");
   await expect(cancelar).toBeEnabled();
-  await expect(cancelar).toHaveText(/Cancelar compra/);
+  await expect(cancelar).toHaveAttribute("aria-label", /Cancelar compra/);
   const cor = await cancelar.evaluate((el) => getComputedStyle(el).color);
   const [r, g, bl] = (cor.match(/\d+/g) ?? []).map(Number);
   expect(r! > g! && r! > bl!, `Cancelar em vermelho (${cor})`).toBe(true);
