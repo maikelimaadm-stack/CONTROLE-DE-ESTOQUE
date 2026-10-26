@@ -1,0 +1,22 @@
+/**
+ * Brand design tokens — Agro ERP (Field Green Operational).
+ * Mirrors docs/brand-guidelines.md and apps/web globals.css --mg-*.
+ * Do not import as a second runtime theme; the shell reads globals.css.
+ */
+:root {
+  --brand-primary: #40de63;
+  --brand-primary-hover: #36c956;
+  --brand-primary-light: #ecfdf3;
+  --brand-secondary: #2899f5;
+  --brand-accent: #15803d;
+  --brand-error: #dc2626;
+  --brand-ink: #111827;
+  --brand-muted: #6b7280;
+  --brand-page: #f0f2f5;
+  --brand-font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+
+  /* Alignment with shell */
+  --mg-accent: var(--brand-primary);
+  --mg-accent-hover: var(--brand-primary-hover);
+  --mg-blue: var(--brand-secondary);
+}

@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, ChevronDown, FolderOpen, Hexagon, MoreHorizontal, Search, Settings2, Star, Zap } from "lucide-react";
 import { NAV, permOk, searchNav, moduleForPath, favoriteRoute, crumbsFor, canonicalize } from "@/lib/nav";
-import { megaMenuFor, megaColumns, type MegaMenuData } from "@/lib/mega-menu";
+import { megaMenuFor, megaColumns, megaItemAtivo, type MegaMenuData } from "@/lib/mega-menu";
 import { interpretarIdGlobal, formatarIdGlobal } from "@erp/plataforma";
 import { useRegistroGlobal, type RegistroGlobal } from "@/lib/id-global";
 import { empresaDestinoDoRegistro } from "@/lib/empresa-ativa";
@@ -23,7 +23,13 @@ import { useWorkspaceTabs } from "@/lib/workspace-tabs";
  * Referência de interação: Painel Multi-Telas (header verde, pílulas, mega-menu preso à viewport).
  */
 const initialsOf = (name: string) => { const p = name.trim().split(/\s+/).filter(Boolean); return (p.length >= 2 ? `${p[0]![0]}${p[1]![0]}` : name.slice(0, 2)).toUpperCase(); };
-const TYPE_ICON: Record<string, React.ComponentType<{ className?: string }>> = { action: Zap, config: Settings2 };
+/** Ícones do mega-menu / busca: Lucide outline; decorativos ao lado do rótulo → aria-hidden no uso. */
+const TYPE_ICON: Record<string, React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>> = {
+  action: Zap,
+  config: Settings2,
+  area: FolderOpen,
+  sub: FolderOpen,
+};
 const MORE_W = 76;
 
 /**
@@ -71,7 +77,8 @@ function useFitCount(containerRef: React.RefObject<HTMLElement | null>, measureR
 
 export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.MutableRefObject<(() => void) | null> }) {
   const { ctx, can, session, logout, refresh } = useAuth();
-  const pathname = usePathname(); const router = useRouter(); const qc = useQueryClient(); const ws = useWorkspaceTabs();
+  const pathname = usePathname(); const searchParams = useSearchParams(); const router = useRouter(); const qc = useQueryClient(); const ws = useWorkspaceTabs();
+  const searchAtual = searchParams?.toString() ?? "";
   const modules = React.useMemo(() => NAV.filter((i) => i.href !== "/" && permOk(can, i.perm)), [can]);
   const currentModule = React.useMemo(() => moduleForPath(pathname)?.id, [pathname]);
   const navRef = React.useRef<HTMLElement>(null); const measureRef = React.useRef<HTMLDivElement>(null);
@@ -194,11 +201,25 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
       </div>
     </header>
     {open && data && anchor && typeof document !== "undefined" && createPortal(
-      <nav ref={panelRef} className="mg-mega" aria-label={`Menu ${data.module.label}`} data-testid="mega-menu" style={{ top: anchor.top, left: Math.max(12, Math.min(anchor.left, window.innerWidth - Math.min(megaColumns(data.groups) * 224 + 28, window.innerWidth - 24) - 12)), maxWidth: "calc(100vw - 24px)" }} onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>
-        <div className="mg-mega__grid" style={{ gridTemplateColumns: `repeat(${megaColumns(data.groups)}, minmax(180px, 224px))` }}>
-          {data.groups.map((g) => <div key={g.id} className="mg-mega__group"><div className="mg-mega__group-label">{g.label}</div>{g.items.map((it) => { const Icon = TYPE_ICON[it.type]; return <a key={it.id} href={it.href} className="mg-mega__item" title={it.hint} data-testid="mega-item" onClick={(e) => { e.preventDefault(); go(it.href); }}><span className="truncate">{it.label}</span>{Icon && <Icon className="h-3 w-3 shrink-0 opacity-60" aria-hidden />}</a>; })}</div>)}
+      <nav ref={panelRef} className="mg-mega" aria-label={`Menu ${data.module.label}`} data-testid="mega-menu" data-module={data.module.id} style={{ top: anchor.top, left: Math.max(12, Math.min(anchor.left, window.innerWidth - Math.min(megaColumns(data.groups) * 224 + 28, window.innerWidth - 24) - 12)), maxWidth: "calc(100vw - 24px)" }} onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>
+        <div className="mg-mega__head">
+          <span className="mg-mega__head-label">{data.module.label}</span>
+          {data.module.description ? <span className="mg-mega__head-hint">{data.module.description}</span> : null}
         </div>
-        <div className="mg-mega__footer"><span>{data.count} {data.count === 1 ? "tela" : "telas"}</span><a href={data.module.path ?? "/"} className="hover:underline" onClick={(e) => { e.preventDefault(); go(data.module.path ?? "/"); }}>Abrir {data.module.label}</a></div>
+        <div className="mg-mega__grid" style={{ gridTemplateColumns: `repeat(${megaColumns(data.groups)}, minmax(180px, 224px))` }}>
+          {data.groups.map((g) => <div key={g.id} className="mg-mega__group"><div className="mg-mega__group-label">{g.label}</div>{g.items.map((it) => {
+            const Icon = TYPE_ICON[it.type] ?? FolderOpen;
+            const atual = megaItemAtivo(it.href, pathname, searchAtual);
+            return <a key={it.id} href={it.href} className={cn("mg-mega__item", atual && "is-current")} title={it.hint} aria-current={atual ? "page" : undefined} data-testid="mega-item" onClick={(e) => { e.preventDefault(); go(it.href); }}>
+              <Icon className="mg-mega__item-icon" aria-hidden />
+              <span className="mg-mega__item-text">
+                <span className="mg-mega__item-label">{it.label}</span>
+                {it.hint ? <span className="mg-mega__item-hint">{it.hint}</span> : null}
+              </span>
+            </a>;
+          })}</div>)}
+        </div>
+        <div className="mg-mega__footer"><span>{data.count} {data.count === 1 ? "tela" : "telas"}</span><a href={data.module.path ?? "/"} className="mg-mega__footer-link" onClick={(e) => { e.preventDefault(); go(data.module.path ?? "/"); }}>Abrir {data.module.label}</a></div>
       </nav>, document.body)}
   </>;
 }

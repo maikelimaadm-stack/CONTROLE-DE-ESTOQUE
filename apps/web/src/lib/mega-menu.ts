@@ -48,3 +48,18 @@ function compact(groups: MegaGroup[], moduleLabel: string): MegaGroup[] {
 
 /** Colunas do painel: até 3 (referência visual), conforme o número de grupos. */
 export const megaColumns = (groups: MegaGroup[]) => Math.max(1, Math.min(3, groups.length));
+
+/**
+ * Item do mega-menu “atual” (decisão 361 / Active State): path igual e todos os query do destino
+ * presentes na URL. Sem query no destino → só bate se a URL também não trouxer `tab`/`sub` (evita
+ * marcar “Documentos” e “Visão Geral” juntos só porque compartilham `/compras`).
+ */
+export function megaItemAtivo(href: string, pathname: string, search: string): boolean {
+  let u: URL;
+  try { u = new URL(href, "http://local.invalid"); } catch { return false; }
+  if (u.pathname !== pathname) return false;
+  const have = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  const want = [...u.searchParams.entries()];
+  if (want.length === 0) return !have.has("tab") && !have.has("sub");
+  return want.every(([k, v]) => have.get(k) === v);
+}
