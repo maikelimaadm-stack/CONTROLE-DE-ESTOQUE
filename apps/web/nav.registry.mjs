@@ -85,14 +85,14 @@ export const AREAS = [
   // COMPRAS-01 (decisão 267): a lista única de documentos de compra (pedido de compra, orçamento de compra — F6b — e
   // compra), no desenho do Portal de Vendas — primeira e padrão. O lançamento começa pelo `+ Novo` da própria lista (a TOP escolhe a
   // espécie), então, como em Vendas, não há ação de variante aqui.
-  a("compras", "documentos", "Documentos", ["pedidos_compra.view", "compras.view", "orcamentos_compra.view"], { keywords: ["pedido de compra", "compra", "nota de compra", "fornecedor", "entrada de mercadoria", "documento de compra", "orçamento de compra", "cotação"], description: "Uma lista com filtro por tipo de documento de compra" }),
-  a("compras", "visao-geral", "Visão Geral", "dashboard.supply.view", { aliases: ["/dashboards/suprimentos"], keywords: ["indicadores de compras", "dashboard"] }),
-  a("compras", "processos", "Processos", P.PURCHASE, { keywords: ["solicitação", "cotação", "aprovação", "autorização", "compra", "recebimento", "meus processos", "rejeitados"], description: "Uma lista: escopo (todos / meus) + etapa como filtro" }),
+  a("compras", "documentos", "Documentos", ["pedidos_compra.view", "compras.view", "orcamentos_compra.view"], { keywords: ["pedido de compra", "compra", "nota de compra", "fornecedor", "entrada de mercadoria", "documento de compra", "orçamento de compra", "cotação"], description: "Lista única com filtro por tipo de documento de compra" }),
+  a("compras", "visao-geral", "Visão Geral", "dashboard.supply.view", { aliases: ["/dashboards/suprimentos"], keywords: ["indicadores de compras", "dashboard"], description: "Indicadores e visão consolidada de compras" }),
+  a("compras", "processos", "Processos", P.PURCHASE, { keywords: ["solicitação", "cotação", "aprovação", "autorização", "compra", "recebimento", "meus processos", "rejeitados"], description: "Escopo (todos / meus) e etapa como filtro" }),
   // OPERACOES-01 F11 (decisão 288): a solicitação sai do menu (pedido + orçamento cobrem). A entrada FICA em `ALL`
   // (`search: false`) porque é a âncora de `/suprimentos/*` no `moduleForPath` (lib/nav.ts) e dá o rótulo da aba de
   // trabalho da rota `/suprimentos/new`, que continua abrindo.
   // OPERACOES-01 F7 (decisão 284): a importação do XML da nota de compra, na Central de Compras.
-  act("compras", "importar-xml", "Importar XML de nota de compra", "/compras?tab=documentos&importar=xml", "compras.create", { keywords: ["importar xml", "nf-e", "nota fiscal", "lançar nota", "danfe"] }),
+  act("compras", "importar-xml", "Importar XML de nota de compra", "/compras?tab=documentos&importar=xml", "compras.create", { keywords: ["importar xml", "nf-e", "nota fiscal", "lançar nota", "danfe"], description: "Lançar nota fiscal de compra a partir do XML" }),
   act("compras", "solicitacao", "Nova solicitação de compra", "/suprimentos/new", "purchase_requests.create", { search: false, keywords: ["comprar", "pedir", "requisitar compra"] }),
   // ---------------- Estoque ----------------
   // OPERACOES-01 F11 (decisão 288): o lançamento antigo sai do menu quando a Central cobre; a entrada continua em `ALL`
@@ -279,9 +279,9 @@ export const AREAS = [
   cfg("operacoes", null, "Operações", ["tipos_operacao.view"]),
   cfg("operacoes", "tipos-operacao", "Tipos de Operação", "tipos_operacao.view", { keywords: ["top", "tipo de lançamento", "natureza do lançamento", "família operacional"] }),
   cfg("operacoes", "layouts-documento", "Layouts de documento", "tipos_operacao.view", { keywords: ["layout", "campos da central", "campo obrigatório", "tela de venda"] }),
-  cfg("compras", null, "Compras", ["supply_sla.view", "authorizers.view"]),
-  cfg("compras", "sla", "SLA por etapa", "supply_sla.view", { aliases: ["/suprimentos/sla"], keywords: ["prazo", "sla"] }),
-  cfg("compras", "authorizers", "Autorizadores", "authorizers.view", { keywords: ["aprovador", "alçada"] }),
+  cfg("compras", null, "Compras", ["supply_sla.view", "authorizers.view"], { description: "Parâmetros de prazo e alçada de compras" }),
+  cfg("compras", "sla", "SLA por etapa", "supply_sla.view", { aliases: ["/suprimentos/sla"], keywords: ["prazo", "sla"], description: "Prazos por etapa do processo de compra" }),
+  cfg("compras", "authorizers", "Autorizadores", "authorizers.view", { keywords: ["aprovador", "alçada"], description: "Quem aprova compras e as alçadas" }),
   cfg("financeiro", null, "Financeiro", P.FIN_CFG),
   // CADASTROS-ESTRUTURA (decisão 250): só o RÓTULO mudou — sub, chave de registry, permissão e URL do cadastro
   // continuam os mesmos. Os nomes antigos seguem como palavra-chave: quem procura o nome de antes acha a tela nova.

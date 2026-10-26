@@ -1,0 +1,75 @@
+{
+  "brand": "Agro ERP — Field Green Operational",
+  "$description": "Mirror of apps/web globals.css --mg-* for brand tooling. Runtime SSOT remains globals.css.",
+  "primitive": {
+    "color": {
+      "primary": {
+        "50": { "$value": "#ECFDF3", "$type": "color" },
+        "100": { "$value": "#D4F7E1", "$type": "color" },
+        "200": { "$value": "#A9EFC6", "$type": "color" },
+        "300": { "$value": "#6FE3A3", "$type": "color" },
+        "400": { "$value": "#3FD486", "$type": "color" },
+        "500": { "$value": "#40DE63", "$type": "color" },
+        "600": { "$value": "#36C956", "$type": "color" },
+        "700": { "$value": "#22A85C", "$type": "color" },
+        "800": { "$value": "#15803D", "$type": "color" },
+        "900": { "$value": "#155A36", "$type": "color" }
+      },
+      "secondary": {
+        "50": { "$value": "#EAF5FE", "$type": "color" },
+        "100": { "$value": "#D5EBFB", "$type": "color" },
+        "200": { "$value": "#AAD7F7", "$type": "color" },
+        "300": { "$value": "#7FC3F3", "$type": "color" },
+        "400": { "$value": "#54AFF0", "$type": "color" },
+        "500": { "$value": "#2899F5", "$type": "color" },
+        "600": { "$value": "#1F7BC4", "$type": "color" },
+        "700": { "$value": "#175D93", "$type": "color" },
+        "800": { "$value": "#0F3E62", "$type": "color" },
+        "900": { "$value": "#081F31", "$type": "color" }
+      },
+      "accent": {
+        "50": { "$value": "#ECFDF3", "$type": "color" },
+        "100": { "$value": "#D1FAE5", "$type": "color" },
+        "200": { "$value": "#A7F3D0", "$type": "color" },
+        "300": { "$value": "#6EE7B7", "$type": "color" },
+        "400": { "$value": "#34D399", "$type": "color" },
+        "500": { "$value": "#15803D", "$type": "color" },
+        "600": { "$value": "#166534", "$type": "color" },
+        "700": { "$value": "#14532D", "$type": "color" },
+        "800": { "$value": "#052E16", "$type": "color" },
+        "900": { "$value": "#022C15", "$type": "color" }
+      }
+    }
+  },
+  "semantic": {
+    "color": {
+      "primary": { "$value": "{primitive.color.primary.500}", "$type": "color" },
+      "primary-hover": { "$value": "{primitive.color.primary.600}", "$type": "color" },
+      "primary-active": { "$value": "{primitive.color.primary.700}", "$type": "color" },
+      "primary-light": { "$value": "{primitive.color.primary.100}", "$type": "color" },
+      "primary-lighter": { "$value": "{primitive.color.primary.50}", "$type": "color" },
+      "primary-dark": { "$value": "{primitive.color.primary.800}", "$type": "color" },
+      "secondary": { "$value": "{primitive.color.secondary.500}", "$type": "color" },
+      "secondary-hover": { "$value": "{primitive.color.secondary.600}", "$type": "color" },
+      "secondary-light": { "$value": "{primitive.color.secondary.300}", "$type": "color" },
+      "secondary-dark": { "$value": "{primitive.color.secondary.700}", "$type": "color" },
+      "accent": { "$value": "{primitive.color.accent.500}", "$type": "color" },
+      "accent-hover": { "$value": "{primitive.color.accent.600}", "$type": "color" },
+      "accent-light": { "$value": "{primitive.color.accent.100}", "$type": "color" },
+      "success": { "$value": "{primitive.color.primary.500}", "$type": "color" },
+      "success-light": { "$value": "{primitive.color.primary.100}", "$type": "color" },
+      "error": { "$value": "#DC2626", "$type": "color" },
+      "error-light": { "$value": "#FECACA", "$type": "color" },
+      "info": { "$value": "{primitive.color.secondary.500}", "$type": "color" },
+      "info-light": { "$value": "{primitive.color.secondary.100}", "$type": "color" }
+    }
+  },
+  "alias": {
+    "mg-accent": "#40DE63",
+    "mg-accent-hover": "#36C956",
+    "mg-blue": "#2899F5",
+    "mg-red": "#DC2626",
+    "mg-text-1": "#111827",
+    "mg-bg-page": "#F0F2F5"
+  }
+}

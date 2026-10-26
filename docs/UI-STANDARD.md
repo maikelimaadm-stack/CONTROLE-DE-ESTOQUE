@@ -175,6 +175,9 @@ AppShell
 - Mega-menu = `megaMenuFor(moduleId, can)` (`lib/mega-menu.ts`): grupos = áreas do módulo, itens = sub-áreas (ou a
   própria área), grupo **Ações** = `type:"action"`; tudo por permissão. Abre no hover/clique/Enter/seta ↓, fecha com
   Escape (foco volta ao botão), clique fora ou ao sair do header; painel em portal preso à viewport (nunca cortado).
+  Decisão 361: cabeçalho com faixa `--mg-accent` + descrição do módulo; cada item mostra ícone leading + rótulo +
+  hint (`description` do registry) e marca `is-current` quando `megaItemAtivo` bate path/query. Brand documentada em
+  `docs/brand-guidelines.md` (não inventar paleta paralela).
 - Busca global reutiliza `searchNav` (módulos, áreas, sub-áreas, ações, configurações; módulos respeitam
   `modulePerm`). Ctrl K e o botão **+** da barra de abas focam a busca; escolher um resultado = `openTab(href)`.
 - Fazenda: `<select>` do contexto (`X-Farm-Id`); a troca não recarrega organização/permissões (sem remontar o shell).
